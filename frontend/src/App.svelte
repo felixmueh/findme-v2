@@ -6,6 +6,7 @@
     FileQuestion,
     Film,
     Folder,
+    ChevronRight,
     Image as ImageIcon,
     LoaderCircle,
     Search,
@@ -65,6 +66,7 @@
   let selectedDirectory = $state('')
   let sources = $state<Source[]>([])
   let directories = $state<DirectoryNode[]>([])
+  let collapsedDirectories = $state<Set<string>>(new Set())
   let assets = $state<Asset[]>([])
   let selected = $state<AssetDetail | null>(null)
   let loading = $state(false)
@@ -76,6 +78,7 @@
   const selectedAssetId = $derived(selected?.asset.asset_id ?? '')
   const selectedIndex = $derived(assets.findIndex((asset) => asset.asset_id === selectedAssetId))
   const resultLabel = $derived(`${assets.length} ${assets.length === 1 ? 'asset' : 'assets'}`)
+  const visibleDirectories = $derived(directories.filter((directory) => isDirectoryVisible(directory.path)))
 
   $effect(() => {
     void loadSources()
@@ -203,6 +206,46 @@
   function toggleDirectory(path: string) {
     selectedDirectory = selectedDirectory === path ? '' : path
   }
+
+  function hasChildren(path: string) {
+    const prefix = path ? `${path}/` : ''
+    const childDepth = path ? path.split('/').length + 1 : 1
+    return directories.some(
+      (directory) =>
+        (path === '' || directory.path.startsWith(prefix)) &&
+        directory.path !== path &&
+        directory.depth === childDepth,
+    )
+  }
+
+  function isCollapsed(path: string) {
+    return collapsedDirectories.has(path)
+  }
+
+  function isDirectoryVisible(path: string) {
+    if (!path) return true
+    if (collapsedDirectories.has('')) return false
+    const parts = path.split('/')
+    for (let index = 1; index < parts.length; index += 1) {
+      if (collapsedDirectories.has(parts.slice(0, index).join('/'))) return false
+    }
+    return true
+  }
+
+  function handleDirectoryClick(event: MouseEvent, path: string) {
+    if (event.shiftKey) {
+      toggleDirectory(path)
+      return
+    }
+    if (!hasChildren(path)) return
+    const next = new Set(collapsedDirectories)
+    if (next.has(path)) {
+      next.delete(path)
+    } else {
+      next.add(path)
+    }
+    collapsedDirectories = next
+  }
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -313,14 +356,22 @@
         <Folder size={15} />
         <span>All folders</span>
       </button>
-      {#each directories as directory}
+      {#each visibleDirectories as directory}
+        {@const children = hasChildren(directory.path)}
         <button
           class:active={directory.path === selectedDirectory}
+          class:collapsed={children && isCollapsed(directory.path)}
+          class:leaf={!children}
           class="folder-row"
           style={`--depth: ${directory.depth}`}
           type="button"
-          onclick={() => toggleDirectory(directory.path)}
+          onclick={(event) => handleDirectoryClick(event, directory.path)}
         >
+          {#if children}
+            <ChevronRight class="folder-chevron" size={14} />
+          {:else}
+            <span class="folder-spacer"></span>
+          {/if}
           <Folder size={15} />
           <span>{directory.name}</span>
           <em>{directory.asset_count}</em>

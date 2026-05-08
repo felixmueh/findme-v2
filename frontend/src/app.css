@@ -331,8 +331,8 @@ a:focus-visible {
   width: 100%;
   min-height: 30px;
   display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) auto;
-  gap: 7px;
+  grid-template-columns: 14px 16px minmax(0, 1fr) auto;
+  gap: 6px;
   align-items: center;
   padding: 0 9px 0 calc(9px + var(--depth, 0) * 14px);
   background: transparent;
@@ -351,6 +351,19 @@ a:focus-visible {
 
 .folder-row svg {
   color: var(--muted);
+}
+
+.folder-row .folder-chevron {
+  color: var(--faint);
+  transform: rotate(90deg);
+}
+
+.folder-row.collapsed .folder-chevron {
+  transform: rotate(0deg);
+}
+
+.folder-spacer {
+  width: 14px;
 }
 
 .folder-row span {
