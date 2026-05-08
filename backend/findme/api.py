@@ -46,19 +46,35 @@ def create_app(
     def list_assets(
         source_id: str | None = None,
         directory: str | None = None,
+        directory_prefix: str | None = None,
         limit: int = Query(default=100, ge=1, le=500),
         offset: int = Query(default=0, ge=0),
     ) -> dict[str, list[dict[str, object]]]:
         with connect(database_path) as db:
             initialize_database(db)
-            rows = _fetch_assets(db, source_id=source_id, directory=directory, limit=limit, offset=offset)
+            rows = _fetch_assets(
+                db,
+                source_id=source_id,
+                directory=directory,
+                directory_prefix=directory_prefix,
+                limit=limit,
+                offset=offset,
+            )
         return {"assets": [_asset_response(row) for row in rows]}
+
+    @app.get("/api/directories")
+    def list_directories(source_id: str | None = None) -> dict[str, list[dict[str, object]]]:
+        with connect(database_path) as db:
+            initialize_database(db)
+            directories = _fetch_directories(db, config, source_id=source_id)
+        return {"directories": directories}
 
     @app.get("/api/search")
     def search(
         q: str = Query(min_length=1),
         source_id: str | None = None,
         directory: str | None = None,
+        directory_prefix: str | None = None,
         limit: int = Query(default=100, ge=1, le=500),
         offset: int = Query(default=0, ge=0),
     ) -> dict[str, list[dict[str, object]]]:
@@ -69,6 +85,7 @@ def create_app(
                 q,
                 source_id=source_id,
                 directory=directory,
+                directory_prefix=directory_prefix,
                 limit=limit,
                 offset=offset,
             )
@@ -123,6 +140,7 @@ def _fetch_assets(
     *,
     source_id: str | None,
     directory: str | None,
+    directory_prefix: str | None,
     limit: int,
     offset: int,
 ) -> list[sqlite3.Row]:
@@ -134,6 +152,9 @@ def _fetch_assets(
     if directory is not None:
         where.append("assets.directory = ?")
         params.append(directory)
+    if directory_prefix:
+        where.append("(assets.directory = ? OR assets.directory LIKE ?)")
+        params.extend([directory_prefix, f"{directory_prefix}/%"])
 
     params.extend([limit, offset])
     return db.execute(
@@ -160,6 +181,47 @@ def _fetch_assets(
         """,
         params,
     ).fetchall()
+
+
+def _fetch_directories(
+    db: sqlite3.Connection, config: AppConfig, *, source_id: str | None
+) -> list[dict[str, object]]:
+    source_lookup = {source.id: source.display_name for source in config.sources}
+    where = ["stale = 0"]
+    params: list[object] = []
+    if source_id:
+        where.append("source_id = ?")
+        params.append(source_id)
+
+    rows = db.execute(
+        f"""
+        SELECT source_id, directory, COUNT(*) AS direct_count
+        FROM assets
+        WHERE {" AND ".join(where)}
+        GROUP BY source_id, directory
+        """,
+        params,
+    ).fetchall()
+
+    counts: dict[tuple[str, str], int] = {}
+    for row in rows:
+        source = row["source_id"]
+        direct_count = row["direct_count"]
+        counts[(source, "")] = counts.get((source, ""), 0) + direct_count
+        directory = row["directory"]
+        if not directory:
+            continue
+        parts = directory.split("/")
+        for index in range(1, len(parts) + 1):
+            path = "/".join(parts[:index])
+            counts[(source, path)] = counts.get((source, path), 0) + direct_count
+
+    directories = []
+    for (source, path), count in counts.items():
+        name = source_lookup.get(source, source) if path == "" else path.rsplit("/", 1)[-1]
+        depth = 0 if path == "" else len(path.split("/"))
+        directories.append({"path": path, "name": name, "depth": depth, "asset_count": count})
+    return sorted(directories, key=lambda item: (item["path"].lower() != "", item["path"].lower()))
 
 
 def _asset_response(row: sqlite3.Row) -> dict[str, object]:

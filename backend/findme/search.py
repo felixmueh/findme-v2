@@ -29,6 +29,7 @@ def search_assets(
     *,
     source_id: str | None = None,
     directory: str | None = None,
+    directory_prefix: str | None = None,
     limit: int = 100,
     offset: int = 0,
 ) -> list[SearchResult]:
@@ -44,6 +45,9 @@ def search_assets(
     if directory is not None:
         where.append("assets.directory = ?")
         params.append(directory)
+    if directory_prefix:
+        where.append("(assets.directory = ? OR assets.directory LIKE ?)")
+        params.extend([directory_prefix, f"{directory_prefix}/%"])
 
     params.extend([limit, offset])
     rows = db.execute(

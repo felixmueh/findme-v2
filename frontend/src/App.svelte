@@ -1,9 +1,28 @@
 <script lang="ts">
+  import {
+    Copy,
+    Download,
+    ExternalLink,
+    FileQuestion,
+    Film,
+    Folder,
+    Image as ImageIcon,
+    LoaderCircle,
+    Search,
+  } from 'lucide-svelte'
+
   type Source = {
     id: string
     display_name: string
     priority: number
     root: string
+  }
+
+  type DirectoryNode = {
+    path: string
+    name: string
+    depth: number
+    asset_count: number
   }
 
   type Asset = {
@@ -43,7 +62,9 @@
 
   let query = $state('')
   let sourceId = $state('')
+  let selectedDirectory = $state('')
   let sources = $state<Source[]>([])
+  let directories = $state<DirectoryNode[]>([])
   let assets = $state<Asset[]>([])
   let selected = $state<AssetDetail | null>(null)
   let loading = $state(false)
@@ -53,15 +74,23 @@
   let requestId = 0
 
   const selectedAssetId = $derived(selected?.asset.asset_id ?? '')
+  const selectedIndex = $derived(assets.findIndex((asset) => asset.asset_id === selectedAssetId))
+  const resultLabel = $derived(`${assets.length} ${assets.length === 1 ? 'asset' : 'assets'}`)
 
   $effect(() => {
     void loadSources()
-    void loadAssets()
+  })
+
+  $effect(() => {
+    sourceId
+    selectedDirectory = ''
+    void loadDirectories()
   })
 
   $effect(() => {
     query
     sourceId
+    selectedDirectory
     window.clearTimeout(debounceTimer)
     debounceTimer = window.setTimeout(() => {
       void loadAssets()
@@ -76,6 +105,19 @@
     }
     const body = await response.json()
     sources = body.sources
+    await loadDirectories()
+  }
+
+  async function loadDirectories() {
+    const params = new URLSearchParams()
+    if (sourceId) params.set('source_id', sourceId)
+    const response = await fetch(`/api/directories?${params}`)
+    if (!response.ok) {
+      error = 'Could not load folders'
+      return
+    }
+    const body = await response.json()
+    directories = body.directories
   }
 
   async function loadAssets() {
@@ -83,6 +125,7 @@
     const params = new URLSearchParams()
     params.set('limit', '100')
     if (sourceId) params.set('source_id', sourceId)
+    if (selectedDirectory) params.set('directory_prefix', selectedDirectory)
     const trimmed = query.trim()
     const path = trimmed ? '/api/search' : '/api/assets'
     if (trimmed) params.set('q', trimmed)
@@ -125,8 +168,30 @@
     }, 1200)
   }
 
-  function fileUrl(asset: Asset) {
-    return `/api/assets/${asset.asset_id}/file`
+  function chooseRelative(offset: number) {
+    if (assets.length === 0) return
+    const fallback = selectedIndex < 0 ? 0 : selectedIndex
+    const next = Math.min(Math.max(fallback + offset, 0), assets.length - 1)
+    void selectAsset(assets[next])
+  }
+
+  function handleKeydown(event: KeyboardEvent) {
+    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+      event.preventDefault()
+      chooseRelative(1)
+    } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+      event.preventDefault()
+      chooseRelative(-1)
+    } else if (event.key === 'Enter' && selected) {
+      event.preventDefault()
+      void copyPrimary()
+    }
+  }
+
+  function assetIcon(asset: Asset) {
+    if (asset.media_type === 'image') return ImageIcon
+    if (asset.media_type === 'video') return Film
+    return FileQuestion
   }
 
   function formatBytes(bytes: number) {
@@ -134,111 +199,133 @@
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
     return `${(bytes / 1024 / 1024).toFixed(1)} MB`
   }
+
+  function toggleDirectory(path: string) {
+    selectedDirectory = selectedDirectory === path ? '' : path
+  }
 </script>
 
+<svelte:window onkeydown={handleKeydown} />
+
 <main class="app-shell">
-  <header class="topbar">
-    <div>
-      <h1>Findme</h1>
-      <p>{assets.length} results</p>
-    </div>
-    <div class="search-controls">
-      <input
-        bind:value={query}
-        class="search-input"
-        type="search"
-        autocomplete="off"
-        placeholder="Search assets"
-      />
-      <select bind:value={sourceId} aria-label="Source">
-        <option value="">All sources</option>
-        {#each sources as source}
-          <option value={source.id}>{source.display_name}</option>
-        {/each}
-      </select>
+  <header class="toolbar">
+    <div class="brand">Findme</div>
+
+    <label class="search-field">
+      <Search size={17} />
+      <input bind:value={query} type="search" autocomplete="off" placeholder="Search assets" />
+    </label>
+
+    <select bind:value={sourceId} aria-label="Source">
+      <option value="">All sources</option>
+      {#each sources as source}
+        <option value={source.id}>{source.display_name}</option>
+      {/each}
+    </select>
+
+    <div class="status" class:busy={loading} class:error={error}>
+      {#if loading}
+        <LoaderCircle size={15} />
+      {/if}
+      <span>{error || resultLabel}</span>
     </div>
   </header>
 
-  {#if error}
-    <div class="status error">{error}</div>
-  {:else if loading}
-    <div class="status">Loading</div>
-  {/if}
-
   <section class="workspace">
-    <aside class="result-pane" aria-label="Results">
-      {#each assets as asset}
-        <button
-          class:active={asset.asset_id === selectedAssetId}
-          class="result-row"
-          type="button"
-          onclick={() => selectAsset(asset)}
-        >
-          <span class="thumb">
-            {#if asset.thumbnail_url}
-              <img src={asset.thumbnail_url} alt="" loading="lazy" />
+    <section class="main-region" aria-label="Assets">
+      <div class="tile-grid">
+        {#each assets as asset}
+          {@const Icon = assetIcon(asset)}
+          <button
+            class:selected={asset.asset_id === selectedAssetId}
+            class="asset-tile"
+            type="button"
+            onclick={() => selectAsset(asset)}
+          >
+            <span class="tile-thumb">
+              {#if asset.thumbnail_url}
+                <img src={asset.thumbnail_url} alt="" loading="lazy" />
+              {:else}
+                <Icon size={28} />
+              {/if}
+              <span class="hover-actions">
+                <span>Preview</span>
+              </span>
+            </span>
+            <span class="tile-name">{asset.filename}</span>
+            <span class="tile-meta">{asset.directory || asset.source_display_name}</span>
+          </button>
+        {:else}
+          <div class="empty">No assets found</div>
+        {/each}
+      </div>
+
+      <aside class="asset-panel" aria-label="Selected asset">
+        {#if selected}
+          {@const SelectedIcon = assetIcon(selected.asset)}
+          <div class="preview">
+            {#if selected.asset.media_type === 'image'}
+              <img src={selected.actions.open_url} alt={selected.asset.filename} />
+            {:else if selected.asset.media_type === 'video'}
+              <!-- svelte-ignore a11y_media_has_caption -->
+              <video src={selected.actions.open_url} controls preload="metadata"></video>
             {:else}
-              <span class="media-badge">{asset.extension.slice(1).toUpperCase()}</span>
+              <div class="file-preview">
+                <SelectedIcon size={30} />
+                <span>{selected.asset.extension.slice(1).toUpperCase()}</span>
+              </div>
             {/if}
-          </span>
-          <span class="result-text">
-            <strong>{asset.filename}</strong>
-            <small>{asset.directory || asset.source_display_name}</small>
-          </span>
+          </div>
+
+          <div class="asset-title">
+            <strong>{selected.asset.filename}</strong>
+            <span>{selected.asset.relative_path}</span>
+          </div>
+
+          <div class="commands">
+            <button type="button" class="copy-button" onclick={copyPrimary} title="Copy primary path">
+              <Copy size={16} />
+              <span>{copied === selected.asset.asset_id ? 'Copied' : 'Copy'}</span>
+            </button>
+            <a href={selected.actions.open_url} target="_blank" rel="noreferrer" title="Open original">
+              <ExternalLink size={16} />
+              <span>Open</span>
+            </a>
+            <a href={selected.actions.download_url} title="Download original">
+              <Download size={16} />
+              <span>Download</span>
+            </a>
+          </div>
+        {:else}
+          <div class="empty">No asset selected</div>
+        {/if}
+      </aside>
+    </section>
+
+    <aside class="folder-panel" aria-label="Folder tree">
+      <div class="panel-title">Folders</div>
+      <button
+        class:active={selectedDirectory === ''}
+        class="folder-row"
+        type="button"
+        onclick={() => (selectedDirectory = '')}
+      >
+        <Folder size={15} />
+        <span>All folders</span>
+      </button>
+      {#each directories as directory}
+        <button
+          class:active={directory.path === selectedDirectory}
+          class="folder-row"
+          style={`--depth: ${directory.depth}`}
+          type="button"
+          onclick={() => toggleDirectory(directory.path)}
+        >
+          <Folder size={15} />
+          <span>{directory.name}</span>
+          <em>{directory.asset_count}</em>
         </button>
-      {:else}
-        <div class="empty">No assets found</div>
       {/each}
     </aside>
-
-    <section class="detail-pane" aria-label="Selected asset">
-      {#if selected}
-        <div class="preview">
-          {#if selected.asset.media_type === 'image'}
-            <img src={selected.actions.open_url} alt={selected.asset.filename} />
-          {:else if selected.asset.media_type === 'video'}
-            <!-- svelte-ignore a11y_media_has_caption -->
-            <video src={selected.actions.open_url} controls preload="metadata"></video>
-          {:else}
-            <div class="file-preview">{selected.asset.extension.slice(1).toUpperCase()}</div>
-          {/if}
-        </div>
-
-        <div class="asset-meta">
-          <div>
-            <h2>{selected.asset.filename}</h2>
-            <p>{selected.asset.relative_path}</p>
-          </div>
-          <div class="commands">
-            <button type="button" onclick={copyPrimary}>
-              {copied === selected.asset.asset_id ? 'Copied' : 'Copy'}
-            </button>
-            <a href={selected.actions.open_url} target="_blank" rel="noreferrer">Open</a>
-            <a href={selected.actions.download_url}>Download</a>
-          </div>
-        </div>
-
-        <dl class="details">
-          <div>
-            <dt>Primary</dt>
-            <dd>{selected.actions.primary.value}</dd>
-          </div>
-          <div>
-            <dt>Source</dt>
-            <dd>{selected.asset.source_display_name}</dd>
-          </div>
-          <div>
-            <dt>Size</dt>
-            <dd>{formatBytes(selected.asset.size_bytes)}</dd>
-          </div>
-          <div>
-            <dt>Type</dt>
-            <dd>{selected.asset.media_type}</dd>
-          </div>
-        </dl>
-      {:else}
-        <div class="empty detail-empty">No asset selected</div>
-      {/if}
-    </section>
   </section>
 </main>
