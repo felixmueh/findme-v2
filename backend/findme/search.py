@@ -17,6 +17,9 @@ class SearchResult:
     directory: str
     size_bytes: int
     media_type: str
+    thumbnail_path: str | None
+    thumbnail_width: int | None
+    thumbnail_height: int | None
     score: float
 
 
@@ -56,6 +59,9 @@ def search_assets(
           assets.directory,
           assets.size_bytes,
           assets.media_type,
+          assets.thumbnail_path,
+          assets.thumbnail_width,
+          assets.thumbnail_height,
           bm25(asset_search, 6.0, 5.0, 2.0, 1.0) * -1.0
             + sources.priority * 0.0001 AS score
         FROM asset_search
@@ -87,5 +93,8 @@ def _row_to_result(row: sqlite3.Row) -> SearchResult:
         directory=row["directory"],
         size_bytes=row["size_bytes"],
         media_type=row["media_type"],
+        thumbnail_path=row["thumbnail_path"],
+        thumbnail_width=row["thumbnail_width"],
+        thumbnail_height=row["thumbnail_height"],
         score=row["score"],
     )

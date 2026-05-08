@@ -17,6 +17,9 @@
     directory: string
     size_bytes: number
     media_type: string
+    thumbnail_url?: string
+    thumbnail_width?: number
+    thumbnail_height?: number
     score?: number
   }
 
@@ -172,8 +175,8 @@
           onclick={() => selectAsset(asset)}
         >
           <span class="thumb">
-            {#if asset.media_type === 'image'}
-              <img src={fileUrl(asset)} alt="" loading="lazy" />
+            {#if asset.thumbnail_url}
+              <img src={asset.thumbnail_url} alt="" loading="lazy" />
             {:else}
               <span class="media-badge">{asset.extension.slice(1).toUpperCase()}</span>
             {/if}

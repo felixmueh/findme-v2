@@ -7,11 +7,14 @@ from findme.config import AppConfig, OutputProfile, SourceConfig
 from findme.db import connect, initialize_database
 from findme.indexer import index_sources
 
+from helpers import write_image
+
 
 def test_asset_detail_includes_derived_actions_and_serves_file(tmp_path: Path) -> None:
     source_root = tmp_path / "assets"
     source_root.mkdir()
-    (source_root / "Goblin Warrior.png").write_bytes(b"png-bytes")
+    asset_path = source_root / "Goblin Warrior.png"
+    write_image(asset_path)
     config = AppConfig(
         data_root=tmp_path / "data",
         sources=(
@@ -38,6 +41,7 @@ def test_asset_detail_includes_derived_actions_and_serves_file(tmp_path: Path) -
     detail = client.get(f"/api/assets/{asset_id}").json()
 
     assert detail["asset"]["relative_path"] == "Goblin Warrior.png"
+    assert detail["asset"]["thumbnail_url"] == f"/api/assets/{asset_id}/thumb"
     assert detail["actions"]["primary"]["value"] == "assets/dnd/Goblin Warrior.png"
     assert detail["actions"]["profiles"] == [
         {
@@ -47,14 +51,17 @@ def test_asset_detail_includes_derived_actions_and_serves_file(tmp_path: Path) -
         }
     ]
     assert detail["actions"]["download_url"] == f"/api/assets/{asset_id}/file?download=1"
-    assert client.get(detail["actions"]["open_url"]).content == b"png-bytes"
+    assert client.get(detail["actions"]["open_url"]).content == asset_path.read_bytes()
+    thumbnail_response = client.get(detail["asset"]["thumbnail_url"])
+    assert thumbnail_response.status_code == 200
+    assert thumbnail_response.headers["content-type"] == "image/webp"
 
 
 def test_missing_asset_file_returns_404(tmp_path: Path) -> None:
     source_root = tmp_path / "assets"
     source_root.mkdir()
     asset_path = source_root / "Goblin.png"
-    asset_path.write_bytes(b"png")
+    write_image(asset_path)
     config = AppConfig(
         data_root=tmp_path / "data",
         sources=(

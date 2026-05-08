@@ -30,6 +30,16 @@ Agents are likely running in a sandbox environment on the developer laptop durin
 
 Install development tools or dependencies in the sandbox when they are needed to build, test, or evaluate the project. Keep production deployment assumptions documented in `docs/DESIGN.md` or `docs/STACK.md` rather than inferring them from the sandbox.
 
+To let the developer view the app from the host browser during sandbox development, build the frontend and run:
+
+```bash
+cd /home/felix/_Documents/Projects/findme-v2
+npm --prefix frontend run build
+.venv/bin/findme serve --config config/findme.dev.toml --host 0.0.0.0 --port 8000 --static-dir frontend/dist
+```
+
+Port 8000 should be published from the sandbox to the host. The developer can then open `http://localhost:8000`.
+
 ## No Generic Fallbacks
 
 Do not add fallback mechanisms just to support unknown environments.

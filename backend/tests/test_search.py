@@ -5,14 +5,16 @@ from findme.db import connect, initialize_database
 from findme.indexer import index_sources
 from findme.search import search_assets
 
+from helpers import write_image
+
 
 def test_search_assets_matches_filename_and_path_tokens(tmp_path: Path) -> None:
     source_root = tmp_path / "assets"
     (source_root / "Tokens" / "Goblins").mkdir(parents=True)
     (source_root / "Maps").mkdir()
-    (source_root / "Tokens" / "Goblins" / "Goblin Warrior.png").write_bytes(b"png")
-    (source_root / "Maps" / "Goblin Cave.jpg").write_bytes(b"jpg")
-    (source_root / "Tokens" / "Dragon.webp").write_bytes(b"webp")
+    write_image(source_root / "Tokens" / "Goblins" / "Goblin Warrior.png")
+    write_image(source_root / "Maps" / "Goblin Cave.jpg")
+    write_image(source_root / "Tokens" / "Dragon.webp")
     config = _config(tmp_path, source_root)
 
     with connect(tmp_path / "findme.sqlite3") as db:
@@ -31,8 +33,8 @@ def test_search_assets_applies_source_and_directory_filters(tmp_path: Path) -> N
     source_root = tmp_path / "assets"
     (source_root / "Tokens").mkdir(parents=True)
     (source_root / "Maps").mkdir()
-    (source_root / "Tokens" / "Goblin.png").write_bytes(b"png")
-    (source_root / "Maps" / "Goblin.png").write_bytes(b"png")
+    write_image(source_root / "Tokens" / "Goblin.png")
+    write_image(source_root / "Maps" / "Goblin.png")
     config = _config(tmp_path, source_root)
 
     with connect(tmp_path / "findme.sqlite3") as db:
@@ -47,7 +49,7 @@ def test_search_assets_hides_stale_assets(tmp_path: Path) -> None:
     source_root = tmp_path / "assets"
     source_root.mkdir()
     stale_path = source_root / "Goblin.png"
-    stale_path.write_bytes(b"png")
+    write_image(stale_path)
     config = _config(tmp_path, source_root)
 
     with connect(tmp_path / "findme.sqlite3") as db:

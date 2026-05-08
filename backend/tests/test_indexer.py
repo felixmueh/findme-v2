@@ -4,12 +4,14 @@ from findme.config import AppConfig, SourceConfig
 from findme.db import connect, initialize_database
 from findme.indexer import index_sources
 
+from helpers import write_image
+
 
 def test_index_sources_adds_media_files_and_ignores_legacy_findme_data(tmp_path: Path) -> None:
     source_root = tmp_path / "assets"
     (source_root / "Tokens").mkdir(parents=True)
     (source_root / ".findme").mkdir()
-    (source_root / "Tokens" / "Goblin Warrior.PNG").write_bytes(b"fake-png")
+    write_image(source_root / "Tokens" / "Goblin Warrior.PNG")
     (source_root / "Tokens" / "notes.txt").write_text("ignore", encoding="utf-8")
     (source_root / ".findme" / "old.png").write_bytes(b"ignore")
 
@@ -45,7 +47,7 @@ def test_index_sources_marks_missing_assets_stale(tmp_path: Path) -> None:
     source_root = tmp_path / "assets"
     source_root.mkdir()
     asset_path = source_root / "dragon.webp"
-    asset_path.write_bytes(b"webp")
+    write_image(asset_path)
     config = AppConfig(
         data_root=tmp_path / "data",
         sources=(

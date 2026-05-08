@@ -94,6 +94,15 @@ def create_app(
             media_type=None,
         )
 
+    @app.get("/api/assets/{asset_id}/thumb")
+    def asset_thumbnail(asset_id: str) -> FileResponse:
+        with connect(database_path) as db:
+            initialize_database(db)
+            asset = _load_asset_or_404(db, config, asset_id)
+        if asset.thumbnail_path is None or not asset.thumbnail_path.is_file():
+            raise HTTPException(status_code=404, detail="asset thumbnail is missing")
+        return FileResponse(asset.thumbnail_path, media_type="image/webp")
+
     if static_dir is not None and static_dir.exists():
         app.mount("/", StaticFiles(directory=static_dir, html=True), name="frontend")
 
@@ -139,7 +148,10 @@ def _fetch_assets(
           assets.extension,
           assets.directory,
           assets.size_bytes,
-          assets.media_type
+          assets.media_type,
+          assets.thumbnail_path,
+          assets.thumbnail_width,
+          assets.thumbnail_height
         FROM assets
         JOIN sources ON sources.id = assets.source_id
         WHERE {" AND ".join(where)}
@@ -151,7 +163,7 @@ def _fetch_assets(
 
 
 def _asset_response(row: sqlite3.Row) -> dict[str, object]:
-    return {
+    response = {
         "asset_id": row["asset_id"],
         "source_id": row["source_id"],
         "source_display_name": row["source_display_name"],
@@ -163,10 +175,15 @@ def _asset_response(row: sqlite3.Row) -> dict[str, object]:
         "size_bytes": row["size_bytes"],
         "media_type": row["media_type"],
     }
+    if row["thumbnail_path"] is not None:
+        response["thumbnail_url"] = f"/api/assets/{row['asset_id']}/thumb"
+        response["thumbnail_width"] = row["thumbnail_width"]
+        response["thumbnail_height"] = row["thumbnail_height"]
+    return response
 
 
 def _search_response(result: SearchResult) -> dict[str, object]:
-    return {
+    response = {
         "asset_id": result.asset_id,
         "source_id": result.source_id,
         "source_display_name": result.source_display_name,
@@ -179,3 +196,8 @@ def _search_response(result: SearchResult) -> dict[str, object]:
         "media_type": result.media_type,
         "score": result.score,
     }
+    if result.thumbnail_path is not None:
+        response["thumbnail_url"] = f"/api/assets/{result.asset_id}/thumb"
+        response["thumbnail_width"] = result.thumbnail_width
+        response["thumbnail_height"] = result.thumbnail_height
+    return response

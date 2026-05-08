@@ -28,6 +28,9 @@ class AssetRecord:
     directory: str
     size_bytes: int
     media_type: str
+    thumbnail_path: Path | None
+    thumbnail_width: int | None
+    thumbnail_height: int | None
 
 
 def get_asset(db: sqlite3.Connection, config: AppConfig, asset_id: str) -> AssetRecord:
@@ -44,7 +47,10 @@ def get_asset(db: sqlite3.Connection, config: AppConfig, asset_id: str) -> Asset
           assets.extension,
           assets.directory,
           assets.size_bytes,
-          assets.media_type
+          assets.media_type,
+          assets.thumbnail_path,
+          assets.thumbnail_width,
+          assets.thumbnail_height
         FROM assets
         JOIN sources ON sources.id = assets.source_id
         WHERE assets.asset_id = ? AND assets.stale = 0
@@ -66,6 +72,9 @@ def get_asset(db: sqlite3.Connection, config: AppConfig, asset_id: str) -> Asset
         directory=row["directory"],
         size_bytes=row["size_bytes"],
         media_type=row["media_type"],
+        thumbnail_path=Path(row["thumbnail_path"]) if row["thumbnail_path"] else None,
+        thumbnail_width=row["thumbnail_width"],
+        thumbnail_height=row["thumbnail_height"],
     )
     _validate_asset_path(config, asset)
     return asset
@@ -93,7 +102,7 @@ def asset_actions(config: AppConfig, asset: AssetRecord) -> dict[str, object]:
 
 
 def asset_response(asset: AssetRecord) -> dict[str, object]:
-    return {
+    response = {
         "asset_id": asset.asset_id,
         "source_id": asset.source_id,
         "source_display_name": asset.source_display_name,
@@ -105,6 +114,11 @@ def asset_response(asset: AssetRecord) -> dict[str, object]:
         "size_bytes": asset.size_bytes,
         "media_type": asset.media_type,
     }
+    if asset.thumbnail_path is not None:
+        response["thumbnail_url"] = f"/api/assets/{asset.asset_id}/thumb"
+        response["thumbnail_width"] = asset.thumbnail_width
+        response["thumbnail_height"] = asset.thumbnail_height
+    return response
 
 
 def _primary_action(

@@ -7,6 +7,7 @@ import sqlite3
 
 from findme.config import AppConfig, SourceConfig
 from findme.identity import asset_id_for
+from findme.thumbnails import ThumbnailResult, generate_thumbnail
 
 
 IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif"})
@@ -44,7 +45,7 @@ def index_sources(db: sqlite3.Connection, config: AppConfig) -> IndexSummary:
             relative_path = _relative_posix(file_path, source.root)
             seen_paths.add(relative_path)
             scanned += 1
-            upserted += _upsert_asset(db, source, file_path, relative_path)
+            upserted += _upsert_asset(db, config, source, file_path, relative_path)
 
         stale += _mark_missing_stale(db, source.id, seen_paths)
 
@@ -63,7 +64,11 @@ def _iter_source_files(source: SourceConfig) -> Iterator[Path]:
 
 
 def _upsert_asset(
-    db: sqlite3.Connection, source: SourceConfig, file_path: Path, relative_path: str
+    db: sqlite3.Connection,
+    config: AppConfig,
+    source: SourceConfig,
+    file_path: Path,
+    relative_path: str,
 ) -> int:
     stat = file_path.stat()
     extension = file_path.suffix.lower()
@@ -71,13 +76,24 @@ def _upsert_asset(
     if directory == ".":
         directory = ""
     asset_id = asset_id_for(source.id, relative_path)
+    thumbnail = _thumbnail_for(
+        file_path,
+        source,
+        data_root=config.data_root,
+        asset_id=asset_id,
+        relative_path=relative_path,
+        size_bytes=stat.st_size,
+        mtime_ns=stat.st_mtime_ns,
+        media_type=_media_type(extension),
+    )
     db.execute(
         """
         INSERT INTO assets(
           asset_id, source_id, relative_path, absolute_path, filename, stem,
-          extension, directory, size_bytes, mtime_ns, media_type, stale, indexed_at
+          extension, directory, size_bytes, mtime_ns, media_type,
+          thumbnail_path, thumbnail_width, thumbnail_height, stale, indexed_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP)
         ON CONFLICT(source_id, relative_path) DO UPDATE SET
           asset_id = excluded.asset_id,
           absolute_path = excluded.absolute_path,
@@ -88,6 +104,9 @@ def _upsert_asset(
           size_bytes = excluded.size_bytes,
           mtime_ns = excluded.mtime_ns,
           media_type = excluded.media_type,
+          thumbnail_path = excluded.thumbnail_path,
+          thumbnail_width = excluded.thumbnail_width,
+          thumbnail_height = excluded.thumbnail_height,
           stale = 0,
           indexed_at = CURRENT_TIMESTAMP
         """,
@@ -103,6 +122,9 @@ def _upsert_asset(
             stat.st_size,
             stat.st_mtime_ns,
             _media_type(extension),
+            str(thumbnail.path) if thumbnail else None,
+            thumbnail.width if thumbnail else None,
+            thumbnail.height if thumbnail else None,
         ),
     )
     db.execute("DELETE FROM asset_search WHERE asset_id = ?", (asset_id,))
@@ -151,3 +173,27 @@ def _media_type(extension: str) -> str:
     if extension in VIDEO_EXTENSIONS:
         return "video"
     return "other"
+
+
+def _thumbnail_for(
+    file_path: Path,
+    source: SourceConfig,
+    *,
+    data_root: Path,
+    asset_id: str,
+    relative_path: str,
+    size_bytes: int,
+    mtime_ns: int,
+    media_type: str,
+) -> ThumbnailResult | None:
+    if media_type != "image" or file_path.suffix.lower() == ".gif":
+        return None
+    return generate_thumbnail(
+        file_path,
+        data_root,
+        asset_id=asset_id,
+        source_id=source.id,
+        relative_path=relative_path,
+        size_bytes=size_bytes,
+        mtime_ns=mtime_ns,
+    )

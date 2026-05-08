@@ -7,11 +7,13 @@ from findme.config import AppConfig, SourceConfig
 from findme.db import connect, initialize_database
 from findme.indexer import index_sources
 
+from helpers import write_image
+
 
 def test_api_lists_sources_and_current_assets(tmp_path: Path) -> None:
     source_root = tmp_path / "assets"
     source_root.mkdir()
-    (source_root / "goblin.png").write_bytes(b"png")
+    write_image(source_root / "goblin.png")
     config = AppConfig(
         data_root=tmp_path / "data",
         sources=(
@@ -50,8 +52,8 @@ def test_api_lists_sources_and_current_assets(tmp_path: Path) -> None:
 def test_api_search_returns_ranked_results(tmp_path: Path) -> None:
     source_root = tmp_path / "assets"
     source_root.mkdir()
-    (source_root / "Goblin Warrior.png").write_bytes(b"png")
-    (source_root / "Dragon.png").write_bytes(b"png")
+    write_image(source_root / "Goblin Warrior.png")
+    write_image(source_root / "Dragon.png")
     config = AppConfig(
         data_root=tmp_path / "data",
         sources=(

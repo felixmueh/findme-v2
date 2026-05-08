@@ -53,6 +53,9 @@ def initialize_database(db: sqlite3.Connection) -> None:
           size_bytes INTEGER NOT NULL,
           mtime_ns INTEGER NOT NULL,
           media_type TEXT NOT NULL,
+          thumbnail_path TEXT,
+          thumbnail_width INTEGER,
+          thumbnail_height INTEGER,
           stale INTEGER NOT NULL DEFAULT 0 CHECK (stale IN (0, 1)),
           indexed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
           UNIQUE (source_id, relative_path)
@@ -79,3 +82,12 @@ def initialize_database(db: sqlite3.Connection) -> None:
         "INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)",
         (SCHEMA_VERSION,),
     )
+    _ensure_column(db, "assets", "thumbnail_path", "TEXT")
+    _ensure_column(db, "assets", "thumbnail_width", "INTEGER")
+    _ensure_column(db, "assets", "thumbnail_height", "INTEGER")
+
+
+def _ensure_column(db: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+    columns = {row["name"] for row in db.execute(f"PRAGMA table_info({table})")}
+    if column not in columns:
+        db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
