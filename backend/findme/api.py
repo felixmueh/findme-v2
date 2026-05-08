@@ -3,14 +3,25 @@ from __future__ import annotations
 from pathlib import Path
 import sqlite3
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
+from findme.assets import (
+    AssetNotFoundError,
+    UnsafeAssetPathError,
+    asset_actions,
+    asset_response,
+    get_asset,
+)
 from findme.config import AppConfig
 from findme.db import connect, initialize_database
 from findme.search import SearchResult, search_assets
 
 
-def create_app(config: AppConfig, db_path: Path | None = None) -> FastAPI:
+def create_app(
+    config: AppConfig, db_path: Path | None = None, static_dir: Path | None = None
+) -> FastAPI:
     app = FastAPI(title="Findme V2")
     database_path = db_path or config.data_root / "findme.sqlite3"
 
@@ -63,7 +74,39 @@ def create_app(config: AppConfig, db_path: Path | None = None) -> FastAPI:
             )
         return {"assets": [_search_response(result) for result in results]}
 
+    @app.get("/api/assets/{asset_id}")
+    def asset_detail(asset_id: str) -> dict[str, object]:
+        with connect(database_path) as db:
+            initialize_database(db)
+            asset = _load_asset_or_404(db, config, asset_id)
+        return {"asset": asset_response(asset), "actions": asset_actions(config, asset)}
+
+    @app.get("/api/assets/{asset_id}/file")
+    def asset_file(asset_id: str, download: bool = False) -> FileResponse:
+        with connect(database_path) as db:
+            initialize_database(db)
+            asset = _load_asset_or_404(db, config, asset_id)
+        if not asset.absolute_path.is_file():
+            raise HTTPException(status_code=404, detail="asset file is missing")
+        return FileResponse(
+            asset.absolute_path,
+            filename=asset.filename if download else None,
+            media_type=None,
+        )
+
+    if static_dir is not None and static_dir.exists():
+        app.mount("/", StaticFiles(directory=static_dir, html=True), name="frontend")
+
     return app
+
+
+def _load_asset_or_404(db: sqlite3.Connection, config: AppConfig, asset_id: str):
+    try:
+        return get_asset(db, config, asset_id)
+    except AssetNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="asset not found") from exc
+    except UnsafeAssetPathError as exc:
+        raise HTTPException(status_code=500, detail="asset path is outside source root") from exc
 
 
 def _fetch_assets(

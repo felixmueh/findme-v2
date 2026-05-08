@@ -1,0 +1,15 @@
+[app]
+data_root = ".findme-data"
+
+[[sources]]
+id = "dnd"
+display_name = "DND"
+root = "sample-assets"
+priority = 100
+media_extensions = [".png", ".jpg", ".jpeg", ".webp", ".gif", ".webm", ".mp4"]
+primary_output = "foundry"
+
+[[sources.output_profiles]]
+id = "foundry"
+label = "Foundry"
+prefix = "assets/dnd"

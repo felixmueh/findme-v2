@@ -4,6 +4,9 @@ import argparse
 from pathlib import Path
 import sys
 
+import uvicorn
+
+from findme.api import create_app
 from findme.config import ConfigError, load_config
 from findme.db import connect, initialize_database
 from findme.indexer import index_sources
@@ -37,6 +40,11 @@ def run(argv: list[str]) -> int:
                 f"marked stale {summary.marked_stale}"
             )
             return 0
+
+        if args.command == "serve":
+            app = create_app(config, db_path, static_dir=args.static_dir)
+            uvicorn.run(app, host=args.host, port=args.port)
+            return 0
     except ConfigError as exc:
         print(f"configuration error: {exc}", file=sys.stderr)
         return 2
@@ -54,6 +62,12 @@ def _build_parser() -> argparse.ArgumentParser:
 
     index = subparsers.add_parser("index", help="index configured asset sources")
     index.add_argument("--config", type=Path, required=True)
+
+    serve = subparsers.add_parser("serve", help="serve the API and built frontend")
+    serve.add_argument("--config", type=Path, required=True)
+    serve.add_argument("--host", default="127.0.0.1")
+    serve.add_argument("--port", type=int, default=8000)
+    serve.add_argument("--static-dir", type=Path, default=Path("frontend/dist"))
 
     return parser
 

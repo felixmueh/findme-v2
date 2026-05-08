@@ -76,3 +76,14 @@ def test_api_search_returns_ranked_results(tmp_path: Path) -> None:
     assert response.status_code == 200
     assert response.json()["assets"][0]["relative_path"] == "Goblin Warrior.png"
     assert response.json()["assets"][0]["score"] > 0
+
+
+def test_api_serves_static_frontend_when_configured(tmp_path: Path) -> None:
+    static_dir = tmp_path / "dist"
+    static_dir.mkdir()
+    (static_dir / "index.html").write_text("<main>Findme</main>", encoding="utf-8")
+    config = AppConfig(data_root=tmp_path / "data", sources=())
+
+    client = TestClient(create_app(config, tmp_path / "findme.sqlite3", static_dir=static_dir))
+
+    assert client.get("/").text == "<main>Findme</main>"

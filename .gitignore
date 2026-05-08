@@ -3,3 +3,8 @@
 __pycache__/
 *.py[cod]
 *.egg-info/
+.findme-data/
+sample-assets/
+frontend/dist/
+frontend/node_modules/
+sample-assets

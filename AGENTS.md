@@ -46,6 +46,14 @@ The complete DND asset library is mounted read-only at:
 /media/NAS/main/Documents/DND
 ```
 
+Prefer the local development sample library at:
+
+```text
+sample-assets
+```
+
+Use the sample library for normal development and tests. If more realistic coverage is needed, copy only the required assets from the read-only DND mount into `sample-assets`, keep the sample set below 40 GB, and do not bulk-mirror the full library.
+
 ## Scope Discipline
 
 Do not expand v1 scope without an explicit user decision. When a design decision changes, update `docs/DESIGN.md` so future work starts from the same understanding.

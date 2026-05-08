@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Iterator
 from pathlib import Path
 import sqlite3
 
@@ -50,8 +51,7 @@ def index_sources(db: sqlite3.Connection, config: AppConfig) -> IndexSummary:
     return IndexSummary(scanned_files=scanned, upserted_assets=upserted, marked_stale=stale)
 
 
-def _iter_source_files(source: SourceConfig) -> list[Path]:
-    files = []
+def _iter_source_files(source: SourceConfig) -> Iterator[Path]:
     for path in source.root.rglob("*"):
         if any(part in IGNORED_DIRS for part in path.relative_to(source.root).parts[:-1]):
             continue
@@ -59,8 +59,7 @@ def _iter_source_files(source: SourceConfig) -> list[Path]:
             continue
         if path.suffix.lower() not in source.media_extensions:
             continue
-        files.append(path)
-    return sorted(files, key=lambda item: item.relative_to(source.root).as_posix().lower())
+        yield path
 
 
 def _upsert_asset(
