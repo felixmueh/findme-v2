@@ -1,0 +1,94 @@
+[app]
+data_root = "/var/lib/findme-v2"
+
+[[sources]]
+id = "tokens"
+display_name = "Tokens"
+root = "/media/NAS/main/Documents/DND/Tokens"
+priority = 100
+media_extensions = [".png", ".jpg", ".jpeg", ".webp", ".gif", ".webm", ".mp4"]
+primary_output = "foundry"
+
+[[sources.output_profiles]]
+id = "foundry"
+label = "Foundry"
+prefix = "assets/dnd/Tokens"
+
+[[sources]]
+id = "maps"
+display_name = "Maps"
+root = "/media/NAS/main/Documents/DND/Maps"
+priority = 90
+media_extensions = [".png", ".jpg", ".jpeg", ".webp", ".gif", ".webm", ".mp4"]
+primary_output = "foundry"
+
+[[sources.output_profiles]]
+id = "foundry"
+label = "Foundry"
+prefix = "assets/dnd/Maps"
+
+[[sources]]
+id = "mapmaking"
+display_name = "MapMaking"
+root = "/media/NAS/main/Documents/DND/MapMaking"
+priority = 80
+media_extensions = [".png", ".jpg", ".jpeg", ".webp", ".gif", ".webm", ".mp4"]
+primary_output = "foundry"
+
+[[sources.output_profiles]]
+id = "foundry"
+label = "Foundry"
+prefix = "assets/dnd/MapMaking"
+
+[[sources]]
+id = "music"
+display_name = "Music"
+root = "/media/NAS/main/Documents/DND/Music"
+priority = 70
+media_extensions = [".mp3", ".ogg", ".wav", ".aif", ".m4a", ".flac"]
+primary_output = "foundry"
+
+[[sources.output_profiles]]
+id = "foundry"
+label = "Foundry"
+prefix = "assets/dnd/Music"
+
+[[sources]]
+id = "sounds"
+display_name = "Sounds"
+root = "/media/NAS/main/Documents/DND/Sounds"
+priority = 60
+media_extensions = [".mp3", ".ogg", ".wav", ".aif", ".m4a", ".flac"]
+primary_output = "foundry"
+
+[[sources.output_profiles]]
+id = "foundry"
+label = "Foundry"
+prefix = "assets/dnd/Sounds"
+
+[[sources]]
+id = "curseofstrahd"
+display_name = "CurseOfStrahd"
+root = "/media/NAS/main/Documents/DND/Adventures/CurseOfStrahd"
+priority = 50
+media_extensions = [
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".webp",
+  ".gif",
+  ".webm",
+  ".mp4",
+  ".mp3",
+  ".ogg",
+  ".wav",
+  ".aif",
+  ".m4a",
+  ".flac",
+]
+primary_output = "foundry"
+
+[[sources.output_profiles]]
+id = "foundry"
+label = "Foundry"
+prefix = "assets/dnd/Adventures/CurseOfStrahd"
