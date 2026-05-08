@@ -2,7 +2,7 @@ from pathlib import Path
 
 from findme.config import AppConfig, SourceConfig
 from findme.db import connect, initialize_database
-from findme.indexer import index_sources
+from findme.indexer import count_indexable_files, index_sources
 
 from helpers import write_image
 
@@ -41,6 +41,30 @@ def test_index_sources_adds_media_files_and_ignores_legacy_findme_data(tmp_path:
     assert [tuple(row) for row in rows] == [
         ("dnd", "Tokens/Goblin Warrior.PNG", "Goblin Warrior.PNG", "Goblin Warrior", ".png", 0)
     ]
+
+
+def test_count_indexable_files_matches_indexed_media_scope(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    (source_root / "Tokens").mkdir(parents=True)
+    (source_root / ".findme").mkdir()
+    write_image(source_root / "Tokens" / "Goblin.png")
+    write_image(source_root / "Tokens" / "Dragon.jpg")
+    write_image(source_root / ".findme" / "old.png")
+    (source_root / "Tokens" / "notes.txt").write_text("ignore", encoding="utf-8")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png", ".jpg"}),
+            ),
+        ),
+    )
+
+    assert count_indexable_files(config) == 2
 
 
 def test_index_sources_marks_missing_assets_stale(tmp_path: Path) -> None:

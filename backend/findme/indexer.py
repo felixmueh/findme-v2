@@ -126,6 +126,10 @@ def index_sources(
     )
 
 
+def count_indexable_files(config: AppConfig) -> int:
+    return sum(1 for source in config.sources for _ in _iter_source_files(source))
+
+
 def _iter_source_files(source: SourceConfig) -> Iterator[Path]:
     for path in source.root.rglob("*"):
         if any(part in IGNORED_DIRS for part in path.relative_to(source.root).parts[:-1]):

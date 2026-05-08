@@ -4,14 +4,14 @@ import argparse
 from pathlib import Path
 import shutil
 import sys
-import time
 
+from tqdm import tqdm
 import uvicorn
 
 from findme.api import create_app
 from findme.config import ConfigError, load_config
 from findme.db import connect, initialize_database
-from findme.indexer import index_sources
+from findme.indexer import count_indexable_files, index_sources
 
 
 def main() -> None:
@@ -42,7 +42,7 @@ def run(argv: list[str]) -> int:
                 return 2
             if args.rebuild_thumbnails:
                 shutil.rmtree(config.data_root / "cache" / "thumbs", ignore_errors=True)
-            progress = _IndexProgressPrinter()
+            progress = _IndexProgressBar(total_files=count_indexable_files(config))
             with connect(db_path) as db:
                 initialize_database(db)
                 summary = index_sources(
@@ -102,35 +102,39 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-class _IndexProgressPrinter:
-    def __init__(self) -> None:
-        self._last_printed = 0.0
-        self._interval_seconds = 1.0
+class _IndexProgressBar:
+    def __init__(self, *, total_files: int) -> None:
+        self._last_scanned = 0
+        self._bar = tqdm(
+            total=total_files,
+            desc="indexing",
+            unit="file",
+            dynamic_ncols=True,
+            bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}, {postfix}]",
+            file=sys.stderr,
+        )
 
     def __call__(self, progress) -> None:
-        now = time.monotonic()
-        if now - self._last_printed < self._interval_seconds:
-            return
-        self._last_printed = now
+        delta = progress.scanned_files - self._last_scanned
+        if delta > 0:
+            self._bar.update(delta)
+            self._last_scanned = progress.scanned_files
         rate = (
             progress.generated_thumbnails / progress.elapsed_seconds
             if progress.elapsed_seconds > 0
             else 0.0
         )
-        print(
-            "indexing "
+        self._bar.set_postfix_str(
             f"source={progress.current_source_id} "
-            f"scanned={progress.scanned_files} "
             f"upserted={progress.upserted_assets} "
             f"thumbnails={progress.generated_thumbnails} "
             f"thumbs/s={rate:.1f} "
-            f"stale={progress.marked_stale} "
-            f"elapsed={progress.elapsed_seconds:.1f}s",
-            file=sys.stderr,
+            f"stale={progress.marked_stale}",
+            refresh=False,
         )
 
     def finish(self) -> None:
-        self._last_printed = 0.0
+        self._bar.close()
 
 
 if __name__ == "__main__":

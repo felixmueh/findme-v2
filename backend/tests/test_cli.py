@@ -94,4 +94,6 @@ media_extensions = [".png"]
 
     captured = capsys.readouterr()
     assert "thumbs/s=" in captured.err
+    assert "100%" in captured.err
+    assert "1/1" in captured.err
     assert "generated 1 thumbnails" in captured.out
