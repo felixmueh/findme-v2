@@ -1,5 +1,6 @@
 [app]
 data_root = "/var/lib/findme-v2"
+thumbnail_workers = 2
 
 [[sources]]
 id = "dnd"

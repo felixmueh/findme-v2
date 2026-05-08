@@ -1,9 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from collections.abc import Iterator
+from concurrent.futures import Future, ThreadPoolExecutor, wait, FIRST_COMPLETED
+from dataclasses import dataclass
 from pathlib import Path
 import sqlite3
+import time
+from typing import Protocol
 
 from findme.config import AppConfig, SourceConfig
 from findme.identity import asset_id_for
@@ -20,12 +23,55 @@ class IndexSummary:
     scanned_files: int = 0
     upserted_assets: int = 0
     marked_stale: int = 0
+    generated_thumbnails: int = 0
 
 
-def index_sources(db: sqlite3.Connection, config: AppConfig) -> IndexSummary:
+class ProgressReporter(Protocol):
+    def __call__(self, progress: "IndexProgress") -> None: ...
+
+
+@dataclass(frozen=True)
+class IndexProgress:
+    scanned_files: int
+    upserted_assets: int
+    generated_thumbnails: int
+    marked_stale: int
+    current_source_id: str
+    elapsed_seconds: float
+
+
+@dataclass(frozen=True)
+class PendingAsset:
+    source: SourceConfig
+    file_path: Path
+    relative_path: str
+    size_bytes: int
+    mtime_ns: int
+    extension: str
+    directory: str
+    asset_id: str
+    media_type: str
+
+
+@dataclass(frozen=True)
+class PreparedAsset:
+    pending: PendingAsset
+    thumbnail: ThumbnailResult | None
+
+
+def index_sources(
+    db: sqlite3.Connection,
+    config: AppConfig,
+    *,
+    thumbnail_workers: int | None = None,
+    progress: ProgressReporter | None = None,
+) -> IndexSummary:
     scanned = 0
     upserted = 0
     stale = 0
+    thumbnails = 0
+    start = time.monotonic()
+    worker_count = thumbnail_workers if thumbnail_workers is not None else config.thumbnail_workers
 
     for source in config.sources:
         db.execute(
@@ -41,15 +87,43 @@ def index_sources(db: sqlite3.Connection, config: AppConfig) -> IndexSummary:
         )
 
         seen_paths = set()
-        for file_path in _iter_source_files(source):
-            relative_path = _relative_posix(file_path, source.root)
-            seen_paths.add(relative_path)
+        for prepared in _prepare_assets(db, config, source, max_workers=worker_count):
+            seen_paths.add(prepared.pending.relative_path)
             scanned += 1
-            upserted += _upsert_asset(db, config, source, file_path, relative_path)
+            upserted += _upsert_asset(db, prepared)
+            if prepared.thumbnail is not None and prepared.thumbnail.generated:
+                thumbnails += 1
+            if progress is not None:
+                progress(
+                    IndexProgress(
+                        scanned_files=scanned,
+                        upserted_assets=upserted,
+                        generated_thumbnails=thumbnails,
+                        marked_stale=stale,
+                        current_source_id=source.id,
+                        elapsed_seconds=time.monotonic() - start,
+                    )
+                )
 
         stale += _mark_missing_stale(db, source.id, seen_paths)
+        if progress is not None:
+            progress(
+                IndexProgress(
+                    scanned_files=scanned,
+                    upserted_assets=upserted,
+                    generated_thumbnails=thumbnails,
+                    marked_stale=stale,
+                    current_source_id=source.id,
+                    elapsed_seconds=time.monotonic() - start,
+                )
+            )
 
-    return IndexSummary(scanned_files=scanned, upserted_assets=upserted, marked_stale=stale)
+    return IndexSummary(
+        scanned_files=scanned,
+        upserted_assets=upserted,
+        marked_stale=stale,
+        generated_thumbnails=thumbnails,
+    )
 
 
 def _iter_source_files(source: SourceConfig) -> Iterator[Path]:
@@ -63,29 +137,108 @@ def _iter_source_files(source: SourceConfig) -> Iterator[Path]:
         yield path
 
 
-def _upsert_asset(
+def _prepare_assets(
     db: sqlite3.Connection,
     config: AppConfig,
     source: SourceConfig,
-    file_path: Path,
-    relative_path: str,
-) -> int:
+    *,
+    max_workers: int,
+) -> Iterator[PreparedAsset]:
+    in_flight: set[Future[PreparedAsset]] = set()
+    limit = max(max_workers * 2, 1)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        for file_path in _iter_source_files(source):
+            pending = _pending_asset(source, file_path)
+            cached = _current_cached_thumbnail(db, pending)
+            if cached is not None:
+                yield PreparedAsset(pending=pending, thumbnail=cached)
+                continue
+            in_flight.add(executor.submit(_prepare_asset, config, pending))
+            if len(in_flight) >= limit:
+                done, in_flight = wait(in_flight, return_when=FIRST_COMPLETED)
+                for future in done:
+                    yield future.result()
+        while in_flight:
+            done, in_flight = wait(in_flight, return_when=FIRST_COMPLETED)
+            for future in done:
+                yield future.result()
+
+
+def _pending_asset(source: SourceConfig, file_path: Path) -> PendingAsset:
     stat = file_path.stat()
     extension = file_path.suffix.lower()
+    relative_path = _relative_posix(file_path, source.root)
     directory = Path(relative_path).parent.as_posix()
     if directory == ".":
         directory = ""
     asset_id = asset_id_for(source.id, relative_path)
-    thumbnail = _thumbnail_for(
-        file_path,
-        source,
-        data_root=config.data_root,
-        asset_id=asset_id,
+    media_type = _media_type(extension)
+    return PendingAsset(
+        source=source,
+        file_path=file_path,
         relative_path=relative_path,
         size_bytes=stat.st_size,
         mtime_ns=stat.st_mtime_ns,
-        media_type=_media_type(extension),
+        extension=extension,
+        directory=directory,
+        asset_id=asset_id,
+        media_type=media_type,
     )
+
+
+def _prepare_asset(config: AppConfig, pending: PendingAsset) -> PreparedAsset:
+    thumbnail = _thumbnail_for(
+        pending.file_path,
+        pending.source,
+        data_root=config.data_root,
+        asset_id=pending.asset_id,
+        relative_path=pending.relative_path,
+        size_bytes=pending.size_bytes,
+        mtime_ns=pending.mtime_ns,
+        media_type=pending.media_type,
+    )
+    return PreparedAsset(pending=pending, thumbnail=thumbnail)
+
+
+def _current_cached_thumbnail(
+    db: sqlite3.Connection,
+    pending: PendingAsset,
+) -> ThumbnailResult | None:
+    if pending.media_type != "image" or pending.file_path.suffix.lower() == ".gif":
+        return None
+    row = db.execute(
+        """
+        SELECT thumbnail_path, thumbnail_width, thumbnail_height
+        FROM assets
+        WHERE source_id = ?
+          AND relative_path = ?
+          AND size_bytes = ?
+          AND mtime_ns = ?
+          AND stale = 0
+        """,
+        (
+            pending.source.id,
+            pending.relative_path,
+            pending.size_bytes,
+            pending.mtime_ns,
+        ),
+    ).fetchone()
+    if row is None or row["thumbnail_path"] is None:
+        return None
+    thumbnail_path = Path(row["thumbnail_path"])
+    if not thumbnail_path.is_file():
+        return None
+    return ThumbnailResult(
+        thumbnail_path,
+        row["thumbnail_width"],
+        row["thumbnail_height"],
+        generated=False,
+    )
+
+
+def _upsert_asset(db: sqlite3.Connection, prepared: PreparedAsset) -> int:
+    pending = prepared.pending
+    thumbnail = prepared.thumbnail
     db.execute(
         """
         INSERT INTO assets(
@@ -111,29 +264,36 @@ def _upsert_asset(
           indexed_at = CURRENT_TIMESTAMP
         """,
         (
-            asset_id,
-            source.id,
-            relative_path,
-            str(file_path),
-            file_path.name,
-            file_path.stem,
-            extension,
-            directory,
-            stat.st_size,
-            stat.st_mtime_ns,
-            _media_type(extension),
+            pending.asset_id,
+            pending.source.id,
+            pending.relative_path,
+            str(pending.file_path),
+            pending.file_path.name,
+            pending.file_path.stem,
+            pending.extension,
+            pending.directory,
+            pending.size_bytes,
+            pending.mtime_ns,
+            pending.media_type,
             str(thumbnail.path) if thumbnail else None,
             thumbnail.width if thumbnail else None,
             thumbnail.height if thumbnail else None,
         ),
     )
-    db.execute("DELETE FROM asset_search WHERE asset_id = ?", (asset_id,))
+    db.execute("DELETE FROM asset_search WHERE asset_id = ?", (pending.asset_id,))
     db.execute(
         """
         INSERT INTO asset_search(asset_id, source_id, filename, stem, directory, relative_path)
         VALUES (?, ?, ?, ?, ?, ?)
         """,
-        (asset_id, source.id, file_path.name, file_path.stem, directory, relative_path),
+        (
+            pending.asset_id,
+            pending.source.id,
+            pending.file_path.name,
+            pending.file_path.stem,
+            pending.directory,
+            pending.relative_path,
+        ),
     )
     return 1
 

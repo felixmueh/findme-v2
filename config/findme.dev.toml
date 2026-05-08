@@ -1,5 +1,6 @@
 [app]
 data_root = ".findme-data"
+thumbnail_workers = 2
 
 [[sources]]
 id = "dnd"

@@ -69,7 +69,7 @@ No Celery/Redis/job queue in v1.
 
 Media processing:
 
-- Pillow for static images
+- Pillow for static image thumbnail generation
 - consider Pillow-SIMD in deployment if it is useful and compatible
 - `ffmpeg` as a required external tool for video poster/preview generation
 - future PDF tooling chosen when PDF support starts

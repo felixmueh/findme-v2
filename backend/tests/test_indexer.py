@@ -70,3 +70,29 @@ def test_index_sources_marks_missing_assets_stale(tmp_path: Path) -> None:
 
     assert summary.marked_stale == 1
     assert stale == 1
+
+
+def test_index_sources_skips_unchanged_thumbnail_generation(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    write_image(source_root / "dragon.png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+
+    with connect(tmp_path / "findme.sqlite3") as db:
+        initialize_database(db)
+        first = index_sources(db, config)
+        second = index_sources(db, config)
+
+    assert first.generated_thumbnails == 1
+    assert second.generated_thumbnails == 0

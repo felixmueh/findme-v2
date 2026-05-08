@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 import shutil
 import sys
+import time
 
 import uvicorn
 
@@ -31,15 +32,31 @@ def run(argv: list[str]) -> int:
             return 0
 
         if args.command == "index":
+            thumbnail_workers = (
+                args.thumbnail_workers
+                if args.thumbnail_workers is not None
+                else config.thumbnail_workers
+            )
+            if thumbnail_workers < 1:
+                print("--thumbnail-workers must be a positive integer", file=sys.stderr)
+                return 2
             if args.rebuild_thumbnails:
                 shutil.rmtree(config.data_root / "cache" / "thumbs", ignore_errors=True)
+            progress = _IndexProgressPrinter()
             with connect(db_path) as db:
                 initialize_database(db)
-                summary = index_sources(db, config)
+                summary = index_sources(
+                    db,
+                    config,
+                    thumbnail_workers=thumbnail_workers,
+                    progress=progress,
+                )
+            progress.finish()
             print(
                 "indexed "
                 f"{summary.scanned_files} files, "
                 f"upserted {summary.upserted_assets}, "
+                f"generated {summary.generated_thumbnails} thumbnails, "
                 f"marked stale {summary.marked_stale}"
             )
             return 0
@@ -70,6 +87,11 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="delete cached thumbnails before indexing so they are regenerated",
     )
+    index.add_argument(
+        "--thumbnail-workers",
+        type=int,
+        help="override configured thumbnail worker count for this index run",
+    )
 
     serve = subparsers.add_parser("serve", help="serve the API and built frontend")
     serve.add_argument("--config", type=Path, required=True)
@@ -78,6 +100,37 @@ def _build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--static-dir", type=Path, default=Path("frontend/dist"))
 
     return parser
+
+
+class _IndexProgressPrinter:
+    def __init__(self) -> None:
+        self._last_printed = 0.0
+        self._interval_seconds = 1.0
+
+    def __call__(self, progress) -> None:
+        now = time.monotonic()
+        if now - self._last_printed < self._interval_seconds:
+            return
+        self._last_printed = now
+        rate = (
+            progress.generated_thumbnails / progress.elapsed_seconds
+            if progress.elapsed_seconds > 0
+            else 0.0
+        )
+        print(
+            "indexing "
+            f"source={progress.current_source_id} "
+            f"scanned={progress.scanned_files} "
+            f"upserted={progress.upserted_assets} "
+            f"thumbnails={progress.generated_thumbnails} "
+            f"thumbs/s={rate:.1f} "
+            f"stale={progress.marked_stale} "
+            f"elapsed={progress.elapsed_seconds:.1f}s",
+            file=sys.stderr,
+        )
+
+    def finish(self) -> None:
+        self._last_printed = 0.0
 
 
 if __name__ == "__main__":

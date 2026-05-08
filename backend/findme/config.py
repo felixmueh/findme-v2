@@ -37,6 +37,7 @@ class SourceConfig:
 class AppConfig:
     data_root: Path
     sources: tuple[SourceConfig, ...]
+    thumbnail_workers: int = 2
 
 
 _ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
@@ -56,6 +57,9 @@ def load_config(path: Path) -> AppConfig:
     data_root_raw = app.get("data_root")
     if not isinstance(data_root_raw, str) or not data_root_raw:
         raise ConfigError("[app].data_root must be a non-empty string")
+    thumbnail_workers = app.get("thumbnail_workers", 2)
+    if not isinstance(thumbnail_workers, int) or thumbnail_workers < 1:
+        raise ConfigError("[app].thumbnail_workers must be a positive integer")
 
     source_tables = raw.get("sources")
     if not isinstance(source_tables, list) or not source_tables:
@@ -72,7 +76,11 @@ def load_config(path: Path) -> AppConfig:
         seen_ids.add(source.id)
         sources.append(source)
 
-    return AppConfig(data_root=Path(data_root_raw).expanduser(), sources=tuple(sources))
+    return AppConfig(
+        data_root=Path(data_root_raw).expanduser(),
+        sources=tuple(sources),
+        thumbnail_workers=thumbnail_workers,
+    )
 
 
 def _load_source(table: dict[str, object]) -> SourceConfig:

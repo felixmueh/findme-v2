@@ -8,6 +8,7 @@ from PIL import Image, UnidentifiedImageError
 
 THUMBNAIL_MAX_SIZE = (256, 256)
 THUMBNAIL_QUALITY = 82
+THUMBNAIL_WEBP_METHOD = 2
 
 
 class ThumbnailError(RuntimeError):
@@ -19,6 +20,7 @@ class ThumbnailResult:
     path: Path
     width: int
     height: int
+    generated: bool = False
 
 
 def thumbnail_cache_path(
@@ -61,8 +63,13 @@ def generate_thumbnail(
         with Image.open(source_path) as image:
             image.thumbnail(THUMBNAIL_MAX_SIZE)
             thumbnail = image.convert("RGBA" if _has_alpha(image) else "RGB")
-            thumbnail.save(thumb_path, "WEBP", quality=THUMBNAIL_QUALITY, method=4)
-            return ThumbnailResult(thumb_path, thumbnail.width, thumbnail.height)
+            thumbnail.save(
+                thumb_path,
+                "WEBP",
+                quality=THUMBNAIL_QUALITY,
+                method=THUMBNAIL_WEBP_METHOD,
+            )
+        return ThumbnailResult(thumb_path, thumbnail.width, thumbnail.height, generated=True)
     except (OSError, UnidentifiedImageError) as exc:
         raise ThumbnailError(f"could not generate thumbnail for {source_path}: {exc}") from exc
 

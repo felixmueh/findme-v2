@@ -55,9 +55,34 @@ prefix = "assets/dnd"
     config = load_config(config_path)
 
     assert config.data_root == tmp_path / "data"
+    assert config.thumbnail_workers == 2
     assert config.sources[0].root == source_root.resolve()
     assert config.sources[0].media_extensions == frozenset({".png", ".jpg"})
     assert config.sources[0].output_profiles[0].prefix == "assets/dnd"
+
+
+def test_load_config_reads_thumbnail_worker_count(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    config_path = tmp_path / "findme.toml"
+    config_path.write_text(
+        f"""
+[app]
+data_root = "{tmp_path / "data"}"
+thumbnail_workers = 4
+
+[[sources]]
+id = "dnd"
+display_name = "DND"
+root = "{source_root}"
+priority = 10
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config.thumbnail_workers == 4
 
 
 def test_load_config_rejects_duplicate_source_ids(tmp_path: Path) -> None:
