@@ -53,3 +53,30 @@ def test_index_sources_generates_static_image_thumbnail(tmp_path: Path) -> None:
     assert row["thumbnail_height"] == 128
     with Image.open(row["thumbnail_path"]) as thumb:
         assert thumb.size == (256, 128)
+
+
+def test_index_sources_preserves_thumbnail_alpha(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    image_path = source_root / "Tokens" / "Ghost.png"
+    write_image(image_path, size=(32, 32), alpha=0)
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+
+    with connect(tmp_path / "findme.sqlite3") as db:
+        initialize_database(db)
+        index_sources(db, config)
+        thumbnail_path = db.execute("SELECT thumbnail_path FROM assets").fetchone()["thumbnail_path"]
+
+    with Image.open(thumbnail_path) as thumb:
+        assert thumb.mode == "RGBA"
+        assert thumb.getpixel((0, 0))[3] == 0

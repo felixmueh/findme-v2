@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import shutil
 import sys
 
 import uvicorn
@@ -30,6 +31,8 @@ def run(argv: list[str]) -> int:
             return 0
 
         if args.command == "index":
+            if args.rebuild_thumbnails:
+                shutil.rmtree(config.data_root / "cache" / "thumbs", ignore_errors=True)
             with connect(db_path) as db:
                 initialize_database(db)
                 summary = index_sources(db, config)
@@ -62,6 +65,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
     index = subparsers.add_parser("index", help="index configured asset sources")
     index.add_argument("--config", type=Path, required=True)
+    index.add_argument(
+        "--rebuild-thumbnails",
+        action="store_true",
+        help="delete cached thumbnails before indexing so they are regenerated",
+    )
 
     serve = subparsers.add_parser("serve", help="serve the API and built frontend")
     serve.add_argument("--config", type=Path, required=True)

@@ -60,8 +60,14 @@ def generate_thumbnail(
     try:
         with Image.open(source_path) as image:
             image.thumbnail(THUMBNAIL_MAX_SIZE)
-            thumbnail = image.convert("RGB")
+            thumbnail = image.convert("RGBA" if _has_alpha(image) else "RGB")
             thumbnail.save(thumb_path, "WEBP", quality=THUMBNAIL_QUALITY, method=4)
             return ThumbnailResult(thumb_path, thumbnail.width, thumbnail.height)
     except (OSError, UnidentifiedImageError) as exc:
         raise ThumbnailError(f"could not generate thumbnail for {source_path}: {exc}") from exc
+
+
+def _has_alpha(image: Image.Image) -> bool:
+    return image.mode in {"RGBA", "LA"} or (
+        image.mode == "P" and "transparency" in image.info
+    )
