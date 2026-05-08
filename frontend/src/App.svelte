@@ -70,6 +70,7 @@
   let collapsedDirectories = $state<Set<string>>(new Set())
   let assets = $state<Asset[]>([])
   let selected = $state<AssetDetail | null>(null)
+  let hoveredAsset = $state<Asset | null>(null)
   let loading = $state(false)
   let error = $state('')
   let copied = $state('')
@@ -196,6 +197,11 @@
   }
 
   function handleKeydown(event: KeyboardEvent) {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      selected = null
+      return
+    }
     if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
       event.preventDefault()
       chooseRelative(1)
@@ -300,6 +306,10 @@
             class:selected={asset.asset_id === selectedAssetId}
             class="asset-tile"
             type="button"
+            onmouseenter={() => (hoveredAsset = asset)}
+            onmouseleave={() => (hoveredAsset = hoveredAsset?.asset_id === asset.asset_id ? null : hoveredAsset)}
+            onfocus={() => (hoveredAsset = asset)}
+            onblur={() => (hoveredAsset = hoveredAsset?.asset_id === asset.asset_id ? null : hoveredAsset)}
             onclick={() => selectAsset(asset)}
           >
             <span class="tile-thumb">
@@ -320,9 +330,16 @@
         {/each}
       </div>
 
-      <aside class="asset-panel" aria-label="Selected asset">
-        {#if selected}
-          {@const SelectedIcon = assetIcon(selected.asset)}
+      {#if hoveredAsset?.thumbnail_url}
+        <aside class="hover-preview" aria-label="Hovered asset preview">
+          <img src={hoveredAsset.thumbnail_url} alt="" />
+          <span>{hoveredAsset.filename}</span>
+        </aside>
+      {/if}
+
+      {#if selected}
+        {@const SelectedIcon = assetIcon(selected.asset)}
+        <aside class="asset-panel" aria-label="Selected asset">
           <div class="preview">
             {#if selected.asset.media_type === 'image'}
               <img src={selected.actions.open_url} alt={selected.asset.filename} />
@@ -356,10 +373,8 @@
               <span>Download</span>
             </a>
           </div>
-        {:else}
-          <div class="empty">No asset selected</div>
-        {/if}
-      </aside>
+        </aside>
+      {/if}
     </section>
 
     <aside class="folder-panel" aria-label="Folder tree">
