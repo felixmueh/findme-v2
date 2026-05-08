@@ -57,8 +57,15 @@ def run(argv: list[str]) -> int:
                 f"{summary.scanned_files} files, "
                 f"upserted {summary.upserted_assets}, "
                 f"generated {summary.generated_thumbnails} thumbnails, "
+                f"failed {len(summary.thumbnail_failures)} thumbnails, "
                 f"marked stale {summary.marked_stale}"
             )
+            for failure in summary.thumbnail_failures:
+                print(
+                    "thumbnail failed: "
+                    f"{failure.source_id}:{failure.relative_path}: {failure.message}",
+                    file=sys.stderr,
+                )
             return 0
 
         if args.command == "serve":
@@ -128,6 +135,7 @@ class _IndexProgressBar:
             f"source={progress.current_source_id} "
             f"upserted={progress.upserted_assets} "
             f"thumbnails={progress.generated_thumbnails} "
+            f"failed={progress.failed_thumbnails} "
             f"thumbs/s={rate:.1f} "
             f"stale={progress.marked_stale}",
             refresh=False,

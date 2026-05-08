@@ -10,7 +10,7 @@ from typing import Protocol
 
 from findme.config import AppConfig, SourceConfig
 from findme.identity import asset_id_for
-from findme.thumbnails import ThumbnailResult, generate_thumbnail
+from findme.thumbnails import ThumbnailError, ThumbnailResult, generate_thumbnail
 
 
 IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif"})
@@ -24,6 +24,15 @@ class IndexSummary:
     upserted_assets: int = 0
     marked_stale: int = 0
     generated_thumbnails: int = 0
+    thumbnail_failures: tuple["ThumbnailFailure", ...] = ()
+
+
+@dataclass(frozen=True)
+class ThumbnailFailure:
+    source_id: str
+    relative_path: str
+    absolute_path: Path
+    message: str
 
 
 class ProgressReporter(Protocol):
@@ -35,6 +44,7 @@ class IndexProgress:
     scanned_files: int
     upserted_assets: int
     generated_thumbnails: int
+    failed_thumbnails: int
     marked_stale: int
     current_source_id: str
     elapsed_seconds: float
@@ -57,6 +67,7 @@ class PendingAsset:
 class PreparedAsset:
     pending: PendingAsset
     thumbnail: ThumbnailResult | None
+    thumbnail_failure: ThumbnailFailure | None = None
 
 
 def index_sources(
@@ -70,6 +81,7 @@ def index_sources(
     upserted = 0
     stale = 0
     thumbnails = 0
+    thumbnail_failures: list[ThumbnailFailure] = []
     start = time.monotonic()
     worker_count = thumbnail_workers if thumbnail_workers is not None else config.thumbnail_workers
 
@@ -93,12 +105,15 @@ def index_sources(
             upserted += _upsert_asset(db, prepared)
             if prepared.thumbnail is not None and prepared.thumbnail.generated:
                 thumbnails += 1
+            if prepared.thumbnail_failure is not None:
+                thumbnail_failures.append(prepared.thumbnail_failure)
             if progress is not None:
                 progress(
                     IndexProgress(
                         scanned_files=scanned,
                         upserted_assets=upserted,
                         generated_thumbnails=thumbnails,
+                        failed_thumbnails=len(thumbnail_failures),
                         marked_stale=stale,
                         current_source_id=source.id,
                         elapsed_seconds=time.monotonic() - start,
@@ -112,6 +127,7 @@ def index_sources(
                     scanned_files=scanned,
                     upserted_assets=upserted,
                     generated_thumbnails=thumbnails,
+                    failed_thumbnails=len(thumbnail_failures),
                     marked_stale=stale,
                     current_source_id=source.id,
                     elapsed_seconds=time.monotonic() - start,
@@ -123,6 +139,7 @@ def index_sources(
         upserted_assets=upserted,
         marked_stale=stale,
         generated_thumbnails=thumbnails,
+        thumbnail_failures=tuple(thumbnail_failures),
     )
 
 
@@ -191,17 +208,29 @@ def _pending_asset(source: SourceConfig, file_path: Path) -> PendingAsset:
 
 
 def _prepare_asset(config: AppConfig, pending: PendingAsset) -> PreparedAsset:
-    thumbnail = _thumbnail_for(
-        pending.file_path,
-        pending.source,
-        data_root=config.data_root,
-        asset_id=pending.asset_id,
-        relative_path=pending.relative_path,
-        size_bytes=pending.size_bytes,
-        mtime_ns=pending.mtime_ns,
-        media_type=pending.media_type,
-    )
-    return PreparedAsset(pending=pending, thumbnail=thumbnail)
+    try:
+        thumbnail = _thumbnail_for(
+            pending.file_path,
+            pending.source,
+            data_root=config.data_root,
+            asset_id=pending.asset_id,
+            relative_path=pending.relative_path,
+            size_bytes=pending.size_bytes,
+            mtime_ns=pending.mtime_ns,
+            media_type=pending.media_type,
+        )
+        return PreparedAsset(pending=pending, thumbnail=thumbnail)
+    except ThumbnailError as exc:
+        return PreparedAsset(
+            pending=pending,
+            thumbnail=None,
+            thumbnail_failure=ThumbnailFailure(
+                source_id=pending.source.id,
+                relative_path=pending.relative_path,
+                absolute_path=pending.file_path,
+                message=str(exc),
+            ),
+        )
 
 
 def _current_cached_thumbnail(

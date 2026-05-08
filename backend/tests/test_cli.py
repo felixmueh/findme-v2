@@ -97,3 +97,31 @@ media_extensions = [".png"]
     assert "100%" in captured.err
     assert "1/1" in captured.err
     assert "generated 1 thumbnails" in captured.out
+
+
+def test_cli_index_reports_thumbnail_failures(tmp_path: Path, capsys) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    (source_root / "broken.png").write_bytes(b"\x89PNG\r\n\x1a\ntruncated")
+    config_path = tmp_path / "findme.toml"
+    data_root = tmp_path / "data"
+    config_path.write_text(
+        f"""
+[app]
+data_root = "{data_root}"
+
+[[sources]]
+id = "dnd"
+display_name = "DND"
+root = "{source_root}"
+priority = 10
+media_extensions = [".png"]
+""",
+        encoding="utf-8",
+    )
+
+    assert run(["index", "--config", str(config_path), "--thumbnail-workers", "1"]) == 0
+
+    captured = capsys.readouterr()
+    assert "failed 1 thumbnails" in captured.out
+    assert "thumbnail failed: dnd:broken.png" in captured.err

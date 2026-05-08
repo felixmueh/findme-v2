@@ -120,3 +120,36 @@ def test_index_sources_skips_unchanged_thumbnail_generation(tmp_path: Path) -> N
 
     assert first.generated_thumbnails == 1
     assert second.generated_thumbnails == 0
+
+
+def test_index_sources_reports_thumbnail_failures_without_aborting(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    broken_path = source_root / "broken.png"
+    broken_path.write_bytes(b"\x89PNG\r\n\x1a\ntruncated")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+
+    with connect(tmp_path / "findme.sqlite3") as db:
+        initialize_database(db)
+        summary = index_sources(db, config)
+        row = db.execute(
+            "SELECT relative_path, thumbnail_path FROM assets WHERE relative_path = 'broken.png'"
+        ).fetchone()
+
+    assert summary.scanned_files == 1
+    assert summary.upserted_assets == 1
+    assert len(summary.thumbnail_failures) == 1
+    assert summary.thumbnail_failures[0].relative_path == "broken.png"
+    assert "could not generate thumbnail" in summary.thumbnail_failures[0].message
+    assert row["thumbnail_path"] is None
