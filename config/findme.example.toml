@@ -1,0 +1,15 @@
+[app]
+data_root = "/var/lib/findme-v2"
+
+[[sources]]
+id = "dnd"
+display_name = "DND"
+root = "/media/NAS/main/Documents/DND"
+priority = 100
+media_extensions = [".png", ".jpg", ".jpeg", ".webp", ".gif", ".webm", ".mp4"]
+primary_output = "foundry"
+
+[[sources.output_profiles]]
+id = "foundry"
+label = "Foundry"
+prefix = "assets/dnd"

@@ -40,6 +40,12 @@ If the configured environment is missing a required tool, directory, or dependen
 
 Asset source directories are read-only inputs. Do not write index files, metadata, generated derivatives, or cache data into source directories.
 
+The complete DND asset library is mounted read-only at:
+
+```text
+/media/NAS/main/Documents/DND
+```
+
 ## Scope Discipline
 
 Do not expand v1 scope without an explicit user decision. When a design decision changes, update `docs/DESIGN.md` so future work starts from the same understanding.
@@ -47,3 +53,5 @@ Do not expand v1 scope without an explicit user decision. When a design decision
 ## Work Tracking
 
 Agents may keep local todo trackers in `trackers/*.md` when useful for multi-step work.
+
+Commit completed, coherent work whenever it is sensible to do so.

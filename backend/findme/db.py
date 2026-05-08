@@ -1,0 +1,71 @@
+from __future__ import annotations
+
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
+import sqlite3
+
+
+SCHEMA_VERSION = 1
+
+
+@contextmanager
+def connect(path: Path) -> Iterator[sqlite3.Connection]:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    db = sqlite3.connect(path)
+    db.row_factory = sqlite3.Row
+    try:
+        yield db
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def initialize_database(db: sqlite3.Connection) -> None:
+    db.execute("PRAGMA journal_mode=WAL")
+    db.execute("PRAGMA foreign_keys=ON")
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS schema_migrations (
+          version INTEGER PRIMARY KEY,
+          applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS sources (
+          id TEXT PRIMARY KEY,
+          display_name TEXT NOT NULL,
+          root TEXT NOT NULL,
+          priority INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS assets (
+          asset_id TEXT PRIMARY KEY,
+          source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+          relative_path TEXT NOT NULL,
+          absolute_path TEXT NOT NULL,
+          filename TEXT NOT NULL,
+          stem TEXT NOT NULL,
+          extension TEXT NOT NULL,
+          directory TEXT NOT NULL,
+          size_bytes INTEGER NOT NULL,
+          mtime_ns INTEGER NOT NULL,
+          media_type TEXT NOT NULL,
+          stale INTEGER NOT NULL DEFAULT 0 CHECK (stale IN (0, 1)),
+          indexed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE (source_id, relative_path)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_assets_source_stale
+          ON assets (source_id, stale);
+
+        CREATE INDEX IF NOT EXISTS idx_assets_directory
+          ON assets (source_id, directory, stale);
+        """
+    )
+    db.execute(
+        "INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)",
+        (SCHEMA_VERSION,),
+    )
