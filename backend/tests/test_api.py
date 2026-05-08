@@ -45,3 +45,34 @@ def test_api_lists_sources_and_current_assets(tmp_path: Path) -> None:
     assert assets[0]["source_id"] == "dnd"
     assert assets[0]["relative_path"] == "goblin.png"
     assert assets[0]["media_type"] == "image"
+
+
+def test_api_search_returns_ranked_results(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    (source_root / "Goblin Warrior.png").write_bytes(b"png")
+    (source_root / "Dragon.png").write_bytes(b"png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+
+    client = TestClient(create_app(config, db_path))
+
+    response = client.get("/api/search", params={"q": "goblin"})
+
+    assert response.status_code == 200
+    assert response.json()["assets"][0]["relative_path"] == "Goblin Warrior.png"
+    assert response.json()["assets"][0]["score"] > 0

@@ -7,6 +7,7 @@ from fastapi import FastAPI, Query
 
 from findme.config import AppConfig
 from findme.db import connect, initialize_database
+from findme.search import SearchResult, search_assets
 
 
 def create_app(config: AppConfig, db_path: Path | None = None) -> FastAPI:
@@ -41,6 +42,26 @@ def create_app(config: AppConfig, db_path: Path | None = None) -> FastAPI:
             initialize_database(db)
             rows = _fetch_assets(db, source_id=source_id, directory=directory, limit=limit, offset=offset)
         return {"assets": [_asset_response(row) for row in rows]}
+
+    @app.get("/api/search")
+    def search(
+        q: str = Query(min_length=1),
+        source_id: str | None = None,
+        directory: str | None = None,
+        limit: int = Query(default=100, ge=1, le=500),
+        offset: int = Query(default=0, ge=0),
+    ) -> dict[str, list[dict[str, object]]]:
+        with connect(database_path) as db:
+            initialize_database(db)
+            results = search_assets(
+                db,
+                q,
+                source_id=source_id,
+                directory=directory,
+                limit=limit,
+                offset=offset,
+            )
+        return {"assets": [_search_response(result) for result in results]}
 
     return app
 
@@ -98,4 +119,20 @@ def _asset_response(row: sqlite3.Row) -> dict[str, object]:
         "directory": row["directory"],
         "size_bytes": row["size_bytes"],
         "media_type": row["media_type"],
+    }
+
+
+def _search_response(result: SearchResult) -> dict[str, object]:
+    return {
+        "asset_id": result.asset_id,
+        "source_id": result.source_id,
+        "source_display_name": result.source_display_name,
+        "relative_path": result.relative_path,
+        "filename": result.filename,
+        "stem": result.stem,
+        "extension": result.extension,
+        "directory": result.directory,
+        "size_bytes": result.size_bytes,
+        "media_type": result.media_type,
+        "score": result.score,
     }

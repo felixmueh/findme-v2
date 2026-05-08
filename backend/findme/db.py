@@ -63,6 +63,16 @@ def initialize_database(db: sqlite3.Connection) -> None:
 
         CREATE INDEX IF NOT EXISTS idx_assets_directory
           ON assets (source_id, directory, stale);
+
+        CREATE VIRTUAL TABLE IF NOT EXISTS asset_search USING fts5(
+          asset_id UNINDEXED,
+          source_id UNINDEXED,
+          filename,
+          stem,
+          directory,
+          relative_path,
+          tokenize = 'unicode61 tokenchars ''_-'''
+        );
         """
     )
     db.execute(

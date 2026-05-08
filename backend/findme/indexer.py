@@ -71,6 +71,7 @@ def _upsert_asset(
     directory = Path(relative_path).parent.as_posix()
     if directory == ".":
         directory = ""
+    asset_id = asset_id_for(source.id, relative_path)
     db.execute(
         """
         INSERT INTO assets(
@@ -92,7 +93,7 @@ def _upsert_asset(
           indexed_at = CURRENT_TIMESTAMP
         """,
         (
-            asset_id_for(source.id, relative_path),
+            asset_id,
             source.id,
             relative_path,
             str(file_path),
@@ -104,6 +105,14 @@ def _upsert_asset(
             stat.st_mtime_ns,
             _media_type(extension),
         ),
+    )
+    db.execute("DELETE FROM asset_search WHERE asset_id = ?", (asset_id,))
+    db.execute(
+        """
+        INSERT INTO asset_search(asset_id, source_id, filename, stem, directory, relative_path)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (asset_id, source.id, file_path.name, file_path.stem, directory, relative_path),
     )
     return 1
 
@@ -119,6 +128,15 @@ def _mark_missing_stale(db: sqlite3.Connection, source_id: str, seen_paths: set[
 
     db.executemany(
         "UPDATE assets SET stale = 1, indexed_at = CURRENT_TIMESTAMP WHERE source_id = ? AND relative_path = ?",
+        [(source_id, relative_path) for relative_path in missing],
+    )
+    db.executemany(
+        """
+        DELETE FROM asset_search
+        WHERE asset_id = (
+          SELECT asset_id FROM assets WHERE source_id = ? AND relative_path = ?
+        )
+        """,
         [(source_id, relative_path) for relative_path in missing],
     )
     return len(missing)
