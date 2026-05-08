@@ -87,8 +87,6 @@
   })
 
   $effect(() => {
-    sourceId
-    selectedDirectory = ''
     void loadDirectories()
   })
 
@@ -120,6 +118,12 @@
     const body = await response.json()
     sources = body.sources
     await loadDirectories()
+  }
+
+  function changeSource(event: Event) {
+    sourceId = (event.currentTarget as HTMLSelectElement).value
+    selectedDirectory = ''
+    collapsedDirectories = new Set()
   }
 
   async function loadDirectories() {
@@ -272,7 +276,7 @@
       <input bind:value={query} type="search" autocomplete="off" placeholder="Search assets" />
     </label>
 
-    <select bind:value={sourceId} aria-label="Source">
+    <select value={sourceId} aria-label="Source" onchange={changeSource}>
       <option value="">All sources</option>
       {#each sources as source}
         <option value={source.id}>{source.display_name}</option>
@@ -369,6 +373,14 @@
         <Folder size={15} />
         <span>All folders</span>
       </button>
+      {#if selectedDirectory && !visibleDirectories.some((directory) => directory.path === selectedDirectory)}
+        <button class="folder-row active retained" type="button" onclick={() => (selectedDirectory = '')}>
+          <span class="folder-spacer"></span>
+          <Folder size={15} />
+          <span>{selectedDirectory}</span>
+          <em>0</em>
+        </button>
+      {/if}
       {#each visibleDirectories as directory}
         {@const children = hasChildren(directory.path)}
         <button

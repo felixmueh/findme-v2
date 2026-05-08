@@ -349,6 +349,10 @@ a:focus-visible {
   color: var(--accent-hover);
 }
 
+.folder-row.retained {
+  border-bottom: 1px solid var(--border);
+}
+
 .folder-row svg {
   color: var(--muted);
 }
