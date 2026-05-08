@@ -8,3 +8,4 @@ sample-assets/
 frontend/dist/
 frontend/node_modules/
 sample-assets
+*.org
