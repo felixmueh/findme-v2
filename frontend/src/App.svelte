@@ -24,6 +24,7 @@
     name: string
     depth: number
     asset_count: number
+    matched_asset_count: number
   }
 
   type Asset = {
@@ -73,6 +74,7 @@
   let error = $state('')
   let copied = $state('')
   let debounceTimer: number | undefined
+  let directoryDebounceTimer: number | undefined
   let requestId = 0
 
   const selectedAssetId = $derived(selected?.asset.asset_id ?? '')
@@ -100,6 +102,15 @@
     }, 150)
   })
 
+  $effect(() => {
+    query
+    sourceId
+    window.clearTimeout(directoryDebounceTimer)
+    directoryDebounceTimer = window.setTimeout(() => {
+      void loadDirectories()
+    }, 150)
+  })
+
   async function loadSources() {
     const response = await fetch('/api/sources')
     if (!response.ok) {
@@ -114,6 +125,8 @@
   async function loadDirectories() {
     const params = new URLSearchParams()
     if (sourceId) params.set('source_id', sourceId)
+    const trimmed = query.trim()
+    if (trimmed) params.set('q', trimmed)
     const response = await fetch(`/api/directories?${params}`)
     if (!response.ok) {
       error = 'Could not load folders'
@@ -374,7 +387,13 @@
           {/if}
           <Folder size={15} />
           <span>{directory.name}</span>
-          <em>{directory.asset_count}</em>
+          <em>
+            {#if directory.matched_asset_count !== directory.asset_count}
+              <b>{directory.matched_asset_count}</b>/{directory.asset_count}
+            {:else}
+              {directory.asset_count}
+            {/if}
+          </em>
         </button>
       {/each}
     </aside>

@@ -380,6 +380,11 @@ a:focus-visible {
   font-style: normal;
 }
 
+.folder-row em b {
+  color: var(--danger);
+  font-weight: 700;
+}
+
 .empty {
   color: var(--muted);
   padding: 16px;

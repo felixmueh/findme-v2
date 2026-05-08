@@ -63,10 +63,12 @@ def create_app(
         return {"assets": [_asset_response(row) for row in rows]}
 
     @app.get("/api/directories")
-    def list_directories(source_id: str | None = None) -> dict[str, list[dict[str, object]]]:
+    def list_directories(
+        source_id: str | None = None, q: str | None = None
+    ) -> dict[str, list[dict[str, object]]]:
         with connect(database_path) as db:
             initialize_database(db)
-            directories = _fetch_directories(db, config, source_id=source_id)
+            directories = _fetch_directories(db, config, source_id=source_id, query=q)
         return {"directories": directories}
 
     @app.get("/api/search")
@@ -184,9 +186,36 @@ def _fetch_assets(
 
 
 def _fetch_directories(
-    db: sqlite3.Connection, config: AppConfig, *, source_id: str | None
+    db: sqlite3.Connection, config: AppConfig, *, source_id: str | None, query: str | None
 ) -> list[dict[str, object]]:
     source_lookup = {source.id: source.display_name for source in config.sources}
+    total_counts = _directory_counts(db, source_id=source_id)
+    match_counts = total_counts
+    if query and query.strip():
+        matched_assets = search_assets(db, query, source_id=source_id, limit=10_000)
+        match_counts = _counts_from_asset_directories(
+            [(asset.source_id, asset.directory) for asset in matched_assets]
+        )
+    directories = []
+    for (source, path), total_count in total_counts.items():
+        matched_count = match_counts.get((source, path), 0)
+        if matched_count == 0:
+            continue
+        name = source_lookup.get(source, source) if path == "" else path.rsplit("/", 1)[-1]
+        depth = 0 if path == "" else len(path.split("/"))
+        directories.append(
+            {
+                "path": path,
+                "name": name,
+                "depth": depth,
+                "asset_count": total_count,
+                "matched_asset_count": matched_count,
+            }
+        )
+    return sorted(directories, key=lambda item: (item["path"].lower() != "", item["path"].lower()))
+
+
+def _directory_counts(db: sqlite3.Connection, *, source_id: str | None) -> dict[tuple[str, str], int]:
     where = ["stale = 0"]
     params: list[object] = []
     if source_id:
@@ -202,26 +231,27 @@ def _fetch_directories(
         """,
         params,
     ).fetchall()
+    return _counts_from_asset_directories(
+        [(row["source_id"], row["directory"], row["direct_count"]) for row in rows]
+    )
 
+
+def _counts_from_asset_directories(
+    directories: list[tuple[str, str] | tuple[str, str, int]],
+) -> dict[tuple[str, str], int]:
     counts: dict[tuple[str, str], int] = {}
-    for row in rows:
-        source = row["source_id"]
-        direct_count = row["direct_count"]
+    for item in directories:
+        source = item[0]
+        directory = item[1]
+        direct_count = item[2] if len(item) == 3 else 1
         counts[(source, "")] = counts.get((source, ""), 0) + direct_count
-        directory = row["directory"]
         if not directory:
             continue
         parts = directory.split("/")
         for index in range(1, len(parts) + 1):
             path = "/".join(parts[:index])
             counts[(source, path)] = counts.get((source, path), 0) + direct_count
-
-    directories = []
-    for (source, path), count in counts.items():
-        name = source_lookup.get(source, source) if path == "" else path.rsplit("/", 1)[-1]
-        depth = 0 if path == "" else len(path.split("/"))
-        directories.append({"path": path, "name": name, "depth": depth, "asset_count": count})
-    return sorted(directories, key=lambda item: (item["path"].lower() != "", item["path"].lower()))
+    return counts
 
 
 def _asset_response(row: sqlite3.Row) -> dict[str, object]:
