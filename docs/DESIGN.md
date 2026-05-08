@@ -1,0 +1,386 @@
+# Findme V2 Design
+
+This document captures the design goals and decisions for `findme-v2`. It is intentionally about product shape and system design, not implementation details.
+
+This document is the source of truth for product and system design decisions. When decisions change, update this file.
+
+Technology choices are tracked in `docs/STACK.md`. Search-specific design is tracked in `docs/SEARCH.md`.
+
+## Product Intent
+
+`findme-v2` is a personal asset finder hosted on the same server where the asset sources live. It replaces the original model of a local desktop app reading assets over a network share.
+
+The primary purpose remains:
+
+- find visual/tabletop assets quickly
+- copy a usable path to the clipboard
+- copy a transformed path for virtual tabletop software
+- download or open the original asset when needed
+
+This is personal-use software. It should be optimized for this server, this asset layout, and this workflow. General product configurability is not a goal when a simple server-side config or code edit is enough.
+
+The implementation should stay small, maintainable, and tested. It should not carry fallback mechanisms for unknown environments. If this server is missing a required tool, directory, or dependency, the app should fail with a clear actionable error rather than silently degrading into a weaker generic path.
+
+## Product Surface
+
+The v1 product surface is a standalone browser web app served by the asset server.
+
+FoundryVTT integration is a future goal. It should build on the same server API later, similar in spirit to tools like Moulinette FilePicker, but v1 should not be Foundry-first.
+
+## Access Model
+
+V1 is private/trusted-user only.
+
+Assumptions:
+
+- LAN/VPN/private access
+- no public internet exposure
+- no user accounts in v1
+- no source-level permissions in v1
+
+If the app is later exposed publicly or shared with players, authentication and authorization need a separate design pass.
+
+## Core Model
+
+The app indexes files plus source/directory structure as first-class data.
+
+Each indexed asset should know:
+
+- source id
+- source display name
+- source priority
+- source-relative path
+- absolute server path
+- filename, stem, extension
+- directory path segments
+- normalized searchable tokens
+- file size
+- modified time
+- image/video dimensions when available
+- media type
+- thumbnail/poster cache references
+- stale/current state
+
+The transformed VTT path is not indexed. It is derived at request/display/copy time from the asset identity plus current source configuration. Changing path transform rules should not require re-indexing.
+
+## Identity
+
+The canonical identity fields are:
+
+- `source_id`
+- `relative_path`
+
+V1 should also derive a short, URL-safe `asset_id` from those fields for API handles, thumbnail URLs, details requests, and client state.
+
+The `asset_id` must be collision-resistant. It is an ergonomic handle, not the source of truth. No content hashing is required for v1.
+
+Content-hash deduplication and move detection are future features.
+
+## Sources And Configuration
+
+Configuration is server-owned and personal. It can live in a config file checked into the repo or in server-side files. It does not need a UI editor.
+
+Each source should conceptually define:
+
+- stable source id
+- display name
+- filesystem root
+- priority
+- enabled media types
+- indexing/thumbnail settings
+- derived actions or output profiles
+
+Path transformations should be source-owned with named output profiles. A global default can exist, but source-specific rules should win.
+
+Example profiles might include:
+
+- raw/source-relative path
+- FoundryVTT path
+- download URL
+- open/preview URL
+
+## Derived Resources And Actions
+
+Path transformation is a special case of a broader concept: derived resources/actions.
+
+An action can produce:
+
+- a clipboard string
+- a transformed VTT path
+- a download URL
+- an open/preview URL
+- future Foundry-specific payloads
+
+Derived actions are computed from the indexed asset plus current source configuration. They should not require re-indexing when changed.
+
+V1 interaction model:
+
+- default click or Enter copies the primary derived path
+- secondary actions live in a compact per-result menu or details panel
+- v1 focuses on single-asset actions, not bulk actions
+
+## Indexing Model
+
+Search and browsing read only indexed data. There is no slow search path for v1.
+
+Indexing is manual for v1. Live filesystem watching is deferred.
+
+Manual indexing should still be incremental:
+
+- compare current filesystem entries against stored fingerprints
+- avoid regenerating expensive metadata/thumbnails when size and mtime are unchanged
+- detect missing files
+- add newly discovered files
+
+The app must never write index files into source directories. Unlike original `findme`, v2 keeps all index state and generated cache files under the app/server data directory.
+
+Legacy `.findme` directories and index files from previous versions are source artifacts only. V2 should ignore them and should not import, update, delete, or depend on them.
+
+Legacy JSON metadata dictionaries from previous versions are out of scope for v1. V2 should ignore them; they may be removed from the source tree later.
+
+## Stale And Cleanup Behavior
+
+When indexing finds that an asset is missing, mark it stale.
+
+Normal search and browse should hide stale assets.
+
+A cleanup command should:
+
+- remove stale records from the database
+- delete thumbnail/poster cache files not referenced by current database records
+
+## Storage Model
+
+The server owns a local persistent index database under the app data directory. The production app data root is expected to be:
+
+```text
+/var/lib/findme-v2
+```
+
+Development may override this path.
+
+The database is canonical for metadata:
+
+- assets
+- sources
+- directory tree and counts
+- token/search metadata
+- file fingerprint state
+- stale/current state
+- generated thumbnail/poster references
+- future embeddings
+- future content hash/dedup records
+
+Generated thumbnails and poster frames are binary cache files, not database blobs. They should be stored under the app cache directory and referenced by DB records.
+
+Thumbnail/poster cache identity should use a cheap file fingerprint such as:
+
+```text
+source_id + relative_path + size + mtime
+```
+
+This avoids content hashing in v1 while still invalidating derived files when an asset changes.
+
+## Media Scope
+
+V1 should support common image and VTT media assets:
+
+- `.png`
+- `.jpg`
+- `.jpeg`
+- `.webp`
+- `.gif`
+- `.webm`
+- `.mp4`
+
+Static images should get generated thumbnails.
+
+Animated/video assets should get representative poster thumbnails. Playback/preview can happen only when explicitly opened or selected.
+
+PDF support is a future goal. The media pipeline should remain extensible and not hard-code assumptions that every asset is a raster image.
+
+External tools may be required for media processing. For example, video poster generation can require `ffmpeg`, and future PDF extraction can require a PDF-specific tool. Missing tools should produce clear errors; v1 should not implement broad fallback behavior for incomplete environments.
+
+## Search And Ranking
+
+Search internals are tracked in `docs/SEARCH.md`.
+
+Settled design constraints:
+
+- search reads indexed data only
+- no live filesystem walking during search
+- ranking should be centralized and tunable
+- source priority should be a ranking signal or tiebreaker, not a hard ordering rule
+- selected source/directory filters should be hard filters
+- ranking explainability is optional; ranking quality and tunability matter more
+
+The ranking layer should be one place that receives available signals and decides the final ordering key/score.
+
+Potential ranking inputs:
+
+- text match score
+- source priority
+- selected source/directory filters
+- media type
+- recency
+- file/path signals
+- future embedding similarity
+
+The exact search and ranking model will be discussed separately.
+
+## Performance Goals
+
+Initial page load is less important than interaction speed.
+
+Important performance goals:
+
+- typing must never be blocked by search
+- keystroke-to-updated-results should be as fast as practical
+- thumbnail display should be extremely fast
+- scrolling through large thumbnail result sets should be extremely fast
+- search should start quickly, but old searches can be aborted or superseded
+
+Search interaction model:
+
+- client debounce, default around 150 ms and configurable
+- each search has a query id or cancellation mechanism
+- stale responses must be ignored by the client
+- server-side cancellation is useful where practical
+- results return lightweight metadata first
+- thumbnails/posters are served separately from precomputed cache files
+- browser/cache headers should make thumbnails cheap to revisit
+- result grids must use virtualization so the DOM only contains visible and near-visible items
+
+## Result Loading
+
+Search results should be range-based over a ranked result set.
+
+The client can request slices such as:
+
+```text
+offset=0&limit=100
+offset=100&limit=100
+```
+
+This fits virtualized grids and huge thumbnail sets better than traditional page navigation.
+
+## Source Tree And Browsing
+
+The source/directory tree is first-class UI, not decoration.
+
+It should:
+
+- show sources ordered by configured priority/name
+- show expandable indexed directories
+- show asset counts per source/directory
+- act as a hard filter for search and browse
+- never perform live filesystem walking from the UI
+
+Selecting a source or directory with no text query should show assets under that subtree. Global empty-query behavior can be more conservative, such as showing nothing, recent assets, or preferred assets.
+
+## Preview Experience
+
+V1 should have a lightweight details/preview panel, not a full editor.
+
+The panel can show:
+
+- larger preview
+- source
+- path/breadcrumbs
+- basic metadata
+- available derived actions
+
+The original `findme` tint/border image editor is deferred unless it becomes actively needed again.
+
+For animated/video assets, the UI can show a poster thumbnail first and only play/open the original when explicitly requested.
+
+V1 precomputes named derivatives rather than arbitrary sizes. Exact sizes are implementation decisions; for example, v1 might start with a single thumbnail size named by its actual dimensions, such as `thumb_512`, plus a separate larger preview derivative. The derivative pipeline should stay open to additional named sizes later.
+
+## Layout
+
+The suggested v1 desktop layout is two-pane:
+
+- main pane: search input and virtualized image-result grid
+- right pane: selected/hovered asset preview and metadata above the source tree filter
+
+Other layouts can be prototyped and reviewed if they preserve the same fast search, preview, filtering, and keyboard-focused workflows.
+
+Grid cards should stay visually minimal. For v1, result cards show only the thumbnail image. Filename, source, path, and actions appear in the preview area below the larger preview image.
+
+Preview behavior:
+
+- hover updates preview after a short configurable delay
+- keyboard focus updates preview immediately
+- click or Enter copies the primary derived path and pins/updates the preview
+- moving hover away returns to the pinned preview when there is one
+- no modal is used for the primary browsing flow
+
+## Keyboard Interaction
+
+Keyboard-first operation is a core v1 goal.
+
+Expected interaction style:
+
+- `/` focuses search
+- Vim-style movement where applicable
+- arrow keys or Vim keys navigate results
+- Enter copies the default derived path
+- shortcuts for secondary actions can be added for raw path, download, and preview
+
+Mouse interaction should still be efficient, but keyboard flow should be designed from the start.
+
+## Indexing Controls
+
+V1 should use server-side admin/CLI indexing controls first.
+
+Examples:
+
+- index all sources
+- index one source
+- cleanup stale records/cache files
+
+The web UI should show lightweight index status and errors per source so it is clear when results may be incomplete. A full admin console is not required for v1.
+
+## Testing
+
+Testing is a hard requirement for v1 implementation. Use the `tdd` skill when building core behavior.
+
+Tests should prioritize observable behavior through public interfaces, especially:
+
+- indexing
+- source and asset identity
+- derived actions/path transforms
+- stale cleanup
+- search and ranking once finalized
+- key API behavior
+
+## Logging
+
+Logging should be configurable.
+
+Development can use debug logging. Normal server deployment should use info/error logging. Logs should go to stdout/stderr so systemd/journald can collect them.
+
+## Future Goals
+
+Future goals include:
+
+- FoundryVTT integration
+- AI/embedding search over indexed images
+- content-hash deduplication
+- move detection
+- PDF indexing/preview
+- richer action profiles for VTT-specific workflows
+- optional ranking/debug explanations if useful during tuning
+
+## Non-Goals For V1
+
+- public multi-user product
+- account system
+- public internet hardening
+- source permissions
+- live filesystem watching
+- slow filesystem search fallback
+- full image editor
+- bulk asset actions
+- general-purpose configuration UI
+- legacy JSON metadata dictionary support
