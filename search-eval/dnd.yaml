@@ -566,6 +566,357 @@ sets:
       - source_id: music
         relative_path: "situation_stealth/LorneBalfe-SwiftandSilent.mp3"
 
+  wolf_tokens:
+    assets:
+      - source_id: tokens
+        relative_path: "animated/wolf.mp4"
+      - source_id: tokens
+        relative_path: "devinnight/TP4Werecreatures/wolf_18.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP4Werecreatures/wolf_19.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP6Familiars/FS1_Wolf.png"
+
+  bear_tokens:
+    assets:
+      - source_id: tokens
+        relative_path: "devinnight/TP0Freebies/Polarbear_02.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP4Werecreatures/bear_22.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP4Werecreatures/bear_24.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP6Familiars/FS1_Bear_Brown.png"
+
+  bugbear_tokens:
+    assets:
+      - source_id: tokens
+        relative_path: "custom/enemies/Bugbear.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP0Freebies/Bugbear_Mace_04.png"
+
+  rat_tokens:
+    assets:
+      - source_id: tokens
+        relative_path: "devinnight/TP0Freebies/Rat_Giant_05.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP4Werecreatures/rat_07.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP4Werecreatures/rat_11.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP4Werecreatures/rat_swarm.png"
+
+  spider_tokens:
+    assets:
+      - source_id: tokens
+        relative_path: "devinnight/TP5DMEssentials1/DME_Spider_Giant.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP5DMEssentials1/DME_Spider_Giant_2.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP5DMEssentials1/DME_Spider_Giant_3.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP6Familiars/FS1_Spider.png"
+
+  familiar_tokens:
+    assets:
+      - source_id: tokens
+        relative_path: "devinnight/TP6Familiars/FS1_Cat_Black.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP6Familiars/FS1_Raven.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP6Familiars/FS1_Owl_Barn.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP6Familiars/FS1_Snake.png"
+
+  marine_rifle_tokens:
+    assets:
+      - source_id: tokens
+        relative_path: "devinnight/TP20Soldiers/Human_Marine_Rifle_Blue.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP20Soldiers/Human_Marine_Rifle_Red.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP20Soldiers/Human_Marine_Rifle_Urban.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP20SoldiersPART2/Human_Marine_SniperRifle_Blue.png"
+
+  swat_tokens:
+    assets:
+      - source_id: tokens
+        relative_path: "devinnight/TP20SoldiersPART2/Human_SWAT_Rifle.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP20SoldiersPART2/Human_SWAT_Pistol.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP20SoldiersPART2/Human_SWAT_Shotgun_Masked.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP20SoldiersPART2/Human_SWAT_SniperRifle.png"
+
+  alien_bug_gunners:
+    assets:
+      - source_id: tokens
+        relative_path: "devinnight/TP19Aliens/Alien_Bug_Rifle_Gray.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP19Aliens/Alien_Bug_Rifle_Green.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP19Aliens/Alien_Bug_Pistol_Green.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP19Aliens/Alien_Bug_SniperRifle_Green.png"
+
+  hill_giant_tokens:
+    assets:
+      - source_id: tokens
+        relative_path: "devinnight/TP0Freebies/Giant_Hill_16.png"
+      - source_id: tokens
+        relative_path: "FA_Tokens/Creatures/Giant/Hill_Giant_Huge_Scale166_Giant_01.png"
+      - source_id: tokens
+        relative_path: "FA_Tokens/Creatures/Giant/Hill_Giant_Huge_Scale166_Giant_02.png"
+
+  troll_tokens:
+    assets:
+      - source_id: tokens
+        relative_path: "animated/bridge_troll.mp4"
+      - source_id: tokens
+        relative_path: "devinnight/TP3OrcsandTrolls/Troll_fighter.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP3OrcsandTrolls/Troll_fighter1.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP3OrcsandTrolls/CaveTroll_fighter5.png"
+
+  ogre_tokens:
+    assets:
+      - source_id: tokens
+        relative_path: "devinnight/TP3OrcsandTrolls/Ogre_berserker.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP3OrcsandTrolls/Ogre_fighter.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP3OrcsandTrolls/Ogre_shaman.png"
+
+  balor_tokens:
+    assets:
+      - source_id: tokens
+        relative_path: "FA_Tokens/Creatures/Fiend/Balor_Huge_Scale233_Fiend_01.png"
+      - source_id: tokens
+        relative_path: "FA_Tokens/Creatures/Fiend/Balor_Huge_Scale233_Fiend_02.png"
+      - source_id: tokens
+        relative_path: "FA_Tokens/Creatures/Fiend/Balor_Huge_Scale233_Fiend_03.png"
+
+  devil_tokens:
+    assets:
+      - source_id: tokens
+        relative_path: "FA_Tokens/Creatures/Fiend/Barbed_Devil_Medium_Fiend_01.png"
+      - source_id: tokens
+        relative_path: "FA_Tokens/Creatures/Fiend/Bearded_Devil_Medium_Fiend_A_01.png"
+      - source_id: tokens
+        relative_path: "FA_Tokens/Creatures/Fiend/Bone_Devil_Large_Scale200_Fiend_A_01.png"
+      - source_id: tokens
+        relative_path: "FA_Tokens/Creatures/Fiend/Chain_Devil_Medium_Scale300_Fiend_01.png"
+
+  airship_maps:
+    assets:
+      - source_id: maps
+        relative_path: "Dynamic_Dungeons/Airship/Stills/Airship_FULLGrid_144.jpg"
+      - source_id: maps
+        relative_path: "Dynamic_Dungeons/Airship/Stills/Airship_GRIDLESS_144.jpg"
+      - source_id: maps
+        relative_path: "Dynamic_Dungeons/Airship/Videos/Airship_day_grid_sound.webm"
+
+  ancient_ruins_maps:
+    assets:
+      - source_id: maps
+        relative_path: "Dynamic_Dungeons/Ancient Ruins/Stills/Ancient_ruins_Broadleaf_day-grid.jpg"
+      - source_id: maps
+        relative_path: "Dynamic_Dungeons/Ancient Ruins/Stills/Ancient_ruins_Jungle_day-gridless.jpg"
+      - source_id: maps
+        relative_path: "Dynamic_Dungeons/Ancient Ruins/Videos/Ancient_ruins_Broadleaf_day_grid.webm"
+
+  forest_camp_maps:
+    assets:
+      - source_id: maps
+        relative_path: "Dynamic_Dungeons/Camp in the Woods/Stills/campinthewoods-day-grid.jpg"
+      - source_id: maps
+        relative_path: "Dynamic_Dungeons/Camp in the Woods/Stills/campinthewoods-night-gridless.jpg"
+      - source_id: maps
+        relative_path: "Dynamic_Dungeons/Camp in the Woods/Videos/campinthewoods-day-grid-converted.webm"
+
+  city_street_maps:
+    assets:
+      - source_id: maps
+        relative_path: "Dynamic_Dungeons/City/thumbnails/City_Streets1_Day-HD_grid.jpg"
+      - source_id: maps
+        relative_path: "Dynamic_Dungeons/City/thumbnails/City_Streets1_Night-HD_gridless.jpg"
+      - source_id: maps
+        relative_path: "Dynamic_Dungeons/City/thumbnails/City_streets_encounter2_HD_day_gridded.jpg"
+
+  desert_maps:
+    assets:
+      - source_id: maps
+        relative_path: "Dynamic_Dungeons/Desert/Stills/desert_rocky_encounter_day.jpg"
+      - source_id: maps
+        relative_path: "Dynamic_Dungeons/Desert/Stills/desert_ruins_day.jpg"
+      - source_id: maps
+        relative_path: "Dynamic_Dungeons/Desert/Stills/oasis.jpg"
+
+  cave_maps:
+    assets:
+      - source_id: maps
+        relative_path: "Dynamic_Dungeons/Goblin Cave/Inside the Cave/Stills/goblin-cave-insidethecave-grid.jpg"
+      - source_id: maps
+        relative_path: "Dynamic_Dungeons/Goblin Cave/Outside/Stills/goblin-cave-day-grid.jpg"
+      - source_id: maps
+        relative_path: "Dynamic_Dungeons/Modular Cave - Mine/Stills/cave_a.jpg"
+
+  sewer_maps:
+    assets:
+      - source_id: maps
+        relative_path: "OtherMaps/BTL/RatfangSewers.jpg"
+      - source_id: maps
+        relative_path: "WizardArchive/Complete Scoundrel/0103-sewer-pipe-black-market.jpg"
+      - source_id: maps
+        relative_path: "WizardArchive/Dungeons and More Dungeons/span-style-font-familyarial-helvetica-sans-serif-font-size12px-0508-dungeon-catacomb-or-sewer-span.jpg"
+
+  snow_overlay_assets:
+    assets:
+      - source_id: maps
+        relative_path: "ForgottenAdventures/Overlays/Falling_Snow_Overlay.png"
+      - source_id: maps
+        relative_path: "ForgottenAdventures/Overlays/Snow_Drifts/Snow_Drift_01.png"
+      - source_id: maps
+        relative_path: "ForgottenAdventures/Rocks/Snow_Boulders/Snowy_Boulder_A_01.png"
+
+  tent_assets:
+    assets:
+      - source_id: mapmaking
+        relative_path: "DungeondraftPacks/DungeondraftPacksExtracted/[BW] 08 Carnival and Circus/textures/objects/tents/bw_tent_01_colorable.png"
+      - source_id: mapmaking
+        relative_path: "DungeondraftPacks/DungeondraftPacksExtracted/[BW] Assets_A/textures/objects/Decor/Structures/Tents/bw_cloth_tent_oval_01a.webp"
+      - source_id: mapmaking
+        relative_path: "DungeondraftPacks/DungeondraftPacksExtracted/[BW] Assets_A/textures/objects/Decor/Structures/Tents/bw_leather_bone_tent_circular_01.webp"
+
+  tentacle_assets:
+    assets:
+      - source_id: mapmaking
+        relative_path: "DungeondraftPacks/DungeondraftPacksExtracted/[BW] Assets_A/textures/objects/Creatures/Other/bw_creature_tentacle_01.webp"
+      - source_id: mapmaking
+        relative_path: "DungeondraftPacks/DungeondraftPacksExtracted/[BW] Assets_A/textures/objects/Creatures/Other/bw_creature_tentacle_02.webp"
+      - source_id: mapmaking
+        relative_path: "DungeondraftPacks/DungeondraftPacksExtracted/[BW] Assets_A/textures/objects/Creatures/Other/bw_creature_tentacle_03.webp"
+
+  fireball_overlays:
+    assets:
+      - source_id: mapmaking
+        relative_path: "MattsMappingPack/Overlays/Effects/Fire/Fireball/Fireball 1.png"
+      - source_id: mapmaking
+        relative_path: "MattsMappingPack/Overlays/Effects/Fire/Fireball/Fireball 2.png"
+      - source_id: mapmaking
+        relative_path: "MattsMappingPack/Overlays/Effects/Fire/Fireball/Ultimate Fireball 1.png"
+
+  lightning_overlays:
+    assets:
+      - source_id: mapmaking
+        relative_path: "DungeondraftPacks/DungeondraftPacksExtracted/FA_Objects_A_v3.51/textures/objects/Overlays_and_Effects/Magic/Lightning/Lightning_Black_A1_1x1.webp"
+      - source_id: mapmaking
+        relative_path: "DungeondraftPacks/DungeondraftPacksExtracted/FA_Objects_A_v3.51/textures/objects/Overlays_and_Effects/Magic/Lightning/Lightning_Black_A2_2x1.webp"
+      - source_id: mapmaking
+        relative_path: "DungeondraftPacks/DungeondraftPacksExtracted/FA_Objects_A_v3.51/textures/objects/Overlays_and_Effects/Magic/Lightning/Lightning_Black_A4_1x6.webp"
+
+  magic_circle_overlays:
+    assets:
+      - source_id: mapmaking
+        relative_path: "DungeondraftPacks/DungeondraftPacksExtracted/[BW] Assets_A/textures/objects/Decor/Magic_Circles/bw_overlay_magic_circle_01_embossed.webp"
+      - source_id: mapmaking
+        relative_path: "DungeondraftPacks/DungeondraftPacksExtracted/[BW] Assets_A/textures/objects/Decor/Magic_Circles/bw_overlay_magic_circle_02_engraved.webp"
+      - source_id: mapmaking
+        relative_path: "DungeondraftPacks/DungeondraftPacksExtracted/[BW] Assets_A/textures/objects/Decor/Magic_Circles/bw_overlay_magic_circle_10_embossed.webp"
+
+  amber_temple_maps:
+    assets:
+      - source_id: curseofstrahd
+        relative_path: "Maps/Curse of Strahd HD Maps/CurseofStrahd_AmberTemple_1_DM.jpg"
+      - source_id: curseofstrahd
+        relative_path: "Maps/Curse of Strahd HD Maps/CurseofStrahd_AmberTemple_1_Player.jpg"
+      - source_id: curseofstrahd
+        relative_path: "Maps/Curse of Strahd HD Maps/CurseofStrahd_AmberTemple_2_Player_NoGrid.jpg"
+
+  vallaki_maps:
+    assets:
+      - source_id: curseofstrahd
+        relative_path: "Maps/Curse of Strahd HD Maps/CurseofStrahd_Vallaki_digital.jpg"
+      - source_id: curseofstrahd
+        relative_path: "Maps/Curse of Strahd HD Maps/CurseofStrahd_Vallaki_player.jpg"
+      - source_id: curseofstrahd
+        relative_path: "PyramKing/assets/foundry/legends-of-barovia-full-campaign-foundry-v12/legends-of-barovia-pk/assets/scene/Vallaki 18x10.webp"
+
+  wizard_of_wines_maps:
+    assets:
+      - source_id: curseofstrahd
+        relative_path: "Maps/Curse of Strahd HD Maps/CurseofStrahd_WizardofWineWinery_DM.jpg"
+      - source_id: curseofstrahd
+        relative_path: "Maps/Curse of Strahd HD Maps/CurseofStrahd_WizardofWineWinery_Player.jpg"
+      - source_id: curseofstrahd
+        relative_path: "PyramKing/assets/foundry/legends-of-barovia-full-campaign-foundry-v12/legends-of-barovia-pk/assets/scene/WizardofWines 18x10.webp"
+
+  sword_fight_sounds:
+    assets:
+      - source_id: sounds
+        relative_path: "GDC2016/The AudioVille - Wooden Staffs and Sword Fight/STICK HIT-07 - DEFEND.M.wav.mp3"
+      - source_id: sounds
+        relative_path: "GDC2016/The AudioVille - Wooden Staffs and Sword Fight/STICK-07 - SLIDE.M.wav.mp3"
+      - source_id: sounds
+        relative_path: "GDC2016/The AudioVille - Wooden Staffs and Sword Fight/WOODEN SWORD HIT-11.M.wav.mp3"
+
+  explosion_sounds:
+    assets:
+      - source_id: sounds
+        relative_path: "GDC2016/ShapingWaves -  8-BIT GAMES/SW001_8-Bit-Games-017_Explosion.wav.mp3"
+      - source_id: sounds
+        relative_path: "GDC2017/Bluezone Corporation - War Zone (Designed Explosions)/Bluezone-BC0214-beep-mine-explosion-002.wav.mp3"
+      - source_id: sounds
+        relative_path: "GDC2017/Gamemaster Audio -  Explosion Sound Pack/explosion_far_distant_02.wav.mp3"
+
+  water_sounds:
+    assets:
+      - source_id: sounds
+        relative_path: "GDC2016/Mononeshot - MOS001 WATER, Dam/WATER, Dam - 07 - Large stream splashing.wav.mp3"
+      - source_id: sounds
+        relative_path: "GDC2017/Double Trouble Audio - Flowing Water/FLWA 07 - Creek, water, flowing, splashing.wav.mp3"
+      - source_id: sounds
+        relative_path: "GDC2017/West Wolf - WATER/W 04 Water_05_Cave, Ambience, Water Drops, River_T05.wav.mp3"
+
+  market_crowd_sounds:
+    assets:
+      - source_id: sounds
+        relative_path: "GDC2017/3maze - European Ambiances/madrid_food_market_busy_001.wav.mp3"
+      - source_id: sounds
+        relative_path: "GDC2017/Charlie Atanasyan - Jordan sound library by Faunethic/Market souk medium voices activity and vendor shout _160818_005.wav.mp3"
+      - source_id: sounds
+        relative_path: "GDC2017/Charlie Atanasyan - Turkey sound library by Faunethic/Market big bazard indoor street voices and light activity_140711_05.wav.mp3"
+
+  gun_sounds:
+    assets:
+      - source_id: sounds
+        relative_path: "GDC2016/Audiobeast - The London Warehouse Firearms Library/Audiobeast_Large_Warehouse_Colt_M1911_.45_ACP_Pistol_10m_MKH8040_Pair_001_Single_Shot_x6.wav.mp3"
+      - source_id: sounds
+        relative_path: "GDC2016/Audiobeast - The London Warehouse Firearms Library/Audiobeast_Medium_Warehouse_Remington_870_12g_Pump_Action_Shotgun_10m_U87_001_Single_Shot_x8.wav.mp3"
+      - source_id: sounds
+        relative_path: "GDC2016/TS Sound - 12 Gauge Shotgun/Shotgun_Fire_Slug_01.wav.mp3"
+
+  manor_music:
+    assets:
+      - source_id: music
+        relative_path: "atmosphere_the-manor/AdrianVonZiegler-MaskedBall.mp3"
+      - source_id: music
+        relative_path: "atmosphere_the-manor/BearMcCreary-BaroqueChessMatch.mp3"
+      - source_id: music
+        relative_path: "atmosphere_the-manor/ParadoxInteractive-BuckinghamPalace.mp3"
+
+  road_music:
+    assets:
+      - source_id: music
+        relative_path: "atmosphere_the-road/FutureWorldMusic-DreamChasers.mp3"
+      - source_id: music
+        relative_path: "atmosphere_the-road/FutureWorldMusic-JourneytotheMagicalKingdom.mp3"
+      - source_id: music
+        relative_path: "atmosphere_the-road/JeremySoule-UnbrokenRoad.mp3"
+
 queries:
   - id: goblin-exact-token
     text: "goblin"
@@ -1384,5 +1735,573 @@ queries:
           source_id: tokens
           relative_path: "FA_Tokens/Adversaries/Drow/Drow_Cleric_Mace_01.png"
         worse: paladins
+        rule: majority
+        importance: 0.4
+
+  - id: wolf
+    text: "wolf"
+    tags: [tokens, creature, animal, standard]
+    intent: "A simple animal query should find wolf tokens before werewolf variants."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: wolf_tokens
+        importance: 0.7
+      - scope: combined
+        assert: group_ranks_above
+        better: wolf_tokens
+        worse: werewolves
+        rule: majority
+        importance: 0.4
+
+  - id: polar-bear
+    text: "polar bear"
+    tags: [tokens, creature, animal, separator]
+    intent: "A separated polar bear query should find source filenames that spell Polarbear as one token."
+    expectations:
+      - scope: fuzzy
+        assert: findable
+        target:
+          source_id: tokens
+          relative_path: "devinnight/TP0Freebies/Polarbear_02.png"
+        importance: 0.7
+      - scope: combined
+        assert: group_ranks_above
+        better: bear_tokens
+        worse: bugbear_tokens
+        rule: majority
+        importance: 0.4
+
+  - id: rat-swarm
+    text: "rat swarm"
+    tags: [tokens, creature, animal]
+    intent: "Rat swarm should find the explicit swarm token instead of only generic rats."
+    expectations:
+      - scope: strict
+        assert: findable
+        target:
+          source_id: tokens
+          relative_path: "devinnight/TP4Werecreatures/rat_swarm.png"
+        importance: 0.8
+      - scope: combined
+        assert: group_ranks_above
+        better: rat_tokens
+        worse: bugbear_tokens
+        rule: majority
+        importance: 0.4
+
+  - id: giant-spider
+    text: "giant spider"
+    tags: [tokens, creature, animal, size]
+    intent: "Giant spider should find giant spider tokens, not unrelated giant creatures."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: spider_tokens
+        importance: 0.8
+      - scope: combined
+        assert: group_ranks_above
+        better: spider_tokens
+        worse: hill_giant_tokens
+        rule: majority
+        importance: 0.5
+
+  - id: raven-familiar
+    text: "raven familiar"
+    tags: [tokens, creature, familiar]
+    intent: "Familiar-style searches should surface small companion animals from the familiar pack."
+    expectations:
+      - scope: strict
+        assert: findable
+        target:
+          source_id: tokens
+          relative_path: "devinnight/TP6Familiars/FS1_Raven.png"
+        importance: 0.7
+      - scope: combined
+        assert: group_ranks_above
+        better: familiar_tokens
+        worse: dragonborn_heroes
+        rule: majority
+        importance: 0.4
+
+  - id: human-marine-rifle
+    text: "human marine rifle"
+    tags: [tokens, modern, equipment, corner-case]
+    intent: "Modern/sci-fi soldier searches should find marine rifle tokens rather than fantasy fighters."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: marine_rifle_tokens
+        importance: 0.7
+      - scope: combined
+        assert: group_ranks_above
+        better: marine_rifle_tokens
+        worse: human_warriors
+        rule: majority
+        importance: 0.5
+
+  - id: swat-shotgun
+    text: "swat shotgun"
+    tags: [tokens, modern, equipment]
+    intent: "SWAT equipment queries should find explicit SWAT tokens."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: swat_tokens
+        importance: 0.7
+      - scope: combined
+        assert: group_ranks_above
+        better: swat_tokens
+        worse: marine_rifle_tokens
+        rule: majority
+        importance: 0.4
+
+  - id: alien-bug-rifle
+    text: "alien bug rifle"
+    tags: [tokens, modern, creature, equipment]
+    intent: "Alien creature-plus-weapon searches should find the sci-fi alien bug gunner tokens."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: alien_bug_gunners
+        importance: 0.7
+      - scope: combined
+        assert: group_ranks_above
+        better: alien_bug_gunners
+        worse: marine_rifle_tokens
+        rule: majority
+        importance: 0.4
+
+  - id: hill-giant
+    text: "hill giant"
+    tags: [tokens, creature, size]
+    intent: "Specific giant subtype should find hill giant tokens before generic giant beasts."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: hill_giant_tokens
+        importance: 0.8
+      - scope: combined
+        assert: group_ranks_above
+        better: hill_giant_tokens
+        worse: spider_tokens
+        rule: majority
+        importance: 0.5
+
+  - id: cave-troll
+    text: "cave troll"
+    tags: [tokens, creature, standard]
+    intent: "Troll subtype searches should find cave/hill troll tokens before ogres."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: troll_tokens
+        importance: 0.7
+      - scope: combined
+        assert: group_ranks_above
+        better: troll_tokens
+        worse: ogre_tokens
+        rule: majority
+        importance: 0.5
+
+  - id: balor
+    text: "balor"
+    tags: [tokens, creature, fiend]
+    intent: "Named fiend searches should find Balor tokens before generic devil tokens."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: balor_tokens
+        importance: 0.8
+      - scope: combined
+        assert: group_ranks_above
+        better: balor_tokens
+        worse: devil_tokens
+        rule: majority
+        importance: 0.5
+
+  - id: chain-devil
+    text: "chain devil"
+    tags: [tokens, creature, fiend]
+    intent: "Devil subtype searches should find the matching devil variant."
+    expectations:
+      - scope: strict
+        assert: findable
+        target:
+          source_id: tokens
+          relative_path: "FA_Tokens/Creatures/Fiend/Chain_Devil_Medium_Scale300_Fiend_01.png"
+        importance: 0.8
+      - scope: combined
+        assert: group_ranks_above
+        better: devil_tokens
+        worse: balor_tokens
+        rule: majority
+        importance: 0.4
+
+  - id: airship-map
+    text: "airship map"
+    tags: [maps, scene, standard]
+    intent: "Map searches should find airship battle maps and videos."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: airship_maps
+        importance: 0.7
+      - scope: combined
+        assert: group_ranks_above
+        better: airship_maps
+        worse: visual_bridges
+        rule: majority
+        importance: 0.4
+
+  - id: ancient-ruins
+    text: "ancient ruins"
+    tags: [maps, scene, standard]
+    intent: "Ruins scene searches should find Dynamic Dungeons ancient ruins maps."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: ancient_ruins_maps
+        importance: 0.7
+      - scope: combined
+        assert: group_ranks_above
+        better: ancient_ruins_maps
+        worse: dungeon_chests
+        rule: majority
+        importance: 0.4
+
+  - id: forest-camp-map
+    text: "forest camp map"
+    tags: [maps, scene, standard]
+    intent: "Forest camp should find camp-in-the-woods scene maps before forest ambience audio."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: forest_camp_maps
+        importance: 0.7
+      - scope: combined
+        assert: group_ranks_above
+        better: forest_camp_maps
+        worse: forest_ambience_sounds
+        rule: majority
+        importance: 0.5
+
+  - id: city-streets
+    text: "city streets"
+    tags: [maps, scene, standard]
+    intent: "Urban street map searches should find city street map thumbnails."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: city_street_maps
+        importance: 0.7
+      - scope: combined
+        assert: group_ranks_above
+        better: city_street_maps
+        worse: market_crowd_sounds
+        rule: majority
+        importance: 0.5
+
+  - id: desert-oasis
+    text: "desert oasis"
+    tags: [maps, scene, terrain]
+    intent: "Desert oasis should find desert encounter maps with oasis variants."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: desert_maps
+        importance: 0.7
+      - scope: combined
+        assert: group_ranks_above
+        better: desert_maps
+        worse: water_sounds
+        rule: majority
+        importance: 0.4
+
+  - id: goblin-cave-map
+    text: "goblin cave map"
+    tags: [maps, scene, creature]
+    intent: "Goblin cave should find cave maps rather than goblin creature tokens."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: cave_maps
+        importance: 0.7
+      - scope: combined
+        assert: group_ranks_above
+        better: cave_maps
+        worse: generic_goblins
+        rule: majority
+        importance: 0.5
+
+  - id: sewer-map
+    text: "sewer map"
+    tags: [maps, scene, corner-case]
+    intent: "Sewer map should find older archive maps with sewer in deep filenames."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: sewer_maps
+        importance: 0.7
+      - scope: combined
+        assert: group_ranks_above
+        better: sewer_maps
+        worse: rat_tokens
+        rule: majority
+        importance: 0.5
+
+  - id: snow-overlay
+    text: "snow overlay"
+    tags: [maps, mapmaking, overlay, terrain]
+    intent: "Snow overlay should find overlay/drift assets rather than winter sound effects."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: snow_overlay_assets
+        importance: 0.7
+      - scope: combined
+        assert: group_ranks_above
+        better: snow_overlay_assets
+        worse: rain_thunder_sounds
+        rule: majority
+        importance: 0.4
+
+  - id: tent
+    text: "tent"
+    tags: [mapmaking, prop, standard]
+    intent: "Tent prop searches should find tent assets across Dungeondraft packs."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: tent_assets
+        importance: 0.7
+      - scope: combined
+        assert: group_ranks_above
+        better: tent_assets
+        worse: dungeon_chests
+        rule: majority
+        importance: 0.4
+
+  - id: tentacle
+    text: "tentacle"
+    tags: [mapmaking, prop, creature]
+    intent: "Tentacle prop searches should find creature overlay assets."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: tentacle_assets
+        importance: 0.7
+      - scope: combined
+        assert: group_ranks_above
+        better: tentacle_assets
+        worse: tent_assets
+        rule: majority
+        importance: 0.4
+
+  - id: fireball-overlay
+    text: "fireball overlay"
+    tags: [mapmaking, overlay, magic]
+    intent: "Visual fireball searches should find overlay assets before fire sounds or music."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: fireball_overlays
+        importance: 0.7
+      - scope: combined
+        assert: group_ranks_above
+        better: fireball_overlays
+        worse: explosion_sounds
+        rule: majority
+        importance: 0.5
+
+  - id: lightning-overlay
+    text: "lightning overlay"
+    tags: [mapmaking, overlay, magic]
+    intent: "Lightning overlay should find visual lightning effects."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: lightning_overlays
+        importance: 0.7
+      - scope: combined
+        assert: group_ranks_above
+        better: lightning_overlays
+        worse: magic_spell_sounds
+        rule: majority
+        importance: 0.5
+
+  - id: magic-circle
+    text: "magic circle"
+    tags: [mapmaking, overlay, magic]
+    intent: "Magic circle should find circle overlay assets rather than generic magic sounds."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: magic_circle_overlays
+        importance: 0.7
+      - scope: combined
+        assert: group_ranks_above
+        better: magic_circle_overlays
+        worse: magic_spell_sounds
+        rule: majority
+        importance: 0.5
+
+  - id: amber-temple
+    text: "amber temple"
+    tags: [curseofstrahd, maps, adventure]
+    intent: "Curse of Strahd location searches should find Amber Temple maps."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: amber_temple_maps
+        importance: 0.8
+      - scope: combined
+        assert: group_ranks_above
+        better: amber_temple_maps
+        worse: cathedral_music
+        rule: majority
+        importance: 0.5
+
+  - id: vallaki
+    text: "vallaki"
+    tags: [curseofstrahd, maps, adventure]
+    intent: "Named Barovian town searches should find Vallaki maps and scenes."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: vallaki_maps
+        importance: 0.8
+      - scope: combined
+        assert: group_ranks_above
+        better: vallaki_maps
+        worse: city_street_maps
+        rule: majority
+        importance: 0.4
+
+  - id: wizard-of-wines
+    text: "wizard of wines"
+    tags: [curseofstrahd, maps, adventure, corner-case]
+    intent: "Multi-word adventure location searches should find Wizard of Wines winery maps despite filename variants."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: wizard_of_wines_maps
+        importance: 0.8
+      - scope: combined
+        assert: group_ranks_above
+        better: wizard_of_wines_maps
+        worse: tavern_music
+        rule: majority
+        importance: 0.4
+
+  - id: sword-fight-sound
+    text: "sword fight sound"
+    tags: [sounds, combat, source-disambiguation]
+    intent: "Queries asking for a sound should surface sword-fight SFX before visual weapon props."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: sword_fight_sounds
+        importance: 0.7
+      - scope: combined
+        assert: group_ranks_above
+        better: sword_fight_sounds
+        worse: human_warriors
+        rule: majority
+        importance: 0.5
+
+  - id: explosion-sound
+    text: "explosion sound"
+    tags: [sounds, combat, source-disambiguation]
+    intent: "Explosion sound should find SFX rather than fireball overlay art."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: explosion_sounds
+        importance: 0.7
+      - scope: combined
+        assert: group_ranks_above
+        better: explosion_sounds
+        worse: fireball_overlays
+        rule: majority
+        importance: 0.5
+
+  - id: flowing-water-sound
+    text: "flowing water sound"
+    tags: [sounds, ambience, source-disambiguation]
+    intent: "Flowing water sound should find water SFX before water-themed map assets."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: water_sounds
+        importance: 0.7
+      - scope: combined
+        assert: group_ranks_above
+        better: water_sounds
+        worse: water_elementals
+        rule: majority
+        importance: 0.5
+
+  - id: market-crowd
+    text: "market crowd"
+    tags: [sounds, ambience, town]
+    intent: "Market crowd should find crowd/market ambience recordings."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: market_crowd_sounds
+        importance: 0.7
+      - scope: combined
+        assert: group_ranks_above
+        better: market_crowd_sounds
+        worse: city_street_maps
+        rule: majority
+        importance: 0.4
+
+  - id: shotgun-sound
+    text: "shotgun sound"
+    tags: [sounds, modern, source-disambiguation]
+    intent: "Modern weapon sound searches should find gun SFX rather than shotgun-wielding tokens."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: gun_sounds
+        importance: 0.7
+      - scope: combined
+        assert: group_ranks_above
+        better: gun_sounds
+        worse: swat_tokens
+        rule: majority
+        importance: 0.5
+
+  - id: manor-music
+    text: "manor music"
+    tags: [music, atmosphere, standard]
+    intent: "Manor atmosphere searches should find manor music rather than mansion maps."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: manor_music
+        importance: 0.7
+      - scope: combined
+        assert: group_ranks_above
+        better: manor_music
+        worse: castle_ravenloft_maps
+        rule: majority
+        importance: 0.4
+
+  - id: road-music
+    text: "road music"
+    tags: [music, atmosphere, travel]
+    intent: "Road music should find travel/road atmosphere tracks."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: road_music
+        importance: 0.7
+      - scope: combined
+        assert: group_ranks_above
+        better: road_music
+        worse: chase_music
         rule: majority
         importance: 0.4
