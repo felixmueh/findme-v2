@@ -80,6 +80,42 @@ def search_assets(
     return [_row_to_result(row) for row in rows]
 
 
+def count_search_assets(
+    db: sqlite3.Connection,
+    query: str,
+    *,
+    source_id: str | None = None,
+    directory: str | None = None,
+    directory_prefix: str | None = None,
+) -> int:
+    match_query = _match_query(query)
+    if not match_query:
+        return 0
+
+    where = ["assets.stale = 0", "asset_search MATCH ?"]
+    params: list[object] = [match_query]
+    if source_id:
+        where.append("assets.source_id = ?")
+        params.append(source_id)
+    if directory is not None:
+        where.append("assets.directory = ?")
+        params.append(directory)
+    if directory_prefix:
+        where.append("(assets.directory = ? OR assets.directory LIKE ?)")
+        params.extend([directory_prefix, f"{directory_prefix}/%"])
+
+    row = db.execute(
+        f"""
+        SELECT COUNT(*) AS total
+        FROM asset_search
+        JOIN assets ON assets.asset_id = asset_search.asset_id
+        WHERE {" AND ".join(where)}
+        """,
+        params,
+    ).fetchone()
+    return int(row["total"])
+
+
 def _match_query(query: str) -> str:
     tokens = re.findall(r"[\w-]+", query.lower())
     return " OR ".join(f"{token}*" for token in tokens)

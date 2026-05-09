@@ -150,6 +150,7 @@ a:focus-visible {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(136px, 1fr));
   gap: 10px;
+  align-content: start;
   align-items: start;
   padding: 10px;
 }
@@ -449,6 +450,30 @@ a:focus-visible {
 .empty {
   color: var(--muted);
   padding: 16px;
+}
+
+.load-more {
+  grid-column: 1 / -1;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.load-more button {
+  min-height: 32px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 0 12px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.load-more button:disabled {
+  cursor: default;
+  color: var(--faint);
 }
 
 @keyframes spin {

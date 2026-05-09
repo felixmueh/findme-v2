@@ -20,6 +20,7 @@
   }
 
   type DirectoryNode = {
+    source_id: string
     path: string
     name: string
     depth: number
@@ -65,6 +66,7 @@
   let query = $state('')
   let sourceId = $state('')
   let selectedDirectory = $state('')
+  let selectedDirectorySourceId = $state('')
   let sources = $state<Source[]>([])
   let directories = $state<DirectoryNode[]>([])
   let collapsedDirectories = $state<Set<string>>(new Set())
@@ -72,17 +74,27 @@
   let selected = $state<AssetDetail | null>(null)
   let hoveredAsset = $state<Asset | null>(null)
   let loading = $state(false)
+  let loadingMore = $state(false)
+  let hasMoreAssets = $state(false)
+  let resultTotal = $state(0)
   let error = $state('')
   let copied = $state('')
   let debounceTimer: number | undefined
   let directoryDebounceTimer: number | undefined
   let requestId = 0
+  let searchInput: HTMLInputElement
+  let tileGridElement = $state<HTMLDivElement>()
+  let loadMoreTrigger = $state<HTMLDivElement>()
+
+  const pageSize = 100
 
   const selectedAssetId = $derived(selected?.asset.asset_id ?? '')
   const selectedIndex = $derived(assets.findIndex((asset) => asset.asset_id === selectedAssetId))
-  const resultLabel = $derived(`${assets.length} ${assets.length === 1 ? 'asset' : 'assets'}`)
-  const visibleDirectories = $derived(directories.filter((directory) => isDirectoryVisible(directory.path)))
-  const visibleDirectoryPaths = $derived.by(() => new Set(visibleDirectories.map((directory) => directory.path)))
+  const resultLabel = $derived(`${resultTotal} ${resultTotal === 1 ? 'asset' : 'assets'}`)
+  const visibleDirectories = $derived(directories.filter((directory) => isDirectoryVisible(directory)))
+  const visibleDirectoryKeys = $derived.by(
+    () => new Set(visibleDirectories.map((directory) => directoryKey(directory)))
+  )
   const directoryPathsWithChildren = $derived.by(() => {
     const paths = new Set<string>()
     for (const directory of directories) {
@@ -90,7 +102,7 @@
       const parentPath = directory.path.includes('/')
         ? directory.path.slice(0, directory.path.lastIndexOf('/'))
         : ''
-      paths.add(parentPath)
+      paths.add(directoryKey({ source_id: directory.source_id, path: parentPath }))
     }
     return paths
   })
@@ -107,6 +119,7 @@
     query
     sourceId
     selectedDirectory
+    selectedDirectorySourceId
     window.clearTimeout(debounceTimer)
     debounceTimer = window.setTimeout(() => {
       void loadAssets()
@@ -120,6 +133,20 @@
     directoryDebounceTimer = window.setTimeout(() => {
       void loadDirectories()
     }, 150)
+  })
+
+  $effect(() => {
+    if (!tileGridElement || !loadMoreTrigger || !hasMoreAssets) return
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          void loadMoreAssets()
+        }
+      },
+      { root: tileGridElement, rootMargin: '360px' }
+    )
+    observer.observe(loadMoreTrigger)
+    return () => observer.disconnect()
   })
 
   async function loadSources() {
@@ -136,6 +163,7 @@
   function changeSource(event: Event) {
     sourceId = (event.currentTarget as HTMLSelectElement).value
     selectedDirectory = ''
+    selectedDirectorySourceId = ''
     collapsedDirectories = new Set()
   }
 
@@ -154,32 +182,55 @@
   }
 
   async function loadAssets() {
+    await loadAssetPage({ offset: 0, append: false })
+  }
+
+  async function loadMoreAssets() {
+    if (!hasMoreAssets || loading || loadingMore) return
+    await loadAssetPage({ offset: assets.length, append: true })
+  }
+
+  async function loadAssetPage({ offset, append }: { offset: number; append: boolean }) {
     const currentRequest = ++requestId
     const params = new URLSearchParams()
-    params.set('limit', '100')
-    if (sourceId) params.set('source_id', sourceId)
+    params.set('limit', String(pageSize))
+    params.set('offset', String(offset))
+    const effectiveSourceId = sourceId || selectedDirectorySourceId
+    if (effectiveSourceId) params.set('source_id', effectiveSourceId)
     if (selectedDirectory) params.set('directory_prefix', selectedDirectory)
     const trimmed = query.trim()
     const path = trimmed ? '/api/search' : '/api/assets'
     if (trimmed) params.set('q', trimmed)
 
-    loading = true
+    if (append) {
+      loadingMore = true
+    } else {
+      loading = true
+      hasMoreAssets = false
+      resultTotal = 0
+    }
     error = ''
     try {
       const response = await fetch(`${path}?${params}`)
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       const body = await response.json()
       if (currentRequest !== requestId) return
-      assets = body.assets
-      if (assets.length === 0) {
+      const nextAssets = body.assets as Asset[]
+      resultTotal = Number(body.total ?? nextAssets.length)
+      assets = append ? [...assets, ...nextAssets] : nextAssets
+      hasMoreAssets = assets.length < resultTotal
+      if (!append && assets.length === 0) {
         selected = null
-      } else if (!selected || !assets.some((asset) => asset.asset_id === selectedAssetId)) {
-        await selectAsset(assets[0])
+      } else if (!append && selected && !assets.some((asset) => asset.asset_id === selectedAssetId)) {
+        selected = null
       }
     } catch {
       if (currentRequest === requestId) error = 'Search failed'
     } finally {
-      if (currentRequest === requestId) loading = false
+      if (currentRequest === requestId) {
+        loading = false
+        loadingMore = false
+      }
     }
   }
 
@@ -208,18 +259,69 @@
     void selectAsset(assets[next])
   }
 
+  function chooseGridRelative(direction: 'left' | 'right' | 'up' | 'down') {
+    const columns = gridColumnCount()
+    const offsets = {
+      left: -1,
+      right: 1,
+      up: -columns,
+      down: columns,
+    }
+    chooseRelative(offsets[direction])
+  }
+
+  function gridColumnCount() {
+    if (!tileGridElement) return 1
+    const columns = window.getComputedStyle(tileGridElement).gridTemplateColumns
+    if (!columns || columns === 'none') return 1
+    return Math.max(columns.split(' ').filter(Boolean).length, 1)
+  }
+
+  async function selectFirstResultFromSearch() {
+    window.clearTimeout(debounceTimer)
+    await loadAssetPage({ offset: 0, append: false })
+    if (assets.length === 0) return
+    await selectAsset(assets[0])
+    searchInput?.blur()
+  }
+
   function handleKeydown(event: KeyboardEvent) {
+    const target = event.target as HTMLElement | null
+    const isTyping =
+      target instanceof HTMLInputElement ||
+      target instanceof HTMLTextAreaElement ||
+      target instanceof HTMLSelectElement ||
+      target?.isContentEditable
+
+    if (event.key === '/' && !isTyping) {
+      event.preventDefault()
+      searchInput?.focus()
+      searchInput?.select()
+      return
+    }
+    if (event.key === 'Enter' && target === searchInput) {
+      event.preventDefault()
+      void selectFirstResultFromSearch()
+      return
+    }
     if (event.key === 'Escape') {
       event.preventDefault()
       selected = null
       return
     }
-    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+    if (isTyping) return
+    if (event.key === 'ArrowRight' || event.key === 'l') {
       event.preventDefault()
-      chooseRelative(1)
-    } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+      chooseGridRelative('right')
+    } else if (event.key === 'ArrowLeft' || event.key === 'h') {
       event.preventDefault()
-      chooseRelative(-1)
+      chooseGridRelative('left')
+    } else if (event.key === 'ArrowDown' || event.key === 'j') {
+      event.preventDefault()
+      chooseGridRelative('down')
+    } else if (event.key === 'ArrowUp' || event.key === 'k') {
+      event.preventDefault()
+      chooseGridRelative('up')
     } else if (event.key === 'Enter' && selected) {
       event.preventDefault()
       void copyPrimary()
@@ -238,41 +340,81 @@
     return `${(bytes / 1024 / 1024).toFixed(1)} MB`
   }
 
-  function toggleDirectory(path: string) {
-    selectedDirectory = selectedDirectory === path ? '' : path
+  function toggleDirectory(directory: DirectoryNode) {
+    if (isDirectorySelected(directory)) {
+      selectedDirectory = ''
+      selectedDirectorySourceId = ''
+      return
+    }
+    selectedDirectory = directory.path
+    selectedDirectorySourceId = sourceId ? '' : directory.source_id
   }
 
-  function hasChildren(path: string) {
-    return directoryPathsWithChildren.has(path)
+  function directoryKey(directory: Pick<DirectoryNode, 'source_id' | 'path'>) {
+    return `${directory.source_id}\u0000${directory.path}`
   }
 
-  function isCollapsed(path: string) {
-    return collapsedDirectories.has(path)
+  function hasChildren(directory: DirectoryNode) {
+    return directoryPathsWithChildren.has(directoryKey(directory))
   }
 
-  function isDirectoryVisible(path: string) {
-    if (!path) return true
-    if (collapsedDirectories.has('')) return false
-    const parts = path.split('/')
+  function isCollapsed(directory: DirectoryNode) {
+    return collapsedDirectories.has(directoryKey(directory))
+  }
+
+  function isDirectorySelected(directory: DirectoryNode) {
+    if (!selectedDirectory && !selectedDirectorySourceId) return false
+    return directory.path === selectedDirectory && (sourceId || selectedDirectorySourceId) === directory.source_id
+  }
+
+  function isDirectoryVisible(directory: DirectoryNode) {
+    if (!directory.path) return true
+    if (collapsedDirectories.has(directoryKey({ source_id: directory.source_id, path: '' }))) return false
+    const parts = directory.path.split('/')
     for (let index = 1; index < parts.length; index += 1) {
-      if (collapsedDirectories.has(parts.slice(0, index).join('/'))) return false
+      if (
+        collapsedDirectories.has(
+          directoryKey({ source_id: directory.source_id, path: parts.slice(0, index).join('/') })
+        )
+      ) {
+        return false
+      }
     }
     return true
   }
 
-  function handleDirectoryClick(event: MouseEvent, path: string) {
+  function handleDirectoryClick(event: MouseEvent, directory: DirectoryNode) {
     if (event.shiftKey) {
-      toggleDirectory(path)
+      toggleDirectory(directory)
       return
     }
-    if (!hasChildren(path)) return
+    if (!hasChildren(directory)) {
+      toggleDirectory(directory)
+      return
+    }
     const next = new Set(collapsedDirectories)
-    if (next.has(path)) {
-      next.delete(path)
+    const key = directoryKey(directory)
+    if (next.has(key)) {
+      next.delete(key)
     } else {
-      next.add(path)
+      next.add(key)
     }
     collapsedDirectories = next
+  }
+
+  function clearDirectory() {
+    selectedDirectory = ''
+    selectedDirectorySourceId = ''
+  }
+
+  function openAsset(asset: Asset) {
+    window.open(`/api/assets/${asset.asset_id}/file`, '_blank', 'noopener')
+  }
+
+  function handleAssetAuxClick(event: MouseEvent, asset: Asset) {
+    if (event.button !== 1) return
+    event.preventDefault()
+    openAsset(asset)
   }
 </script>
 
@@ -284,7 +426,7 @@
 
     <label class="search-field">
       <Search size={17} />
-      <input bind:value={query} type="search" autocomplete="off" placeholder="Search assets" />
+      <input bind:this={searchInput} bind:value={query} type="search" autocomplete="off" placeholder="Search assets" />
     </label>
 
     <select value={sourceId} aria-label="Source" onchange={changeSource}>
@@ -304,8 +446,8 @@
 
   <section class="workspace">
     <section class="main-region" aria-label="Assets">
-      <div class="tile-grid">
-        {#each assets as asset}
+      <div class="tile-grid" bind:this={tileGridElement}>
+        {#each assets as asset (asset.asset_id)}
           {@const Icon = assetIcon(asset)}
           <button
             class:selected={asset.asset_id === selectedAssetId}
@@ -316,6 +458,7 @@
             onfocus={() => (hoveredAsset = asset)}
             onblur={() => (hoveredAsset = hoveredAsset?.asset_id === asset.asset_id ? null : hoveredAsset)}
             onclick={() => selectAsset(asset)}
+            onauxclick={(event) => handleAssetAuxClick(event, asset)}
           >
             <span class="tile-thumb">
               {#if asset.thumbnail_url}
@@ -333,6 +476,17 @@
         {:else}
           <div class="empty">No assets found</div>
         {/each}
+        {#if assets.length > 0}
+          <div class="load-more" bind:this={loadMoreTrigger}>
+            {#if hasMoreAssets}
+              <button type="button" onclick={loadMoreAssets} disabled={loadingMore}>
+                {loadingMore ? 'Loading' : 'Load more'}
+              </button>
+            {:else}
+              <span>End of results</span>
+            {/if}
+          </div>
+        {/if}
       </div>
 
       {#if hoveredAsset?.thumbnail_url}
@@ -385,32 +539,32 @@
     <aside class="folder-panel" aria-label="Folder tree">
       <div class="panel-title">Folders</div>
       <button
-        class:active={selectedDirectory === ''}
+        class:active={selectedDirectory === '' && selectedDirectorySourceId === ''}
         class="folder-row"
         type="button"
-        onclick={() => (selectedDirectory = '')}
+        onclick={clearDirectory}
       >
         <Folder size={15} />
         <span>All folders</span>
       </button>
-      {#if selectedDirectory && !visibleDirectoryPaths.has(selectedDirectory)}
-        <button class="folder-row active retained" type="button" onclick={() => (selectedDirectory = '')}>
+      {#if selectedDirectory && !visibleDirectoryKeys.has(`${selectedDirectorySourceId || sourceId}\u0000${selectedDirectory}`)}
+        <button class="folder-row active retained" type="button" onclick={clearDirectory}>
           <span class="folder-spacer"></span>
           <Folder size={15} />
           <span>{selectedDirectory}</span>
           <em>0</em>
         </button>
       {/if}
-      {#each visibleDirectories as directory}
-        {@const children = hasChildren(directory.path)}
+      {#each visibleDirectories as directory (directoryKey(directory))}
+        {@const children = hasChildren(directory)}
         <button
-          class:active={directory.path === selectedDirectory}
-          class:collapsed={children && isCollapsed(directory.path)}
+          class:active={isDirectorySelected(directory)}
+          class:collapsed={children && isCollapsed(directory)}
           class:leaf={!children}
           class="folder-row"
           style={`--depth: ${directory.depth}`}
           type="button"
-          onclick={(event) => handleDirectoryClick(event, directory.path)}
+          onclick={(event) => handleDirectoryClick(event, directory)}
         >
           {#if children}
             <ChevronRight class="folder-chevron" size={14} />

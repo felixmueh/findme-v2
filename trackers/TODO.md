@@ -1,4 +1,4 @@
 # Small random TODOs
 ## Frontend
-### Display more than 100 assets
-
+## Backend
+### Do we cache query requests? What if different parts of the frontent do the same query a coup

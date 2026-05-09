@@ -115,7 +115,7 @@ References: [Design: Search And Ranking](../docs/DESIGN.md#search-and-ranking), 
 - [x] Folder folding controls.
 - [x] Preserve folder selection across search changes.
 - [ ] Confirm empty-query browse behavior against real usage.
-- [ ] Range-based result loading beyond the initial slice.
+- [x] Range-based result loading beyond the initial slice.
 
 References: [Design: Result Loading](../docs/DESIGN.md#result-loading), [Design: Source Tree And Browsing](../docs/DESIGN.md#source-tree-and-browsing)
 
@@ -132,11 +132,11 @@ References: [Design: Result Loading](../docs/DESIGN.md#result-loading), [Design:
 - [x] Arrow-key result navigation.
 - [x] Enter copies the selected primary path.
 - [x] Escape clears selection.
-- [ ] `/` focuses search.
-- [ ] Vim-style movement where useful.
+- [x] `/` focuses search.
+- [x] Vim-style movement where useful.
 - [ ] Virtualized result grid.
 - [ ] Secondary action shortcuts.
-- [ ] Middle-click opens image in a new tab.
+- [x] Middle-click opens image in a new tab.
 - [ ] UI polish pass after real asset data is indexed.
 
 References: [Design: Preview Experience](../docs/DESIGN.md#preview-experience), [Design: Layout](../docs/DESIGN.md#layout), [Design: Keyboard Interaction](../docs/DESIGN.md#keyboard-interaction), [Stack: Frontend](../docs/STACK.md#frontend)

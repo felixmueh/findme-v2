@@ -16,7 +16,7 @@ from findme.assets import (
 )
 from findme.config import AppConfig
 from findme.db import connect, initialize_database
-from findme.search import SearchResult, search_assets
+from findme.search import SearchResult, count_search_assets, search_assets
 
 
 def create_app(
@@ -49,7 +49,7 @@ def create_app(
         directory_prefix: str | None = None,
         limit: int = Query(default=100, ge=1, le=500),
         offset: int = Query(default=0, ge=0),
-    ) -> dict[str, list[dict[str, object]]]:
+    ) -> dict[str, object]:
         with connect(database_path) as db:
             initialize_database(db)
             rows = _fetch_assets(
@@ -60,7 +60,13 @@ def create_app(
                 limit=limit,
                 offset=offset,
             )
-        return {"assets": [_asset_response(row) for row in rows]}
+            total = _count_assets(
+                db,
+                source_id=source_id,
+                directory=directory,
+                directory_prefix=directory_prefix,
+            )
+        return {"assets": [_asset_response(row) for row in rows], "total": total}
 
     @app.get("/api/directories")
     def list_directories(
@@ -79,7 +85,7 @@ def create_app(
         directory_prefix: str | None = None,
         limit: int = Query(default=100, ge=1, le=500),
         offset: int = Query(default=0, ge=0),
-    ) -> dict[str, list[dict[str, object]]]:
+    ) -> dict[str, object]:
         with connect(database_path) as db:
             initialize_database(db)
             results = search_assets(
@@ -91,7 +97,14 @@ def create_app(
                 limit=limit,
                 offset=offset,
             )
-        return {"assets": [_search_response(result) for result in results]}
+            total = count_search_assets(
+                db,
+                q,
+                source_id=source_id,
+                directory=directory,
+                directory_prefix=directory_prefix,
+            )
+        return {"assets": [_search_response(result) for result in results], "total": total}
 
     @app.get("/api/assets/{asset_id}")
     def asset_detail(asset_id: str) -> dict[str, object]:
@@ -185,6 +198,36 @@ def _fetch_assets(
     ).fetchall()
 
 
+def _count_assets(
+    db: sqlite3.Connection,
+    *,
+    source_id: str | None,
+    directory: str | None,
+    directory_prefix: str | None,
+) -> int:
+    where = ["assets.stale = 0"]
+    params: list[object] = []
+    if source_id:
+        where.append("assets.source_id = ?")
+        params.append(source_id)
+    if directory is not None:
+        where.append("assets.directory = ?")
+        params.append(directory)
+    if directory_prefix:
+        where.append("(assets.directory = ? OR assets.directory LIKE ?)")
+        params.extend([directory_prefix, f"{directory_prefix}/%"])
+
+    row = db.execute(
+        f"""
+        SELECT COUNT(*) AS total
+        FROM assets
+        WHERE {" AND ".join(where)}
+        """,
+        params,
+    ).fetchone()
+    return int(row["total"])
+
+
 def _fetch_directories(
     db: sqlite3.Connection, config: AppConfig, *, source_id: str | None, query: str | None
 ) -> list[dict[str, object]]:
@@ -205,6 +248,7 @@ def _fetch_directories(
         depth = 0 if path == "" else len(path.split("/"))
         directories.append(
             {
+                "source_id": source,
                 "path": path,
                 "name": name,
                 "depth": depth,
