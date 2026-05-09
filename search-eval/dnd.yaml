@@ -1,0 +1,479 @@
+version: 1
+description: >
+  Initial search evaluation set generated from the real DND source library.
+  These judgments encode user-observable expectations, not implementation
+  details. Paths are source-relative to the production source ids in
+  config/findme.server.toml.
+
+sets:
+  goblin_warriors:
+    assets:
+      - source_id: tokens
+        relative_path: "devinnight/TP17HairyOrcsGoblins/Goblin_Warrior_Sword_Fur.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP17HairyOrcsGoblins/Goblin_Warrior_Axe-Shield_Fur.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP17HairyOrcsGoblins/Goblin_Warrior_Bow_Fur.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP17HairyOrcsGoblins/Goblin_Warrior_Mace_Fur.png"
+
+  generic_goblins:
+    assets:
+      - source_id: tokens
+        relative_path: "devinnight/TP2GoblinsKobolds/goblin_fighter.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP2GoblinsKobolds/goblin_archer.png"
+      - source_id: tokens
+        relative_path: "Tokens_Huge/DnD/goblin14.png"
+      - source_id: tokens
+        relative_path: "Tokens_Huge/DnD/goblin28.png"
+
+  orc_warriors:
+    assets:
+      - source_id: tokens
+        relative_path: "devinnight/TP17HairyOrcsGoblins/Orc_Warrior_Sword-Shield.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP17HairyOrcsGoblins/Orc_Warrior_Axe.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP3OrcsandTrolls/Orc_fighter.png"
+      - source_id: tokens
+        relative_path: "Tokens_Huge/DnD/orc-champion.png"
+
+  human_warriors:
+    assets:
+      - source_id: tokens
+        relative_path: "devinnight/TP16Characters2/Human_Warrior_Sword-Shield.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP16Characters2/Human_Warrior_Sword_Plate.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP16Characters2/Human_Warrior_Sword-Shield_Plate.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP1Characters/Fighter_Blue_Sword_26.png"
+
+  mages:
+    assets:
+      - source_id: tokens
+        relative_path: "devinnight/TP16Characters2/Human_Mage_Staff.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP16Characters2/Human_Mage_Staff-2.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP13Pirates/male_mage.png"
+      - source_id: tokens
+        relative_path: "Tokens_Huge/DnD/spectral-mage.png"
+
+  rogues:
+    assets:
+      - source_id: tokens
+        relative_path: "devinnight/TP16Characters2/Human_Rogue_Rapier-Dagger.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP16Characters2/Thief_Rogue_Daggers.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP16Characters2/Halfling_Rogue_Daggers.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP18GuardsandNobles/Human_Lord-Rogue_Sword.png"
+
+  adventurer_character_classes:
+    includes:
+      - human_warriors
+      - mages
+      - rogues
+
+  green_dragons:
+    assets:
+      - source_id: tokens
+        relative_path: "devinnight/TP0Freebies/Dragon_Green_14.png"
+      - source_id: tokens
+        relative_path: "Tokens_Huge/DnD/dragon-green-huge2.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP6Familiars/FS1_Psuedo_Dragon_Green.png"
+
+  non_green_dragons:
+    assets:
+      - source_id: tokens
+        relative_path: "devinnight/TP0Freebies/Dragon_Red_08.png"
+      - source_id: tokens
+        relative_path: "Tokens_Huge/DnD/dragon-blue-awesome.png"
+      - source_id: tokens
+        relative_path: "Tokens_Huge/DnD/dragon-red-fiery.png"
+
+  green_non_dragons:
+    assets:
+      - source_id: tokens
+        relative_path: "devinnight/TP11BasicUndead/zombie_female_green.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP11BasicUndead/zombie_male_green.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP19Aliens/Alien_Bug_Sword_Green.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP8WetCaverns/lizardman_green_spear.png"
+
+  pseudo_dragons:
+    assets:
+      - source_id: tokens
+        relative_path: "devinnight/TP6Familiars/FS1_Psuedo_Dragon_red.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP6Familiars/FS1_Psuedo_Dragon_Green.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP6Familiars/FS1_Psuedo_Dragon_Blue.png"
+      - source_id: tokens
+        relative_path: "Tokens_Huge/DnD/pseudodragon.png"
+
+  tavern_music:
+    assets:
+      - source_id: music
+        relative_path: "atmosphere_the-tavern/TwoWorldsII-Tavern01.mp3"
+      - source_id: music
+        relative_path: "atmosphere_the-tavern/InonZur-TavernMusic.mp3"
+      - source_id: music
+        relative_path: "atmosphere_the-tavern/Sorastro-TavernTales.mp3"
+      - source_id: music
+        relative_path: "atmosphere_the-tavern/PawelBlaszczak-EveningInTheTavern.mp3"
+
+  non_tavern_music:
+    assets:
+      - source_id: music
+        relative_path: "combat_standard/IlanEshkeri-Training.mp3"
+      - source_id: music
+        relative_path: "combat_boss/TwoStepsfromHell,ThomasBergersen-FireMountain.mp3"
+      - source_id: music
+        relative_path: "atmosphere_the-wild/AramMandossian-ForestDance.mp3"
+
+  combat_music:
+    assets:
+      - source_id: music
+        relative_path: "combat_standard/IlanEshkeri-Training.mp3"
+      - source_id: music
+        relative_path: "combat_duel/JesperKyd-VeniceCombat.mp3"
+      - source_id: music
+        relative_path: "combat_horrifying/InonZur-CombatReady.mp3"
+      - source_id: music
+        relative_path: "combat_boss/IlanEshkeri-MakeYouASwordOfMe.mp3"
+
+  tavern_visuals:
+    assets:
+      - source_id: maps
+        relative_path: "ForgottenAdventures/Signs/Sign_Tavern_A.png"
+      - source_id: maps
+        relative_path: "ForgottenAdventures/Signs/Sign_Tavern_B.png"
+
+  visual_bridges:
+    assets:
+      - source_id: maps
+        relative_path: "ForgottenAdventures/Buildings___Structures/Bridges/Log_Bridge.png"
+      - source_id: maps
+        relative_path: "ForgottenAdventures/Buildings___Structures/Bridges/Draw_Bridges/Draw_Bridge_Small_01.png"
+      - source_id: mapmaking
+        relative_path: "OtherPacks/Tiles_random/ET2/2x1Bridge-a.jpg"
+      - source_id: mapmaking
+        relative_path: "OtherPacks/Tiles_random/ET2/2x1Bridge-b.jpg"
+
+  bridge_sounds:
+    assets:
+      - source_id: sounds
+        relative_path: "GDC2019/Airborne Sound - Vehicles Freight Trains 1/Train,Freight,Bridge,By,Away - very close perspective, crystal clear.wav.mp3"
+      - source_id: sounds
+        relative_path: "GDC2017/Eiravaein Sound - Gravitas/Gravitas,bridge,stomp,average,arched,wood,metal,lightiron,gully,stream,forest,strong,rattle,hum,XY.wav.mp3"
+
+  generic_dungeon_doors:
+    assets:
+      - source_id: mapmaking
+        relative_path: "animated_dungeon_megapack/Wooden_Door_center.png"
+      - source_id: mapmaking
+        relative_path: "OtherPacks/Torstans100pxTiles/Objects/Doors/StoneDoor.png"
+      - source_id: mapmaking
+        relative_path: "OtherPacks/Torstans100pxTiles/Objects/Doors/SteelDoor.png"
+
+  generic_door_sounds:
+    assets:
+      - source_id: sounds
+        relative_path: "GDC2019/3maze - Doors/door_big_close_001.wav.mp3"
+      - source_id: sounds
+        relative_path: "GDC2017/The Sound Keeper - Normal Doors/door-household open close sliding 02.wav.mp3"
+      - source_id: sounds
+        relative_path: "GDC2019/PMSFX - HAUNTED DOORS/PM_HD_Source_99 Door, Knob, Twist, Turn.wav.mp3"
+
+  blood_splatters:
+    assets:
+      - source_id: mapmaking
+        relative_path: "animated_dungeon_megapack/blood_splatter1.png"
+      - source_id: mapmaking
+        relative_path: "animated_dungeon_megapack/blood_splatter2.png"
+
+  blood_tiles:
+    assets:
+      - source_id: mapmaking
+        relative_path: "OtherPacks/Tiles_random/DT2/4x4_BloodMist.a.jpg"
+      - source_id: mapmaking
+        relative_path: "OtherPacks/Tiles_random/DT2/4x4_BloodSymbol.a.jpg"
+      - source_id: mapmaking
+        relative_path: "OtherPacks/DDM_Tiles/8x5-BloodRockCave.jpg"
+
+  rain_thunder_sounds:
+    assets:
+      - source_id: sounds
+        relative_path: "GDC2019/Pole Position - Thunder & Rain/rain_medium_steady_some_drops_on_metal_h4n.wav.mp3"
+      - source_id: sounds
+        relative_path: "GDC2019/InspectorJ - 44.1 General Library/Thunder_Very-Close_Rain_08.wav.mp3"
+      - source_id: sounds
+        relative_path: "GDC2017/Double Trouble Audio - Rain and Thunder/RATH - Rain and Distant Thunder Loop 01.wav.mp3"
+
+  forest_ambience_sounds:
+    assets:
+      - source_id: sounds
+        relative_path: "GDC2019/Sound Spark LLC – Nature and Urban Ambiences/Forest_Scrub_Forest_Ambience_With_Birds.wav.mp3"
+      - source_id: sounds
+        relative_path: "GDC2017/West Wolf - Nature Sounds/NS01_007_Forest birds.wav.mp3"
+      - source_id: sounds
+        relative_path: "GDC2018/Soundrangers - Nature Ambience/forest_alpine_crickets_01_60_loop.wav.mp3"
+
+queries:
+  - id: goblin-warrior
+    text: "goblin warrior"
+    tags: [tokens, creature, strict, ranking]
+    intent: "Find explicit goblin warrior tokens before generic goblin or non-goblin warrior tokens."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: goblin_warriors
+        importance: 1.0
+        gate: true
+      - scope: combined
+        assert: group_ranks_above
+        better: goblin_warriors
+        worse: generic_goblins
+        rule: majority
+        importance: 0.9
+        gate: true
+      - scope: combined
+        assert: group_ranks_above
+        better: goblin_warriors
+        worse: orc_warriors
+        rule: majority
+        importance: 0.7
+
+  - id: goblin-warrior-typo
+    text: "goblin warror"
+    tags: [tokens, creature, fuzzy, typo]
+    intent: "A one-letter typo in warrior should still find goblin warrior tokens in fuzzy and combined search."
+    expectations:
+      - scope: fuzzy
+        assert: findable
+        target: goblin_warriors
+        importance: 1.0
+        gate: true
+      - scope: combined
+        assert: findable
+        target: goblin_warriors
+        importance: 1.0
+        gate: true
+      - scope: strict
+        assert: not_findable
+        target: goblin_warriors
+        importance: 0.2
+
+  - id: warrior-sword
+    text: "warrior sword"
+    tags: [tokens, creature, ranking]
+    intent: "Sword-bearing warrior tokens should beat warrior tokens whose distinguishing weapon is not a sword."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: human_warriors
+        importance: 0.9
+        gate: true
+      - scope: combined
+        assert: group_ranks_above
+        better: human_warriors
+        worse: goblin_warriors
+        rule: majority
+        importance: 0.5
+
+  - id: green-dragon
+    text: "green dragon"
+    tags: [tokens, creature, color, negative]
+    intent: "Find green dragon assets while suppressing color-only matches on unrelated creatures."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: green_dragons
+        importance: 1.0
+        gate: true
+      - scope: combined
+        assert: group_ranks_above
+        better: green_dragons
+        worse: green_non_dragons
+        rule: majority
+        importance: 1.0
+        gate: true
+      - scope: combined
+        assert: group_ranks_above
+        better: green_dragons
+        worse: non_green_dragons
+        rule: majority
+        importance: 0.6
+
+  - id: pseudo-dragon-spelling
+    text: "pseudo dragon"
+    tags: [tokens, creature, fuzzy, typo]
+    intent: "Find pseudo dragon assets even when source filenames use the misspelling 'Psuedo'."
+    expectations:
+      - scope: fuzzy
+        assert: findable
+        target: pseudo_dragons
+        importance: 1.0
+        gate: true
+      - scope: combined
+        assert: findable
+        target: pseudo_dragons
+        importance: 1.0
+        gate: true
+
+  - id: adventurer
+    text: "adventurer"
+    tags: [tokens, domain, character]
+    intent: "Domain search should understand adventurer as a broad character concept covering warriors, mages, and rogues."
+    expectations:
+      - scope: domain
+        assert: findable
+        target: adventurer_character_classes
+        importance: 1.0
+        gate: true
+      - scope: combined
+        assert: findable
+        target: adventurer_character_classes
+        importance: 0.9
+
+  - id: tavern
+    text: "tavern"
+    tags: [music, maps, atmosphere]
+    intent: "Tavern searches should surface tavern ambience/music and tavern visual signs before unrelated music."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: tavern_music
+        importance: 0.9
+        gate: true
+      - scope: combined
+        assert: findable
+        target: tavern_visuals
+        importance: 0.6
+      - scope: combined
+        assert: group_ranks_above
+        better: tavern_music
+        worse: non_tavern_music
+        rule: majority
+        importance: 0.7
+
+  - id: combat-music
+    text: "combat music"
+    tags: [music, ranking]
+    intent: "Combat music searches should favor tracks in combat collections over tavern or wild atmosphere tracks."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: combat_music
+        importance: 0.9
+        gate: true
+      - scope: combined
+        assert: group_ranks_above
+        better: combat_music
+        worse: tavern_music
+        rule: majority
+        importance: 0.7
+
+  - id: secret-door
+    text: "secret door"
+    tags: [mapmaking, prop, ranking]
+    intent: "Secret door should prioritize the explicit secret door asset above generic doors and door sounds."
+    expectations:
+      - scope: strict
+        assert: findable
+        target:
+          source_id: mapmaking
+          relative_path: "animated_dungeon_megapack/secret_door.png"
+        importance: 1.0
+        gate: true
+      - scope: combined
+        assert: group_ranks_above
+        better:
+          source_id: mapmaking
+          relative_path: "animated_dungeon_megapack/secret_door.png"
+        worse: generic_dungeon_doors
+        rule: majority
+        importance: 0.7
+      - scope: combined
+        assert: group_ranks_above
+        better: generic_dungeon_doors
+        worse: generic_door_sounds
+        rule: majority
+        importance: 0.5
+
+  - id: blood-splatter
+    text: "blood splatter"
+    tags: [mapmaking, prop, ranking]
+    intent: "Blood splatter overlays should rank above broader blood-themed floor tiles or cave tiles."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: blood_splatters
+        importance: 1.0
+        gate: true
+      - scope: combined
+        assert: group_ranks_above
+        better: blood_splatters
+        worse: blood_tiles
+        rule: majority
+        importance: 0.8
+
+  - id: log-bridge
+    text: "log bridge"
+    tags: [maps, mapmaking, prop, negative]
+    intent: "A visual bridge query should find visual bridge assets before bridge sound effects."
+    expectations:
+      - scope: strict
+        assert: findable
+        target:
+          source_id: maps
+          relative_path: "ForgottenAdventures/Buildings___Structures/Bridges/Log_Bridge.png"
+        importance: 1.0
+        gate: true
+      - scope: combined
+        assert: group_ranks_above
+        better: visual_bridges
+        worse: bridge_sounds
+        rule: majority
+        importance: 0.8
+
+  - id: rain-thunder
+    text: "rain thunder"
+    tags: [sounds, ambience]
+    intent: "Rain and thunder sound searches should surface matching weather ambience."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: rain_thunder_sounds
+        importance: 0.9
+        gate: true
+      - scope: combined
+        assert: group_ranks_above
+        better: rain_thunder_sounds
+        worse: generic_door_sounds
+        rule: majority
+        importance: 0.6
+
+  - id: forest-ambience
+    text: "forest ambience"
+    tags: [sounds, music, ambience]
+    intent: "Forest ambience searches should find forest sound beds before unrelated mechanical or door sounds."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: forest_ambience_sounds
+        importance: 0.9
+        gate: true
+      - scope: combined
+        assert: group_ranks_above
+        better: forest_ambience_sounds
+        worse: generic_door_sounds
+        rule: majority
+        importance: 0.7

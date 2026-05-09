@@ -12,6 +12,14 @@ from findme.api import create_app
 from findme.config import ConfigError, load_config
 from findme.db import connect, initialize_database
 from findme.indexer import count_indexable_files, index_sources
+from findme.search import search_assets
+from findme.search_eval import (
+    EvaluationQuery,
+    SearchEvaluation,
+    SearchResultRef,
+    evaluate_search,
+    load_search_evaluation,
+)
 
 
 def main() -> None:
@@ -72,8 +80,39 @@ def run(argv: list[str]) -> int:
             app = create_app(config, db_path, static_dir=args.static_dir)
             uvicorn.run(app, host=args.host, port=args.port)
             return 0
+
+        if args.command == "search-eval":
+            evaluation = load_search_evaluation(args.eval)
+            selected_scopes = frozenset(args.scope or ["combined"])
+            evaluation = _filter_evaluation_scopes(evaluation, selected_scopes)
+            with connect(db_path) as db:
+                report = evaluate_search(
+                    evaluation,
+                    runner=lambda scope, query: [
+                        SearchResultRef(result.source_id, result.relative_path)
+                        for result in search_assets(db, query, limit=args.limit)
+                    ],
+                )
+            passed = report.total_expectations - report.failed_expectations
+            print(
+                "search evaluation: "
+                f"{passed}/{report.total_expectations} expectations passed"
+            )
+            print(f"weighted score: {report.weighted_score:.3f}")
+            print(f"gate failures: {report.gate_failures}")
+            for result in report.results:
+                if not result.passed:
+                    print(
+                        "failed: "
+                        f"{result.query_id} [{result.scope}] "
+                        f"{result.assertion}: {result.message}"
+                    )
+            return 0 if report.passed else 1
     except ConfigError as exc:
         print(f"configuration error: {exc}", file=sys.stderr)
+        return 2
+    except OSError as exc:
+        print(f"filesystem error: {exc}", file=sys.stderr)
         return 2
 
     parser.error(f"unknown command: {args.command}")
@@ -106,7 +145,49 @@ def _build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--port", type=int, default=8000)
     serve.add_argument("--static-dir", type=Path, default=Path("frontend/dist"))
 
+    search_eval = subparsers.add_parser(
+        "search-eval",
+        help="run local search quality evaluation",
+    )
+    search_eval.add_argument("--config", type=Path, required=True)
+    search_eval.add_argument("--eval", type=Path, required=True)
+    search_eval.add_argument(
+        "--scope",
+        action="append",
+        choices=["combined"],
+        help="benchmark scope to evaluate; only combined is supported by current search",
+    )
+    search_eval.add_argument(
+        "--limit",
+        type=int,
+        default=500,
+        help="number of ranked results considered findable for the current search",
+    )
+
     return parser
+
+
+def _filter_evaluation_scopes(
+    evaluation: SearchEvaluation,
+    scopes: frozenset[str],
+) -> SearchEvaluation:
+    return SearchEvaluation(
+        sets=evaluation.sets,
+        queries=tuple(
+            EvaluationQuery(
+                id=query.id,
+                text=query.text,
+                tags=query.tags,
+                intent=query.intent,
+                expectations=tuple(
+                    expectation
+                    for expectation in query.expectations
+                    if expectation.scope in scopes
+                ),
+            )
+            for query in evaluation.queries
+        ),
+    )
 
 
 class _IndexProgressBar:

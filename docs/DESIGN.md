@@ -209,10 +209,13 @@ Settled design constraints:
 
 - search reads indexed data only
 - no live filesystem walking during search
+- search lanes are independently weighted sources of search evidence, not necessarily separate engines or user-facing modes
 - ranking should be centralized and tunable
 - source priority should be a ranking signal or tiebreaker, not a hard ordering rule
 - selected source/directory filters should be hard filters
 - ranking explainability is optional; ranking quality and tunability matter more
+
+Initial search lanes should include strict lexical evidence, fuzzy lexical evidence, and domain-expanded evidence. Future semantic/image-text evidence should fit the same lane model. Strict and fuzzy lexical search may share implementation machinery, but they should remain separate logical lanes because they have different precision, recall, and ranking weight expectations.
 
 The ranking layer should be one place that receives available signals and decides the final ordering key/score.
 

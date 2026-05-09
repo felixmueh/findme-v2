@@ -24,6 +24,8 @@ Prioritize:
 
 Use the `tdd` skill for implementation work. Core behavior should be developed test-first through public interfaces.
 
+When working on search behavior, ranking, indexing signals, domain vocabulary, or search evaluation, run the local DND search benchmark/evaluation command before considering the work complete. The benchmark is allowed to depend on the local DND source mount and does not need to run in generic CI.
+
 ## Development Environment
 
 Agents are likely running in a sandbox environment on the developer laptop during implementation. This is expected and acceptable. The final production setup will happen on the server after the product is finished.

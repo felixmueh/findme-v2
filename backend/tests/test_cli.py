@@ -125,3 +125,66 @@ media_extensions = [".png"]
     captured = capsys.readouterr()
     assert "failed 1 thumbnails" in captured.out
     assert "thumbnail failed: dnd:broken.png" in captured.err
+
+
+def test_cli_search_eval_runs_combined_scope(tmp_path: Path, capsys) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    write_image(source_root / "goblin_warrior.png")
+    config_path = tmp_path / "findme.toml"
+    data_root = tmp_path / "data"
+    config_path.write_text(
+        f"""
+[app]
+data_root = "{data_root}"
+
+[[sources]]
+id = "tokens"
+display_name = "Tokens"
+root = "{source_root}"
+priority = 10
+media_extensions = [".png"]
+""",
+        encoding="utf-8",
+    )
+    eval_path = tmp_path / "eval.yaml"
+    eval_path.write_text(
+        """
+version: 1
+sets:
+  goblin_warriors:
+    assets:
+      - source_id: tokens
+        relative_path: goblin_warrior.png
+queries:
+  - id: goblin-warrior
+    text: goblin warrior
+    expectations:
+      - scope: combined
+        assert: findable
+        target: goblin_warriors
+        importance: 1.0
+        gate: true
+""",
+        encoding="utf-8",
+    )
+
+    assert run(["index", "--config", str(config_path), "--thumbnail-workers", "1"]) == 0
+    assert (
+        run(
+            [
+                "search-eval",
+                "--config",
+                str(config_path),
+                "--eval",
+                str(eval_path),
+                "--scope",
+                "combined",
+            ]
+        )
+        == 0
+    )
+
+    captured = capsys.readouterr()
+    assert "search evaluation: 1/1 expectations passed" in captured.out
+    assert "weighted score: 1.000" in captured.out

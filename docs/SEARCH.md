@@ -172,21 +172,9 @@ The workbench exists because ranking quality will be tuned against real crawl da
 
 ## Evaluation Set
 
-Maintain a lightweight search evaluation set after real crawl data exists.
+Search evaluation is specified in `docs/EVALUATE_SEARCH.md`.
 
-It should contain representative queries and expectations, for example:
-
-```yaml
-- query: goblin
-  notes: should include hobgoblins but exact goblins should rank first
-  should_include:
-    - tokens/goblin_warrior.png
-
-- query: adventurer
-  notes: should surface warrior/mage/rogue-style characters through domain expansion
-```
-
-This is not a heavy ML evaluation system. It is a regression aid for tuning engines, vocabulary, and ranking.
+The evaluation set is not a heavy ML benchmark. It is a local, real-DND regression and tuning aid for search behavior, vocabulary, and ranking.
 
 ## AI Search
 
