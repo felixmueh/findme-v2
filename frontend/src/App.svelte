@@ -743,7 +743,7 @@
               <img src={selected.actions.open_url} alt={selected.asset.filename} />
             {:else if selected.asset.media_type === 'video'}
               <!-- svelte-ignore a11y_media_has_caption -->
-              <video src={selected.actions.open_url} controls preload="metadata"></video>
+              <video src={selected.actions.open_url} controls preload="metadata" autoplay muted loop playsinline></video>
             {:else}
               <div class="file-preview">
                 <SelectedIcon size={30} />

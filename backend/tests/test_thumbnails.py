@@ -82,6 +82,45 @@ def test_index_sources_preserves_thumbnail_alpha(tmp_path: Path) -> None:
         assert thumb.getpixel((0, 0))[3] == 0
 
 
+def test_index_sources_generates_gif_thumbnail(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    gif_path = source_root / "Animations" / "Transparent.gif"
+    write_image(gif_path, size=(320, 160), alpha=0)
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".gif"}),
+            ),
+        ),
+    )
+
+    with connect(tmp_path / "findme.sqlite3") as db:
+        initialize_database(db)
+        summary = index_sources(db, config, thumbnail_workers=1)
+        row = db.execute(
+            """
+            SELECT media_type, thumbnail_path, thumbnail_width, thumbnail_height
+            FROM assets
+            WHERE relative_path = 'Animations/Transparent.gif'
+            """
+        ).fetchone()
+
+    assert summary.generated_thumbnails == 1
+    assert row["media_type"] == "image"
+    assert row["thumbnail_path"] is not None
+    assert Path(row["thumbnail_path"]).is_file()
+    assert row["thumbnail_width"] == 256
+    assert row["thumbnail_height"] == 128
+    with Image.open(row["thumbnail_path"]) as thumb:
+        assert thumb.mode == "RGBA"
+        assert thumb.size == (256, 128)
+
+
 def test_index_sources_generates_video_poster_thumbnail(tmp_path: Path) -> None:
     source_root = tmp_path / "assets"
     video_path = source_root / "Animations" / "Portal.mp4"

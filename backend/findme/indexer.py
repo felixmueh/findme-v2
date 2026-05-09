@@ -290,7 +290,7 @@ def _current_asset(
 def _needs_thumbnail(pending: PendingAsset) -> bool:
     if pending.media_type == "video":
         return True
-    if pending.media_type == "image" and pending.file_path.suffix.lower() != ".gif":
+    if pending.media_type == "image":
         return True
     return False
 
@@ -405,8 +405,6 @@ def _thumbnail_for(
     mtime_ns: int,
     media_type: str,
 ) -> ThumbnailResult | None:
-    if media_type == "image" and file_path.suffix.lower() == ".gif":
-        return None
     if media_type == "image":
         return generate_thumbnail(
             file_path,
