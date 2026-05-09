@@ -238,6 +238,334 @@ sets:
       - source_id: sounds
         relative_path: "GDC2018/Soundrangers - Nature Ambience/forest_alpine_crickets_01_60_loop.wav.mp3"
 
+  skeleton_archers:
+    assets:
+      - source_id: tokens
+        relative_path: "devinnight/TP11BasicUndead/skeleton_archer_red.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP11BasicUndead/skeleton_archer_walking.png"
+      - source_id: tokens
+        relative_path: "FA_Tokens/Adversaries/Skeletons/Skeleton_Archer_Bow_01.png"
+      - source_id: tokens
+        relative_path: "FA_Tokens/Adversaries/Skeletons/Skeleton_Archer_Bow_02.png"
+
+  skeleton_casters:
+    assets:
+      - source_id: tokens
+        relative_path: "FA_Tokens/Adversaries/Skeletons/Skeleton_Caster_Robed_01.png"
+      - source_id: tokens
+        relative_path: "FA_Tokens/Adversaries/Skeletons/Skeleton_Caster_Robed_Hooded_01.png"
+      - source_id: tokens
+        relative_path: "FA_Tokens/Adversaries/Skeletons/Skeleton_Caster_Robed_Magic_01.png"
+      - source_id: tokens
+        relative_path: "FA_Tokens/Adversaries/Skeletons/Skeleton_Caster_Rune_Carved_Magic_01.png"
+
+  skeleton_soldiers:
+    assets:
+      - source_id: tokens
+        relative_path: "FA_Tokens/Adversaries/Skeletons/Skeleton_Soldier_Sword_Shield_01.png"
+      - source_id: tokens
+        relative_path: "FA_Tokens/Adversaries/Skeletons/Skeleton_Soldier_Spear_01.png"
+      - source_id: tokens
+        relative_path: "FA_Tokens/Adversaries/Skeletons/Skeleton_Warrior_Armored_Sword_01.png"
+      - source_id: tokens
+        relative_path: "FA_Tokens/Adversaries/Skeletons/Skeleton_Warrior_Heavy_Armor_Greatsword_01.png"
+
+  zombies:
+    assets:
+      - source_id: tokens
+        relative_path: "devinnight/TP0Freebies/Zombie_Rotting_05.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP0Freebies/Zombie_Rotting_12.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP11BasicUndead/zombie_female_green.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP11BasicUndead/zombie_male_green.png"
+
+  liches:
+    assets:
+      - source_id: tokens
+        relative_path: "devinnight/TP11BasicUndead/lich_blue.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP11BasicUndead/lich_masked_mage.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP11BasicUndead/lich_skull_evil.png"
+      - source_id: tokens
+        relative_path: "Tokens_Huge/DnD/mindflayer-lich.png"
+
+  werewolves:
+    assets:
+      - source_id: tokens
+        relative_path: "devinnight/TP4Werecreatures/werewolf_12.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP4Werecreatures/werewolf_13.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP4Werecreatures/werewolf_fighter_14.png"
+      - source_id: tokens
+        relative_path: "FA_Tokens/Creatures/Humanoid/Werewolf_Medium_Humanoid_A_01.png"
+
+  owlbears:
+    assets:
+      - source_id: tokens
+        relative_path: "devinnight/TP5DMEssentials1/DME_Owlbear.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP5DMEssentials1/DME_Owlbear_2.png"
+      - source_id: tokens
+        relative_path: "FA_Tokens/Creatures/Beast/Owlbear_Large_Beast_01.png"
+      - source_id: tokens
+        relative_path: "FA_Tokens/Creatures/Beast/Owlbear_Large_Beast_02.png"
+
+  gelatinous_cubes:
+    assets:
+      - source_id: tokens
+        relative_path: "devinnight/TP5DMEssentials1/DME_Gelatinous_Cube.png"
+      - source_id: tokens
+        relative_path: "devinnight/TP5DMEssentials1/DME_Gelatinous_Cube_2.png"
+
+  beholders:
+    assets:
+      - source_id: tokens
+        relative_path: "matts/Tokens2/b/Beholder.png"
+      - source_id: tokens
+        relative_path: "realistic/Style 1/Abberation/Beholder.png"
+      - source_id: tokens
+        relative_path: "Tokens_Huge/DnD/beholder-bulbous.png"
+      - source_id: tokens
+        relative_path: "Tokens_Huge/DnD/beholder-eye-of-chaos.png"
+
+  mind_flayers:
+    assets:
+      - source_id: tokens
+        relative_path: "matts/Tokens2/m/Mind Flayer.png"
+      - source_id: tokens
+        relative_path: "matts/Tokens2/monsters/mind flayer.png"
+      - source_id: tokens
+        relative_path: "realistic/Style 1/Abberation/Mind Flayer.png"
+      - source_id: tokens
+        relative_path: "Tokens_Huge/DnD/mindflayer-chief.png"
+
+  mimics:
+    assets:
+      - source_id: tokens
+        relative_path: "FA_Tokens/Creatures/Monstrosity/Gift_Mimic_Medium_Monstrosity_A_01.png"
+      - source_id: tokens
+        relative_path: "FA_Tokens/Creatures/Monstrosity/Gift_Mimic_Medium_Monstrosity_A_02.png"
+      - source_id: tokens
+        relative_path: "FA_Tokens/Creatures/Monstrosity/Gift_Mimic_Medium_Monstrosity_B_01.png"
+      - source_id: tokens
+        relative_path: "FA_Tokens/Creatures/Monstrosity/Gift_Mimic_Medium_Monstrosity_B_02.png"
+
+  fire_elementals:
+    assets:
+      - source_id: tokens
+        relative_path: "FA_Tokens/Creatures/Elemental/Fire_Elemental_Large_Elemental_A_01.png"
+      - source_id: tokens
+        relative_path: "FA_Tokens/Creatures/Elemental/Fire_Elemental_Large_Elemental_A_02.png"
+      - source_id: tokens
+        relative_path: "FA_Tokens/Creatures/Elemental/Fire_Myrmidon_Medium_Scale300_Elemental_01.png"
+
+  water_elementals:
+    assets:
+      - source_id: tokens
+        relative_path: "FA_Tokens/Creatures/Elemental/Water_Large_Elemental_A_01.png"
+      - source_id: tokens
+        relative_path: "FA_Tokens/Creatures/Elemental/Water_Large_Elemental_A_02.png"
+      - source_id: tokens
+        relative_path: "FA_Tokens/Creatures/Elemental/Water_Myrmidon_Medium_Scale300_Elemental_01.png"
+
+  paladins:
+    assets:
+      - source_id: tokens
+        relative_path: "FA_Tokens/Heroes/_Catch-All_Heroes/Medium_Size/Paladin/Paladin_Sword_Shield_01.png"
+      - source_id: tokens
+        relative_path: "FA_Tokens/Heroes/_Catch-All_Heroes/Medium_Size/Paladin/Paladin_Sword_Shield_02.png"
+      - source_id: tokens
+        relative_path: "FA_Tokens/Heroes/Dragonborn/Dragonborn_Paladin_Sword_Shield_01.png"
+      - source_id: tokens
+        relative_path: "FA_Tokens/Heroes/Dragonborn/Dragonborn_Paladin_Sword_Shield_02.png"
+
+  warlocks:
+    assets:
+      - source_id: tokens
+        relative_path: "FA_Tokens/Heroes/_Catch-All_Heroes/Medium_Size/Warlock/Warlock_Staff_01.png"
+      - source_id: tokens
+        relative_path: "FA_Tokens/Heroes/_Catch-All_Heroes/Medium_Size/Warlock/Warlock_Staff_02.png"
+      - source_id: tokens
+        relative_path: "FA_Tokens/Heroes/Elf/Elf_Archfey_Warlock_Staff_01.png"
+      - source_id: tokens
+        relative_path: "FA_Tokens/Heroes/Elf/Elf_Feral_Warlock_01.png"
+
+  dragonborn_heroes:
+    assets:
+      - source_id: tokens
+        relative_path: "FA_Tokens/Heroes/Dragonborn/Dragonborn_Barbarian_Spear_Scale300_01.png"
+      - source_id: tokens
+        relative_path: "FA_Tokens/Heroes/Dragonborn/Dragonborn_Paladin_Sword_Shield_01.png"
+      - source_id: tokens
+        relative_path: "FA_Tokens/Heroes/Dragonborn/Dragonborn_Ranger_Bow_01.png"
+
+  dungeon_chests:
+    assets:
+      - source_id: mapmaking
+        relative_path: "animated_dungeon_megapack/Dungeon_chest1.png"
+      - source_id: mapmaking
+        relative_path: "animated_dungeon_megapack/Dungeon_Chest2.png"
+      - source_id: mapmaking
+        relative_path: "DungeondraftPacks/DungeondraftPacksExtracted/[BW] 09 Interiors Furniture Furnishings/textures/objects/storage/chests/gold-and-silver/bw_chest_ornate_gold_silver_01.webp"
+      - source_id: mapmaking
+        relative_path: "DungeondraftPacks/DungeondraftPacksExtracted/[BW] 09 Interiors Furniture Furnishings/textures/objects/storage/chests/wood/bw_chest_trunk_wood_01.webp"
+
+  trap_assets:
+    assets:
+      - source_id: mapmaking
+        relative_path: "animated_dungeon_megapack/Dungeon_pit_trap.png"
+      - source_id: mapmaking
+        relative_path: "DungeondraftPacks/DungeondraftPacksExtracted/[BW] Assets_A/textures/objects/Decor/Mechanical/Traps/Colorable/bw_trap_blade_pendulum_01_colorable.png"
+      - source_id: curseofstrahd
+        relative_path: "Maps/Curse of Strahd HD Maps/CurseofStrahd_TrapDiagram_Player.jpg"
+      - source_id: curseofstrahd
+        relative_path: "Maps/RaveloftMaps/Full Res -- No Grid/K61 - Elevator Trap_nogrid.png"
+
+  magic_portals:
+    assets:
+      - source_id: mapmaking
+        relative_path: "DungeondraftPacks/DungeondraftPacksExtracted/[BW] Assets_A/textures/objects/Decor/Structures/Monoliths/bw_overlay_wood_portal_magic_a.webp"
+      - source_id: mapmaking
+        relative_path: "DungeondraftPacks/DungeondraftPacksExtracted/[BW] Assets_A/textures/objects/Decor/Structures/Monoliths/bw_overlay_wood_portal_magic_b.webp"
+      - source_id: mapmaking
+        relative_path: "DungeondraftPacks/DungeondraftPacksExtracted/[BW] Assets_A/textures/objects/Decor/Structures/Monoliths/bw_wood_portal_01_on_a.webp"
+      - source_id: mapmaking
+        relative_path: "DungeondraftPacks/DungeondraftPacksExtracted/[BW] Assets_A/textures/objects/Decor/Structures/Monoliths/bw_wood_portal_01_on_b.webp"
+
+  stone_wells:
+    assets:
+      - source_id: mapmaking
+        relative_path: "DungeondraftPacks/DungeondraftPacksExtracted/[BW] Base 01a Artificial/textures/objects/Basics/Stone_Well/bw_stone_well_10.webp"
+      - source_id: mapmaking
+        relative_path: "DungeondraftPacks/DungeondraftPacksExtracted/[BW] Base 01a Artificial/textures/objects/Basics/Stone_Well/bw_stone_well_11.webp"
+      - source_id: mapmaking
+        relative_path: "DungeondraftPacks/DungeondraftPacksExtracted/[BW] Base 01a Artificial/textures/objects/Basics/Stone_Well/bw_stone_well_pillar_01.webp"
+
+  lava_terrain:
+    assets:
+      - source_id: mapmaking
+        relative_path: "DungeondraftPacks/DungeondraftPacksExtracted/[BW] Base 03 Special and FX/textures/terrain/textures-micro/effects/fire/bw_texture_lava_01_tileable.webp"
+      - source_id: mapmaking
+        relative_path: "DungeondraftPacks/DungeondraftPacksExtracted/[BW] Base 03 Special and FX/textures/terrain/textures-micro/effects/fire/bw_texture_lava_02_tileable.webp"
+      - source_id: mapmaking
+        relative_path: "DungeondraftPacks/DungeondraftPacksExtracted/[BW] Base 04 Natural/textures/objects/Wilderness/mountains_and_chasms/bw_chasm_05_rock_bottom_lava.webp"
+
+  necromancer_altars:
+    assets:
+      - source_id: mapmaking
+        relative_path: "DungeondraftPacks/DungeondraftPacksExtracted/[BW] Base 01b Artificial/textures/objects/bones/bones_necromancer_dungeon/bw_bones_dungeon_altar_01.webp"
+      - source_id: mapmaking
+        relative_path: "DungeondraftPacks/DungeondraftPacksExtracted/[BW] Base 01b Artificial/textures/objects/bones/bones_necromancer_dungeon/bw_bones_dungeon_altar_02_skulls_stone.webp"
+      - source_id: mapmaking
+        relative_path: "DungeondraftPacks/DungeondraftPacksExtracted/[BW] Base 01b Artificial/textures/objects/bones/bones_necromancer_dungeon/bw_bones_dungeon_altar_03_skulls_stone.webp"
+
+  coffins:
+    assets:
+      - source_id: mapmaking
+        relative_path: "animated_dungeon_megapack/Stonecoffin.png"
+      - source_id: mapmaking
+        relative_path: "DungeondraftPacks/DungeondraftPacksExtracted/[BW] Base 01b Artificial/textures/objects/coffins/bw_coffin_03a_open.webp"
+      - source_id: mapmaking
+        relative_path: "DungeondraftPacks/DungeondraftPacksExtracted/[BW] Base 01b Artificial/textures/objects/coffins/bw_coffin_03b_lid.webp"
+
+  curse_of_strahd_death_house_maps:
+    assets:
+      - source_id: curseofstrahd
+        relative_path: "Maps/Curse of Strahd HD Maps/CurseofStrahd_DeathHouse_DM.jpg"
+      - source_id: curseofstrahd
+        relative_path: "Maps/Curse of Strahd HD Maps/CurseofStrahd_DeathHouse_Player.jpg"
+      - source_id: curseofstrahd
+        relative_path: "Maps/Curse of Strahd HD Maps/CurseofStrahd_DeathHouse_Player_NoGrid.jpg"
+
+  curse_of_strahd_werewolf_den_maps:
+    assets:
+      - source_id: curseofstrahd
+        relative_path: "Maps/Curse of Strahd HD Maps/CurseofStrahd_WerewolfDen_DM.jpg"
+      - source_id: curseofstrahd
+        relative_path: "Maps/Curse of Strahd HD Maps/CurseofStrahd_WerewolfDen_Player.jpg"
+      - source_id: curseofstrahd
+        relative_path: "Maps/Curse of Strahd HD Maps/CurseofStrahd_WerewolfDen_Player_NoGrid.jpg"
+
+  castle_ravenloft_maps:
+    assets:
+      - source_id: curseofstrahd
+        relative_path: "Maps/G Jensen - Castle Ravenloft Maps/Ravenloft/Areas/1 - Dungeon and Catacombs.png"
+      - source_id: curseofstrahd
+        relative_path: "Maps/G Jensen - Castle Ravenloft Maps/Ravenloft/Areas/3 - Main Floor.png"
+      - source_id: curseofstrahd
+        relative_path: "Maps/G Jensen - Castle Ravenloft Maps/Ravenloft/COURT OF THE COUNT.jpg"
+      - source_id: curseofstrahd
+        relative_path: "Maps/G Jensen - Castle Ravenloft Maps/Ravenloft/SPIRES OF RAVENLOFT.jpg"
+
+  horse_sounds:
+    assets:
+      - source_id: sounds
+        relative_path: "GDC2017/G4F SFX - Horses/G4F SFX06 - HORSES - Galloping outside in sand.wav.mp3"
+      - source_id: sounds
+        relative_path: "GDC2017/G4F SFX - Horses/G4F SFX06 - HORSES - Snort 03.wav.mp3"
+      - source_id: sounds
+        relative_path: "GDC2017/G4F SFX - Horses/G4F SFX06 - HORSES - Walking on stone 03.wav.mp3"
+      - source_id: sounds
+        relative_path: "GDC2017/G4F SFX - Horses/G4F SFX06 - HORSES - Whinny distant 01.wav.mp3"
+
+  footstep_sounds:
+    assets:
+      - source_id: sounds
+        relative_path: "GDC2016/Levan Nadashvili - Civilian Footsteps/FS Ground Civilian Walk N03.wav.mp3"
+      - source_id: sounds
+        relative_path: "GDC2016/Levan Nadashvili - Civilian Footsteps/FS Wood Civilian Crouch N03.wav.mp3"
+      - source_id: sounds
+        relative_path: "GDC2016/Levan Nadashvili - Soldier Footsteps/FS Concrete Soldier Crouch N02.wav.mp3"
+
+  magic_spell_sounds:
+    assets:
+      - source_id: sounds
+        relative_path: "GDC2017/Alexander Ahura -  Groats Part1/Magic Effect-000.wav.mp3"
+      - source_id: sounds
+        relative_path: "GDC2017/Articulated Sounds - Ghosts/GHOSTS Spell Hocus Pocus 2.LR.wav.mp3"
+      - source_id: sounds
+        relative_path: "GDC2018/Gamemaster Audio - Magic and Spell Sounds/casting_charge_matter_grow_04.wav.mp3"
+      - source_id: sounds
+        relative_path: "GDC2019/Impact Soundworks - Super FX 8 and 16-bit Video Game SFX/Magic_Teleport.wav.mp3"
+
+  cathedral_music:
+    assets:
+      - source_id: music
+        relative_path: "atmosphere_the-cathedral/AtriumCarceri-Breathe.mp3"
+      - source_id: music
+        relative_path: "atmosphere_the-cathedral/AustinWintory-CathedralsofSteel.mp3"
+      - source_id: music
+        relative_path: "atmosphere_the-cathedral/HarryGregson-Williams-Crusaders.mp3"
+      - source_id: music
+        relative_path: "atmosphere_the-cathedral/KevinMacLeod-Rites.mp3"
+
+  chase_music:
+    assets:
+      - source_id: music
+        relative_path: "situation_chase/HenryJackman-CuttotheChase.mp3"
+      - source_id: music
+        relative_path: "situation_chase/LorneBalfe-ChasetheTarget.mp3"
+      - source_id: music
+        relative_path: "situation_chase/LorneBalfe-LettheChaseBegin.mp3"
+      - source_id: music
+        relative_path: "situation_chase/LudwigGoransson-BusanCarChase.mp3"
+
+  stealth_music:
+    assets:
+      - source_id: music
+        relative_path: "situation_stealth/ChrisTilton-ToYourStealth.mp3"
+      - source_id: music
+        relative_path: "situation_stealth/MidnightSyndicate-StealthandCunning.mp3"
+      - source_id: music
+        relative_path: "situation_stealth/CrisVelasco-HideandSeek.mp3"
+      - source_id: music
+        relative_path: "situation_stealth/LorneBalfe-SwiftandSilent.mp3"
+
 queries:
   - id: goblin-exact-token
     text: "goblin"
@@ -502,3 +830,559 @@ queries:
         worse: generic_door_sounds
         rule: majority
         importance: 0.7
+
+  - id: skeleton-archer
+    text: "skeleton archer"
+    tags: [tokens, creature, undead, standard]
+    intent: "A common undead-role query should find archer skeleton tokens before caster or melee skeleton variants."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: skeleton_archers
+        importance: 0.8
+      - scope: combined
+        assert: group_ranks_above
+        better: skeleton_archers
+        worse: skeleton_casters
+        rule: majority
+        importance: 0.6
+      - scope: combined
+        assert: group_ranks_above
+        better: skeleton_archers
+        worse: skeleton_soldiers
+        rule: majority
+        importance: 0.4
+
+  - id: skeleton-caster
+    text: "skeleton caster"
+    tags: [tokens, creature, undead, role]
+    intent: "Caster skeleton searches should prefer explicitly caster or magic skeleton tokens."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: skeleton_casters
+        importance: 0.8
+      - scope: combined
+        assert: group_ranks_above
+        better: skeleton_casters
+        worse: skeleton_archers
+        rule: majority
+        importance: 0.5
+
+  - id: zombie
+    text: "zombie"
+    tags: [tokens, creature, undead, standard]
+    intent: "A simple undead creature query should find zombie tokens and not only zombie-adjacent monsters."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: zombies
+        importance: 0.8
+      - scope: combined
+        assert: group_ranks_above
+        better: zombies
+        worse: skeleton_soldiers
+        rule: majority
+        importance: 0.4
+
+  - id: lich
+    text: "lich"
+    tags: [tokens, creature, undead, standard]
+    intent: "Lich should find explicit lich tokens, including compound filenames such as mindflayer-lich."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: liches
+        importance: 0.8
+      - scope: combined
+        assert: group_ranks_above
+        better: liches
+        worse: zombies
+        rule: majority
+        importance: 0.5
+
+  - id: werewolf
+    text: "werewolf"
+    tags: [tokens, creature, standard]
+    intent: "Werewolf should find werecreature tokens across older and Forgotten Adventures naming conventions."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: werewolves
+        importance: 0.8
+      - scope: combined
+        assert: group_ranks_above
+        better: werewolves
+        worse: owlbears
+        rule: majority
+        importance: 0.4
+
+  - id: owl-bear-separator
+    text: "owl bear"
+    tags: [tokens, creature, fuzzy, separator]
+    intent: "A separated natural-language form should still find owlbear filenames."
+    expectations:
+      - scope: fuzzy
+        assert: findable
+        target: owlbears
+        importance: 0.9
+      - scope: combined
+        assert: findable
+        target: owlbears
+        importance: 0.8
+
+  - id: gelatinous-cube
+    text: "gelatinous cube"
+    tags: [tokens, creature, standard]
+    intent: "The iconic two-word monster query should find gelatinous cube tokens."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: gelatinous_cubes
+        importance: 0.8
+      - scope: combined
+        assert: group_ranks_above
+        better: gelatinous_cubes
+        worse: green_non_dragons
+        rule: majority
+        importance: 0.4
+
+  - id: beholder
+    text: "beholder"
+    tags: [tokens, creature, standard]
+    intent: "Beholder should find concise and variant beholder tokens."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: beholders
+        importance: 0.8
+      - scope: combined
+        assert: group_ranks_above
+        better: beholders
+        worse: mind_flayers
+        rule: majority
+        importance: 0.4
+
+  - id: mind-flayer-space
+    text: "mind flayer"
+    tags: [tokens, creature, separator]
+    intent: "Mind flayer should find both spaced and compact mindflayer filenames."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: mind_flayers
+        importance: 0.8
+      - scope: combined
+        assert: group_ranks_above
+        better: mind_flayers
+        worse: beholders
+        rule: majority
+        importance: 0.4
+
+  - id: mindflayer-compact
+    text: "mindflayer"
+    tags: [tokens, creature, fuzzy, separator]
+    intent: "The compact user spelling should still reach spaced Mind Flayer assets."
+    expectations:
+      - scope: fuzzy
+        assert: findable
+        target: mind_flayers
+        importance: 0.8
+      - scope: combined
+        assert: findable
+        target: mind_flayers
+        importance: 0.7
+
+  - id: mimic
+    text: "mimic"
+    tags: [tokens, creature, standard]
+    intent: "Mimic should find mimic creature tokens even when filenames include an object subtype such as Gift_Mimic."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: mimics
+        importance: 0.8
+      - scope: combined
+        assert: group_ranks_above
+        better: mimics
+        worse: dungeon_chests
+        rule: majority
+        importance: 0.5
+
+  - id: fire-elemental
+    text: "fire elemental"
+    tags: [tokens, creature, elemental, color]
+    intent: "Elemental subtype searches should find the correct element rather than any elemental."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: fire_elementals
+        importance: 0.8
+      - scope: combined
+        assert: group_ranks_above
+        better: fire_elementals
+        worse: water_elementals
+        rule: majority
+        importance: 0.7
+
+  - id: water-elemental
+    text: "water elemental"
+    tags: [tokens, creature, elemental]
+    intent: "Water elemental should favor water elementals over fire elementals."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: water_elementals
+        importance: 0.8
+      - scope: combined
+        assert: group_ranks_above
+        better: water_elementals
+        worse: fire_elementals
+        rule: majority
+        importance: 0.7
+
+  - id: paladin-sword-shield
+    text: "paladin sword shield"
+    tags: [tokens, character, class, equipment]
+    intent: "Class plus equipment should find paladin sword-and-shield hero tokens."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: paladins
+        importance: 0.8
+      - scope: combined
+        assert: group_ranks_above
+        better: paladins
+        worse: human_warriors
+        rule: majority
+        importance: 0.5
+
+  - id: warlock-staff
+    text: "warlock staff"
+    tags: [tokens, character, class, equipment]
+    intent: "Warlock staff should find warlock hero tokens before generic mages."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: warlocks
+        importance: 0.8
+      - scope: combined
+        assert: group_ranks_above
+        better: warlocks
+        worse: mages
+        rule: majority
+        importance: 0.5
+
+  - id: dragonborn-paladin
+    text: "dragonborn paladin"
+    tags: [tokens, character, ancestry, class]
+    intent: "Race plus class should narrow to dragonborn hero tokens instead of generic dragon or paladin matches."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: dragonborn_heroes
+        importance: 0.7
+      - scope: combined
+        assert: group_ranks_above
+        better:
+          source_id: tokens
+          relative_path: "FA_Tokens/Heroes/Dragonborn/Dragonborn_Paladin_Sword_Shield_01.png"
+        worse: green_dragons
+        rule: majority
+        importance: 0.5
+
+  - id: dungeon-chest
+    text: "dungeon chest"
+    tags: [mapmaking, prop, standard]
+    intent: "A normal prop search should find chest objects rather than trap or creature assets."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: dungeon_chests
+        importance: 0.8
+      - scope: combined
+        assert: group_ranks_above
+        better: dungeon_chests
+        worse: mimics
+        rule: majority
+        importance: 0.5
+
+  - id: pit-trap
+    text: "pit trap"
+    tags: [mapmaking, curseofstrahd, prop, map]
+    intent: "Trap searches should surface both generic trap assets and adventure trap maps."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: trap_assets
+        importance: 0.7
+      - scope: combined
+        assert: group_ranks_above
+        better: trap_assets
+        worse: dungeon_chests
+        rule: majority
+        importance: 0.5
+
+  - id: magic-portal
+    text: "magic portal"
+    tags: [mapmaking, prop, magic]
+    intent: "Portal props should rank above unrelated magic audio when the query names a visual object."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: magic_portals
+        importance: 0.7
+      - scope: combined
+        assert: group_ranks_above
+        better: magic_portals
+        worse: magic_spell_sounds
+        rule: majority
+        importance: 0.6
+
+  - id: stone-well
+    text: "stone well"
+    tags: [mapmaking, prop, standard]
+    intent: "Stone well should find well props, including deep paths under Dungeondraft packs."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: stone_wells
+        importance: 0.7
+      - scope: combined
+        assert: group_ranks_above
+        better: stone_wells
+        worse: dungeon_chests
+        rule: majority
+        importance: 0.4
+
+  - id: lava-terrain
+    text: "lava terrain"
+    tags: [mapmaking, terrain, standard]
+    intent: "Terrain material searches should find lava textures and chasm assets."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: lava_terrain
+        importance: 0.7
+      - scope: combined
+        assert: group_ranks_above
+        better: lava_terrain
+        worse: forest_ambience_sounds
+        rule: majority
+        importance: 0.4
+
+  - id: necromancer-altar
+    text: "necromancer altar"
+    tags: [mapmaking, prop, undead, corner-case]
+    intent: "Deep Dungeondraft filenames should still support specific occult prop searches."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: necromancer_altars
+        importance: 0.7
+      - scope: combined
+        assert: group_ranks_above
+        better: necromancer_altars
+        worse: tavern_visuals
+        rule: majority
+        importance: 0.4
+
+  - id: coffin
+    text: "coffin"
+    tags: [mapmaking, prop, undead, standard]
+    intent: "Coffin should find both older megadungeon and newer Dungeondraft coffin props."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: coffins
+        importance: 0.7
+      - scope: combined
+        assert: group_ranks_above
+        better: coffins
+        worse: generic_dungeon_doors
+        rule: majority
+        importance: 0.4
+
+  - id: death-house
+    text: "death house"
+    tags: [curseofstrahd, maps, adventure, separator]
+    intent: "Adventure location searches should find Curse of Strahd Death House maps."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: curse_of_strahd_death_house_maps
+        importance: 0.8
+      - scope: combined
+        assert: group_ranks_above
+        better: curse_of_strahd_death_house_maps
+        worse: coffins
+        rule: majority
+        importance: 0.5
+
+  - id: castle-ravenloft
+    text: "castle ravenloft"
+    tags: [curseofstrahd, maps, adventure]
+    intent: "Castle Ravenloft should find Ravenloft map sets, not generic castle props or unrelated Strahd maps."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: castle_ravenloft_maps
+        importance: 0.8
+      - scope: combined
+        assert: group_ranks_above
+        better: castle_ravenloft_maps
+        worse: curse_of_strahd_death_house_maps
+        rule: majority
+        importance: 0.5
+
+  - id: werewolf-den
+    text: "werewolf den"
+    tags: [curseofstrahd, maps, creature, adventure]
+    intent: "A named adventure location should find Werewolf Den maps before generic werewolf creature tokens."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: curse_of_strahd_werewolf_den_maps
+        importance: 0.8
+      - scope: combined
+        assert: group_ranks_above
+        better: curse_of_strahd_werewolf_den_maps
+        worse: werewolves
+        rule: majority
+        importance: 0.6
+
+  - id: horse-gallop
+    text: "horse gallop"
+    tags: [sounds, standard]
+    intent: "Horse movement sound searches should find horse SFX."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: horse_sounds
+        importance: 0.7
+      - scope: combined
+        assert: group_ranks_above
+        better: horse_sounds
+        worse: footstep_sounds
+        rule: majority
+        importance: 0.5
+
+  - id: wood-footsteps
+    text: "wood footsteps"
+    tags: [sounds, standard]
+    intent: "Footstep material searches should find footstep SFX rather than wooden prop assets."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: footstep_sounds
+        importance: 0.7
+      - scope: combined
+        assert: group_ranks_above
+        better: footstep_sounds
+        worse: generic_dungeon_doors
+        rule: majority
+        importance: 0.5
+
+  - id: magic-spell-sound
+    text: "magic spell sound"
+    tags: [sounds, magic, source-disambiguation]
+    intent: "A query explicitly asking for sound should surface magic and spell SFX over visual portal props."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: magic_spell_sounds
+        importance: 0.7
+      - scope: combined
+        assert: group_ranks_above
+        better: magic_spell_sounds
+        worse: magic_portals
+        rule: majority
+        importance: 0.6
+
+  - id: cathedral-music
+    text: "cathedral music"
+    tags: [music, atmosphere, standard]
+    intent: "Cathedral music should find cathedral atmosphere tracks before combat or tavern music."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: cathedral_music
+        importance: 0.8
+      - scope: combined
+        assert: group_ranks_above
+        better: cathedral_music
+        worse: combat_music
+        rule: majority
+        importance: 0.6
+
+  - id: chase-music
+    text: "chase music"
+    tags: [music, situation, standard]
+    intent: "Situation queries should find tracks curated under the chase collection."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: chase_music
+        importance: 0.8
+      - scope: combined
+        assert: group_ranks_above
+        better: chase_music
+        worse: stealth_music
+        rule: majority
+        importance: 0.5
+
+  - id: stealth-music
+    text: "stealth music"
+    tags: [music, situation, standard]
+    intent: "Stealth music should find the stealth collection before chase or combat tracks."
+    expectations:
+      - scope: strict
+        assert: findable
+        target: stealth_music
+        importance: 0.8
+      - scope: combined
+        assert: group_ranks_above
+        better: stealth_music
+        worse: chase_music
+        rule: majority
+        importance: 0.5
+
+  - id: goblin-druid
+    text: "goblin druid"
+    tags: [tokens, creature, class, corner-case]
+    intent: "Race plus class should find Forgotten Adventures goblin druid tokens, not generic goblins or humanoid druids."
+    expectations:
+      - scope: strict
+        assert: findable
+        target:
+          source_id: tokens
+          relative_path: "FA_Tokens/Adversaries/Goblins/Goblin_Druid_01.png"
+        importance: 0.7
+      - scope: combined
+        assert: group_ranks_above
+        better:
+          source_id: tokens
+          relative_path: "FA_Tokens/Adversaries/Goblins/Goblin_Druid_01.png"
+        worse: generic_goblins
+        rule: majority
+        importance: 0.4
+
+  - id: drow-cleric
+    text: "drow cleric"
+    tags: [tokens, creature, class, standard]
+    intent: "Race plus class should find drow cleric tokens."
+    expectations:
+      - scope: strict
+        assert: findable
+        target:
+          source_id: tokens
+          relative_path: "FA_Tokens/Adversaries/Drow/Drow_Cleric_Mace_01.png"
+        importance: 0.7
+      - scope: combined
+        assert: group_ranks_above
+        better:
+          source_id: tokens
+          relative_path: "FA_Tokens/Adversaries/Drow/Drow_Cleric_Mace_01.png"
+        worse: paladins
+        rule: majority
+        importance: 0.4
