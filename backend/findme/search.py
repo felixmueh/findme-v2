@@ -193,12 +193,33 @@ class SearchIndex:
         offset: int = 0,
         control: SearchControl | None = None,
     ) -> SearchResultsPage:
+        domain_vocabulary = domain_vocabulary or DEFAULT_DOMAIN_VOCABULARY
+        if mode == "strict":
+            corpus = _filter_corpus(
+                _SearchCorpus(
+                    self.assets,
+                    self.fuzzy_tokens,
+                    self.fuzzy_token_asset_indexes,
+                    self.lexical_index,
+                ),
+                source_id=source_id,
+                directory=directory,
+                directory_prefix=directory_prefix,
+                control=control,
+            )
+            return _strict_search_page(
+                corpus,
+                query,
+                limit=limit,
+                offset=offset,
+                control=control,
+            )
         ranked = self._ranked_search(
             query,
             source_id=source_id,
             directory=directory,
             directory_prefix=directory_prefix,
-            domain_vocabulary=domain_vocabulary or DEFAULT_DOMAIN_VOCABULARY,
+            domain_vocabulary=domain_vocabulary,
             mode=mode,
             control=control,
         )
@@ -222,21 +243,38 @@ class SearchIndex:
         total_counts = _filter_directory_counts(self.directory_counts, source_id)
         match_counts = total_counts
         if query and query.strip():
-            ranked = self._ranked_search(
-                query,
-                source_id=source_id,
-                directory=None,
-                directory_prefix=None,
-                domain_vocabulary=domain_vocabulary or DEFAULT_DOMAIN_VOCABULARY,
-                mode=mode,
-                control=control,
-            )
-            match_counts = _counts_from_asset_directories(
-                [
-                    (candidate.asset.source_id, candidate.asset.directory)
-                    for candidate in ranked
-                ]
-            )
+            if mode == "strict":
+                corpus = _filter_corpus(
+                    _SearchCorpus(
+                        self.assets,
+                        self.fuzzy_tokens,
+                        self.fuzzy_token_asset_indexes,
+                        self.lexical_index,
+                    ),
+                    source_id=source_id,
+                    directory=None,
+                    directory_prefix=None,
+                    control=control,
+                )
+                match_counts = _counts_from_asset_directories(
+                    _strict_match_directories(corpus, query, control=control)
+                )
+            else:
+                ranked = self._ranked_search(
+                    query,
+                    source_id=source_id,
+                    directory=None,
+                    directory_prefix=None,
+                    domain_vocabulary=domain_vocabulary or DEFAULT_DOMAIN_VOCABULARY,
+                    mode=mode,
+                    control=control,
+                )
+                match_counts = _counts_from_asset_directories(
+                    [
+                        (candidate.asset.source_id, candidate.asset.directory)
+                        for candidate in ranked
+                    ]
+                )
 
         directories = []
         for (source, path), total_count in total_counts.items():
@@ -539,6 +577,86 @@ def _rank_search(
     )
 
 
+def _strict_search_page(
+    corpus: _SearchCorpus,
+    query: str,
+    *,
+    limit: int,
+    offset: int,
+    control: SearchControl | None = None,
+) -> SearchResultsPage:
+    query_tokens = _tokens(query)
+    if not query_tokens:
+        return SearchResultsPage(assets=[], total=0)
+    if corpus.lexical_index is None:
+        ranked = _rank_candidates(
+            _strict_candidates(
+                corpus.assets,
+                query_tokens,
+                query,
+                require_all_terms=True,
+                control=control,
+            ),
+            query_tokens,
+            control=control,
+        )
+        return SearchResultsPage(
+            assets=[
+                _record_to_result(candidate.asset, candidate.score)
+                for candidate in ranked[offset : offset + limit]
+            ],
+            total=len(ranked),
+        )
+
+    matches, total = corpus.lexical_index.search_with_scores(
+        query_tokens,
+        require_all_terms=True,
+        limit=limit,
+        offset=offset,
+    )
+    results = []
+    for index, (asset_index, score) in enumerate(matches, start=1):
+        if control:
+            control.check(index)
+        results.append(_record_to_result(corpus.assets[asset_index], score))
+    return SearchResultsPage(assets=results, total=total)
+
+
+def _strict_match_directories(
+    corpus: _SearchCorpus,
+    query: str,
+    *,
+    control: SearchControl | None = None,
+) -> list[tuple[str, str]]:
+    query_tokens = _tokens(query)
+    if not query_tokens:
+        return []
+    if corpus.lexical_index is None:
+        return [
+            (candidate.asset.source_id, candidate.asset.directory)
+            for candidate in _strict_candidates(
+                corpus.assets,
+                query_tokens,
+                query,
+                require_all_terms=True,
+                control=control,
+            )
+        ]
+    matches, _total = corpus.lexical_index.search_with_scores(
+        query_tokens,
+        require_all_terms=True,
+        limit=corpus.lexical_index.asset_count,
+        offset=0,
+    )
+    directories = []
+    for index, (asset_index, _score) in enumerate(matches, start=1):
+        if control:
+            control.check(index)
+        asset = corpus.assets[asset_index]
+        directories.append((asset.source_id, asset.directory))
+    return directories
+
+
 def _rank_search_assets(
     assets: Iterable[_AssetRecord] | _SearchCorpus,
     query: str,
@@ -638,7 +756,7 @@ def _search_cache_key(
 
 
 class _TantivyLexicalIndex:
-    _FIELDS = ("filename", "path", "directory", "source")
+    _FIELDS = ("stem", "filename", "path", "directory", "source")
     _TRIGRAM_FIELDS = (
         "filename_trigrams",
         "path_trigrams",
@@ -646,22 +764,24 @@ class _TantivyLexicalIndex:
         "source_trigrams",
     )
     _EXACT_WEIGHTS = {
+        "stem": 90.0,
         "filename": 50.0,
-        "path": 28.0,
-        "directory": 18.0,
+        "path": 12.0,
+        "directory": 8.0,
         "source": 22.0,
     }
     _PREFIX_WEIGHTS = {
+        "stem": 58.0,
         "filename": 38.0,
-        "path": 20.0,
-        "directory": 12.0,
+        "path": 8.0,
+        "directory": 5.0,
         "source": 16.0,
     }
     _INFIX_WEIGHTS = {
-        "filename_trigrams": 24.0,
-        "path_trigrams": 12.0,
-        "directory_trigrams": 6.0,
-        "source_trigrams": 8.0,
+        "filename_trigrams": 1.5,
+        "path_trigrams": 0.75,
+        "directory_trigrams": 0.4,
+        "source_trigrams": 0.5,
     }
 
     def __init__(
@@ -690,6 +810,7 @@ class _TantivyLexicalIndex:
             writer.add_document(
                 tantivy.Document(
                     asset_index=asset_index,
+                    stem=" ".join(_tokens(asset.stem)),
                     filename=" ".join(asset.filename_tokens),
                     path=" ".join(asset.path_tokens),
                     directory=" ".join(asset.directory_tokens),
@@ -704,20 +825,63 @@ class _TantivyLexicalIndex:
         index.reload()
         return cls(index=index, searcher=index.searcher(), asset_count=len(assets))
 
-    def candidate_indexes(self, query_tokens: tuple[str, ...]) -> tuple[int, ...]:
-        query = self._candidate_query(query_tokens)
+    def candidates_with_scores(
+        self,
+        query_tokens: tuple[str, ...],
+    ) -> tuple[tuple[int, float], ...]:
+        matches, _total = self.search_with_scores(
+            query_tokens,
+            require_all_terms=False,
+            limit=self.asset_count,
+            offset=0,
+        )
+        return matches
+
+    def search_with_scores(
+        self,
+        query_tokens: tuple[str, ...],
+        *,
+        require_all_terms: bool,
+        limit: int,
+        offset: int,
+    ) -> tuple[tuple[tuple[int, float], ...], int]:
+        query = self._candidate_query(
+            query_tokens,
+            require_all_terms=require_all_terms,
+        )
         if query is None:
-            return ()
-        result = self.searcher.search(query, limit=self.asset_count, count=True)
+            return (), 0
+        result = self.searcher.search(query, limit=limit, offset=offset, count=True)
         doc_addresses = [doc_address for _score, doc_address in result.hits]
-        return tuple(self.searcher.fast_field_values("asset_index", doc_addresses))
+        asset_indexes = self.searcher.fast_field_values("asset_index", doc_addresses)
+        return (
+            tuple(
+                (asset_index, float(score))
+                for (score, _doc_address), asset_index in zip(
+                    result.hits,
+                    asset_indexes,
+                    strict=True,
+                )
+            ),
+            result.count,
+        )
+
+    def candidate_indexes(self, query_tokens: tuple[str, ...]) -> tuple[int, ...]:
+        return tuple(
+            asset_index for asset_index, _score in self.candidates_with_scores(query_tokens)
+        )
 
     def _candidate_query(
         self,
         query_tokens: tuple[str, ...],
+        *,
+        require_all_terms: bool = False,
     ) -> tantivy.Query | None:
         subqueries = [
-            (tantivy.Occur.Should, token_query)
+            (
+                tantivy.Occur.Must if require_all_terms else tantivy.Occur.Should,
+                token_query,
+            )
             for token in query_tokens
             if (token_query := self._token_query(token)) is not None
         ]
@@ -931,17 +1095,18 @@ def _strict_candidates(
         else _SearchCorpus.from_assets(corpus_or_assets)
     )
     assets = corpus.assets
-    candidate_indexes = (
-        corpus.lexical_index.candidate_indexes(query_tokens)
+    candidate_matches = (
+        corpus.lexical_index.candidates_with_scores(query_tokens)
         if corpus.lexical_index is not None
-        else range(len(assets))
+        else tuple((asset_index, 0.0) for asset_index in range(len(assets)))
     )
     candidates = []
-    for index, asset_index in enumerate(candidate_indexes, start=1):
+    for index, (asset_index, lexical_score) in enumerate(candidate_matches, start=1):
         if control:
             control.check(index)
         asset = assets[asset_index]
-        score, matched = _strict_score(asset, query_tokens)
+        _fallback_score, matched = _strict_score(asset, query_tokens)
+        score = _strict_tantivy_raw_score(lexical_score, query_tokens)
         if score <= 0:
             continue
         if require_all_terms and set(matched) != set(query_tokens):
@@ -1200,6 +1365,15 @@ def _field_token_score(
         elif token in field_token:
             best = max(best, infix)
     return best
+
+
+def _strict_tantivy_raw_score(
+    lexical_score: float,
+    query_tokens: tuple[str, ...],
+) -> float:
+    if lexical_score <= 0:
+        return 0.0
+    return lexical_score * max(len(query_tokens), 1)
 
 
 def _fuzzy_token_matches(

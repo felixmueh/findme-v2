@@ -52,12 +52,42 @@ button {
 
 .toolbar {
   display: grid;
-  grid-template-columns: 120px minmax(260px, 1fr) 180px 110px;
+  grid-template-columns: 120px minmax(260px, 1fr) 210px 180px 110px;
   gap: 8px;
   align-items: center;
   padding: 7px 10px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
+}
+
+.lane-tabs {
+  min-width: 0;
+  height: 36px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--surface-alt);
+}
+
+.lane-tabs button {
+  min-width: 0;
+  padding: 0 8px;
+  border-right: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.lane-tabs button:last-child {
+  border-right: 0;
+}
+
+.lane-tabs button:hover,
+.lane-tabs button.active {
+  background: var(--surface);
+  color: var(--text);
 }
 
 .brand {

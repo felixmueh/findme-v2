@@ -63,7 +63,10 @@
     }
   }
 
+  type SearchMode = 'strict' | 'fuzzy' | 'domain'
+
   let query = $state('')
+  let searchMode = $state<SearchMode>('strict')
   let sourceId = $state('')
   let selectedDirectory = $state('')
   let selectedDirectorySourceId = $state('')
@@ -125,6 +128,7 @@
 
   $effect(() => {
     query
+    searchMode
     sourceId
     selectedDirectory
     selectedDirectorySourceId
@@ -137,6 +141,7 @@
 
   $effect(() => {
     query
+    searchMode
     sourceId
     const revision = searchRevision
     window.clearTimeout(directoryDebounceTimer)
@@ -177,6 +182,10 @@
     collapsedDirectories = new Set()
   }
 
+  function setSearchMode(mode: SearchMode) {
+    searchMode = mode
+  }
+
   async function loadDirectories(revision?: number) {
     directoryRequestController?.abort()
     const controller = new AbortController()
@@ -186,6 +195,7 @@
     const trimmed = query.trim()
     if (trimmed) {
       params.set('q', trimmed)
+      params.set('mode', searchMode)
       if (revision !== undefined) {
         params.set('search_session', directorySearchSessionId)
         params.set('search_revision', String(revision))
@@ -234,6 +244,7 @@
     const path = trimmed ? '/api/search' : '/api/assets'
     if (trimmed) {
       params.set('q', trimmed)
+      params.set('mode', searchMode)
       params.set('search_session', searchSessionId)
       params.set('search_revision', String(revision))
     }
@@ -473,6 +484,36 @@
       <Search size={17} />
       <input bind:this={searchInput} bind:value={query} type="search" autocomplete="off" placeholder="Search assets" />
     </label>
+
+    <div class="lane-tabs" role="tablist" aria-label="Search lane">
+      <button
+        class:active={searchMode === 'strict'}
+        type="button"
+        role="tab"
+        aria-selected={searchMode === 'strict'}
+        onclick={() => setSearchMode('strict')}
+      >
+        Exact
+      </button>
+      <button
+        class:active={searchMode === 'fuzzy'}
+        type="button"
+        role="tab"
+        aria-selected={searchMode === 'fuzzy'}
+        onclick={() => setSearchMode('fuzzy')}
+      >
+        Fuzzy
+      </button>
+      <button
+        class:active={searchMode === 'domain'}
+        type="button"
+        role="tab"
+        aria-selected={searchMode === 'domain'}
+        onclick={() => setSearchMode('domain')}
+      >
+        Domain
+      </button>
+    </div>
 
     <select value={sourceId} aria-label="Source" onchange={changeSource}>
       <option value="">All sources</option>

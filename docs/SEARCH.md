@@ -12,7 +12,7 @@ V1 search must support:
 - strong filename/path matching
 - domain-aware expansion such as `adventurer` finding `warrior`, `mage`, `rogue`, etc.
 - source/directory filters
-- centralized hand-tunable ranking
+- hand-tunable ranking per lane where the engine defaults are not sufficient
 - search diagnostics for development/tuning
 - a lightweight search evaluation set
 
@@ -20,7 +20,8 @@ The normal UI/API should stay fast and lean. Detailed ranking diagnostics belong
 
 ## Retrieval Lanes
 
-Search is designed as multiple retrieval lanes plus a final ranker.
+Search is designed as multiple retrieval lanes. A final ranker/fusion layer can
+exist, but it should not be the only user-facing way to consume results.
 
 Each lane answers: "Which assets match this query by this method?"
 
@@ -42,17 +43,30 @@ Planned lanes:
    - not required for v1
    - architecture should allow adding it later without rewriting search/ranking
 
-4. **Final ranking/fusion**
-   - combines candidates from all lanes
+4. **Aggregated/fused view**
+   - optional view that combines candidates from all lanes
    - implementation formula is intentionally not finalized
    - must be localized in one easy-to-edit function/module
 
+The API and frontend should be able to request and display individual lanes
+directly, not only a fused `combined` result. The UI may expose this as tabs,
+parallel columns, or an aggregated result stream that is grouped horizontally or
+sequentially by lane. A plausible default result shape is:
+
+- exact/token lexical matches first
+- fuzzy typo-tolerant matches next
+- domain-expanded matches next
+
+Keeping lanes visibly separate is conceptually simpler than forcing every signal
+into one global score. It also allows fast exact results to appear immediately
+without waiting for broader or slower lanes.
+
 Current implementation status:
 
-- `strict`: token-accurate filename/path matching. The strict benchmark scope requires every query token to match.
+- `strict`: token-accurate filename/stem/path matching backed by Tantivy. The strict benchmark scope requires every query token to match, and normal strict UI/API results use Tantivy ranking directly instead of the slower Python fusion ranker.
 - `fuzzy`: typo/separator-tolerant matching using RapidFuzz over indexed filename/path data.
 - `domain`: query-time vocabulary expansion from `config/search-vocabulary.yaml` or the configured `[search].domain_vocabulary` path.
-- `combined`: normal product search, combining strict, fuzzy, and domain candidates through the centralized ranker in `findme.search`.
+- `combined`: compatibility/workbench search, combining strict, fuzzy, and domain candidates through the Python ranker in `findme.search`.
 
 SQLite is durable storage for indexed assets, not the interactive search path. The
 running app loads the indexed rows into a process-local in-memory search
@@ -67,11 +81,9 @@ Domain vocabulary changes are applied at query time and do not require re-indexi
 
 ## Runtime Performance
 
-The API keeps a bounded process-local LRU cache of fully ranked results for exact
-query/scope/mode/vocabulary combinations. Asset results and matched directory
-counts are both projected from the same ranked result, so a single query should
-not rank the corpus twice just because the frontend asks for both assets and
-directories.
+The API keeps a bounded process-local LRU cache of fully ranked Python-fusion
+results for query/scope/mode/vocabulary combinations. Strict Tantivy lane
+requests bypass that cache and page directly from the lexical index.
 
 Concurrent identical searches are coalesced in process: the first request owns
 the ranking work, and later identical requests wait for the same result unless
@@ -92,9 +104,9 @@ Open direction: search does not necessarily need every retrieval lane to finish
 before the UI can show useful results. Exact lexical matches may be returned
 first for the first result page, with fuzzy typo-tolerant matches and
 domain-expanded matches fetched later as enrichment, when the user scrolls far
-enough, or when the user explicitly switches/expands the mode. This keeps the
-lane model intact while allowing the fastest/highest-precision evidence to drive
-initial interaction latency.
+enough, when a lane tab becomes active, or when the user explicitly switches or
+expands the mode. This keeps the lane model intact while allowing the
+fastest/highest-precision evidence to drive initial interaction latency.
 
 ## Candidate Interface
 

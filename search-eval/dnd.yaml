@@ -28,6 +28,18 @@ sets:
       - source_id: tokens
         relative_path: "Tokens_Huge/DnD/goblin28.png"
 
+  exact_goblin_tokens:
+    assets:
+      - source_id: tokens
+        relative_path: "realistic/Style 1/Humanoid/Goblin.png"
+      - source_id: tokens
+        relative_path: "matts/Tokens2/g/Goblin.png"
+
+  goblin_themed_props:
+    assets:
+      - source_id: mapmaking
+        relative_path: "DungeondraftPacks/DungeondraftPacksExtracted/[BW] Base 11 Goblin Caves/textures/objects/goblin-settlement/goblin-effegies-totems/bw_effegy_totem_goblin_02.webp"
+
   orc_warriors:
     assets:
       - source_id: tokens
@@ -227,6 +239,19 @@ sets:
         relative_path: "GDC2018/Soundrangers - Nature Ambience/forest_alpine_crickets_01_60_loop.wav.mp3"
 
 queries:
+  - id: goblin-exact-token
+    text: "goblin"
+    tags: [tokens, creature, strict, ranking]
+    intent: "A simple exact creature query should prefer concise goblin token filenames over goblin-themed props."
+    expectations:
+      - scope: strict
+        assert: group_ranks_above
+        better: exact_goblin_tokens
+        worse: goblin_themed_props
+        rule: majority
+        importance: 1.0
+        gate: true
+
   - id: goblin-warrior
     text: "goblin warrior"
     tags: [tokens, creature, strict, ranking]
