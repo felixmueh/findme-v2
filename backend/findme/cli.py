@@ -9,6 +9,7 @@ from tqdm import tqdm
 import uvicorn
 
 from findme.api import create_app
+from findme.cleanup import cleanup_index
 from findme.config import ConfigError, load_config
 from findme.db import connect, initialize_database
 from findme.indexer import count_indexable_files, index_sources
@@ -79,6 +80,19 @@ def run(argv: list[str]) -> int:
         if args.command == "serve":
             app = create_app(config, db_path, static_dir=args.static_dir)
             uvicorn.run(app, host=args.host, port=args.port)
+            return 0
+
+        if args.command == "cleanup":
+            with connect(db_path) as db:
+                initialize_database(db)
+                summary = cleanup_index(db, data_root=config.data_root, dry_run=args.dry_run)
+            prefix = "would clean" if args.dry_run else "cleaned"
+            print(
+                f"{prefix} "
+                f"{summary.stale_assets} stale assets, "
+                f"{summary.asset_search_rows} stale search rows, "
+                f"{summary.unreferenced_cache_files} unreferenced cache files"
+            )
             return 0
 
         if args.command == "search-eval":
@@ -155,6 +169,17 @@ def _build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8000)
     serve.add_argument("--static-dir", type=Path, default=Path("frontend/dist"))
+
+    cleanup = subparsers.add_parser(
+        "cleanup",
+        help="remove stale index rows and unreferenced generated cache files",
+    )
+    cleanup.add_argument("--config", type=Path, required=True)
+    cleanup.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="report cleanup counts without deleting anything",
+    )
 
     search_eval = subparsers.add_parser(
         "search-eval",

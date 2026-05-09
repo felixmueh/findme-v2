@@ -3,6 +3,7 @@ from pathlib import Path
 from PIL import Image
 
 from findme.cli import run
+from findme.db import connect
 
 from helpers import write_image
 
@@ -125,6 +126,93 @@ media_extensions = [".png"]
     captured = capsys.readouterr()
     assert "failed 1 thumbnails" in captured.out
     assert "thumbnail failed: dnd:broken.png" in captured.err
+
+
+def test_cli_cleanup_dry_run_preserves_stale_rows_and_unreferenced_cache(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    asset_path = source_root / "ghost.png"
+    write_image(asset_path)
+    config_path = tmp_path / "findme.toml"
+    data_root = tmp_path / "data"
+    config_path.write_text(
+        f"""
+[app]
+data_root = "{data_root}"
+
+[[sources]]
+id = "dnd"
+display_name = "DND"
+root = "{source_root}"
+priority = 10
+media_extensions = [".png"]
+""",
+        encoding="utf-8",
+    )
+
+    assert run(["index", "--config", str(config_path), "--thumbnail-workers", "1"]) == 0
+    asset_path.unlink()
+    assert run(["index", "--config", str(config_path), "--thumbnail-workers", "1"]) == 0
+    orphan = data_root / "cache" / "thumbs" / "zz" / "orphan.webp"
+    orphan.parent.mkdir(parents=True)
+    orphan.write_bytes(b"orphan")
+
+    assert run(["cleanup", "--config", str(config_path), "--dry-run"]) == 0
+
+    captured = capsys.readouterr()
+    assert "would clean 1 stale assets, 0 stale search rows, 2 unreferenced cache files" in captured.out
+    assert orphan.is_file()
+    with connect(data_root / "findme.sqlite3") as db:
+        stale_assets = db.execute("SELECT COUNT(*) FROM assets WHERE stale = 1").fetchone()[0]
+    assert stale_assets == 1
+
+
+def test_cli_cleanup_removes_stale_rows_and_unreferenced_cache(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    asset_path = source_root / "ghost.png"
+    write_image(asset_path)
+    config_path = tmp_path / "findme.toml"
+    data_root = tmp_path / "data"
+    config_path.write_text(
+        f"""
+[app]
+data_root = "{data_root}"
+
+[[sources]]
+id = "dnd"
+display_name = "DND"
+root = "{source_root}"
+priority = 10
+media_extensions = [".png"]
+""",
+        encoding="utf-8",
+    )
+
+    assert run(["index", "--config", str(config_path), "--thumbnail-workers", "1"]) == 0
+    asset_path.unlink()
+    assert run(["index", "--config", str(config_path), "--thumbnail-workers", "1"]) == 0
+    orphan = data_root / "cache" / "thumbs" / "zz" / "orphan.webp"
+    orphan.parent.mkdir(parents=True)
+    orphan.write_bytes(b"orphan")
+
+    assert run(["cleanup", "--config", str(config_path)]) == 0
+
+    captured = capsys.readouterr()
+    assert "cleaned 1 stale assets, 0 stale search rows, 2 unreferenced cache files" in captured.out
+    assert not orphan.exists()
+    assert not (data_root / "cache" / "thumbs" / "zz").exists()
+    with connect(data_root / "findme.sqlite3") as db:
+        assets = db.execute("SELECT COUNT(*) FROM assets").fetchone()[0]
+        search_rows = db.execute("SELECT COUNT(*) FROM asset_search").fetchone()[0]
+    assert assets == 0
+    assert search_rows == 0
 
 
 def test_cli_search_eval_runs_combined_scope(tmp_path: Path, capsys) -> None:
