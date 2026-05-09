@@ -9,7 +9,7 @@ import re
 import sqlite3
 import threading
 
-from rapidfuzz import fuzz
+from rapidfuzz import fuzz, process
 import yaml
 
 
@@ -90,6 +90,29 @@ class _AssetRecord:
     directory_tokens: tuple[str, ...]
     path_tokens: tuple[str, ...]
     normalized_text: str
+    fuzzy_text: str
+
+
+@dataclass(frozen=True)
+class _SearchCorpus:
+    assets: tuple[_AssetRecord, ...]
+    fuzzy_tokens: tuple[str, ...]
+    fuzzy_token_asset_indexes: tuple[tuple[int, ...], ...]
+
+    @classmethod
+    def from_assets(cls, assets: Iterable[_AssetRecord]) -> "_SearchCorpus":
+        asset_tuple = tuple(assets)
+        fuzzy_token_assets: dict[str, list[int]] = {}
+        for asset_index, asset in enumerate(asset_tuple):
+            for token in dict.fromkeys(asset.filename_tokens + asset.path_tokens):
+                fuzzy_token_assets.setdefault(token, []).append(asset_index)
+        return cls(
+            assets=asset_tuple,
+            fuzzy_tokens=tuple(fuzzy_token_assets),
+            fuzzy_token_asset_indexes=tuple(
+                tuple(asset_indexes) for asset_indexes in fuzzy_token_assets.values()
+            ),
+        )
 
 
 @dataclass(frozen=True)
@@ -122,6 +145,8 @@ class SearchIndex:
     assets: tuple[_AssetRecord, ...]
     directory_counts: dict[tuple[str, str], int]
     source_display_names: dict[str, str]
+    fuzzy_tokens: tuple[str, ...] = ()
+    fuzzy_token_asset_indexes: tuple[tuple[int, ...], ...] = ()
     cache_size: int = 128
     _cache_lock: threading.Lock = field(default_factory=threading.Lock)
     _ranked_cache: OrderedDict[_SearchCacheKey, tuple[_RankedCandidate, ...]] = field(
@@ -137,6 +162,7 @@ class SearchIndex:
             directory=None,
             directory_prefix=None,
         )
+        corpus = _SearchCorpus.from_assets(assets)
         return cls(
             assets=assets,
             directory_counts=_counts_from_asset_directories(
@@ -145,6 +171,8 @@ class SearchIndex:
             source_display_names={
                 asset.source_id: asset.source_display_name for asset in assets
             },
+            fuzzy_tokens=corpus.fuzzy_tokens,
+            fuzzy_token_asset_indexes=corpus.fuzzy_token_asset_indexes,
         )
 
     def search(
@@ -280,8 +308,12 @@ class SearchIndex:
         try:
             ranked = tuple(
                 _rank_search_assets(
-                    _filter_assets(
-                        self.assets,
+                    _filter_corpus(
+                        _SearchCorpus(
+                            self.assets,
+                            self.fuzzy_tokens,
+                            self.fuzzy_token_asset_indexes,
+                        ),
                         source_id=source_id,
                         directory=directory,
                         directory_prefix=directory_prefix,
@@ -487,11 +519,13 @@ def _rank_search(
     mode: SearchMode,
 ) -> list[_RankedCandidate]:
     return _rank_search_assets(
-        _fetch_assets(
-            db,
-            source_id=source_id,
-            directory=directory,
-            directory_prefix=directory_prefix,
+        _SearchCorpus.from_assets(
+            _fetch_assets(
+                db,
+                source_id=source_id,
+                directory=directory,
+                directory_prefix=directory_prefix,
+            )
         ),
         query,
         domain_vocabulary=domain_vocabulary,
@@ -500,13 +534,16 @@ def _rank_search(
 
 
 def _rank_search_assets(
-    assets: Iterable[_AssetRecord],
+    assets: Iterable[_AssetRecord] | _SearchCorpus,
     query: str,
     *,
     domain_vocabulary: DomainVocabulary,
     mode: SearchMode,
     control: SearchControl | None = None,
 ) -> list[_RankedCandidate]:
+    corpus = (
+        assets if isinstance(assets, _SearchCorpus) else _SearchCorpus.from_assets(assets)
+    )
     query_tokens = _tokens(query)
     if not query_tokens:
         return []
@@ -517,7 +554,7 @@ def _rank_search_assets(
     if mode == "strict":
         candidates.extend(
             _strict_candidates(
-                assets,
+                corpus.assets,
                 query_tokens,
                 query,
                 require_all_terms=True,
@@ -526,7 +563,7 @@ def _rank_search_assets(
         )
     if mode == "combined":
         strict_candidates = _strict_candidates(
-            assets,
+            corpus.assets,
             query_tokens,
             query,
             require_all_terms=False,
@@ -543,7 +580,7 @@ def _rank_search_assets(
         ):
             candidates.extend(
                 _fuzzy_candidates(
-                    assets,
+                    corpus,
                     query_tokens,
                     query,
                     suppress_strict_all_terms=mode == "combined",
@@ -553,7 +590,7 @@ def _rank_search_assets(
     if mode in {"domain", "combined"}:
         candidates.extend(
             _domain_candidates(
-                assets,
+                corpus.assets,
                 query_tokens,
                 query,
                 domain_vocabulary,
@@ -594,16 +631,19 @@ def _search_cache_key(
     )
 
 
-def _filter_assets(
-    assets: Iterable[_AssetRecord],
+def _filter_corpus(
+    corpus: _SearchCorpus,
     *,
     source_id: str | None,
     directory: str | None,
     directory_prefix: str | None,
     control: SearchControl | None = None,
-) -> tuple[_AssetRecord, ...]:
-    filtered = []
-    for index, asset in enumerate(assets, start=1):
+) -> _SearchCorpus:
+    if source_id is None and directory is None and directory_prefix is None:
+        return corpus
+
+    filtered_assets = []
+    for index, asset in enumerate(corpus.assets, start=1):
         if control:
             control.check(index)
         if source_id and asset.source_id != source_id:
@@ -615,8 +655,8 @@ def _filter_assets(
             or asset.directory.startswith(f"{directory_prefix}/")
         ):
             continue
-        filtered.append(asset)
-    return tuple(filtered)
+        filtered_assets.append(asset)
+    return _SearchCorpus.from_assets(filtered_assets)
 
 
 def _filter_directory_counts(
@@ -721,21 +761,33 @@ def _strict_candidates(
                 query_variant=query,
             )
         )
-    return sorted(candidates, key=lambda candidate: candidate.raw_score, reverse=True)
+    return sorted(candidates, key=_candidate_lane_sort_key)
 
 
 def _fuzzy_candidates(
-    assets: Iterable[_AssetRecord],
+    corpus: _SearchCorpus,
     query_tokens: tuple[str, ...],
     query: str,
     *,
     suppress_strict_all_terms: bool,
     control: SearchControl | None = None,
 ) -> list[_Candidate]:
+    token_matches = _fuzzy_token_matches(corpus, query_tokens)
+    if not token_matches:
+        return []
+
+    matching_indexes = set(token_matches[0])
+    for matches in token_matches[1:]:
+        matching_indexes.intersection_update(matches)
+        if not matching_indexes:
+            return []
+
     candidates = []
-    for index, asset in enumerate(assets, start=1):
+    for asset_index in matching_indexes:
+        index = asset_index + 1
         if control:
             control.check(index)
+        asset = corpus.assets[asset_index]
         strict_score, strict_matched = _strict_score(asset, query_tokens)
         if (
             suppress_strict_all_terms
@@ -743,19 +795,25 @@ def _fuzzy_candidates(
             and set(strict_matched) == set(query_tokens)
         ):
             continue
-        score, matched = _fuzzy_score(asset, query_tokens, query)
-        if score <= 0:
-            continue
+        matched = query_tokens
         candidates.append(
             _Candidate(
                 asset=asset,
                 lane="fuzzy",
-                raw_score=score,
+                raw_score=_fuzzy_raw_score(
+                    asset,
+                    query_tokens,
+                    query,
+                    tuple(
+                        token_matches_by_index[asset_index]
+                        for token_matches_by_index in token_matches
+                    ),
+                ),
                 matched_terms=matched,
                 query_variant=query,
             )
         )
-    return sorted(candidates, key=lambda candidate: candidate.raw_score, reverse=True)
+    return sorted(candidates, key=_candidate_lane_sort_key)
 
 
 def _domain_candidates(
@@ -785,7 +843,7 @@ def _domain_candidates(
                 query_variant=", ".join(expanded_terms),
             )
         )
-    return sorted(candidates, key=lambda candidate: candidate.raw_score, reverse=True)
+    return sorted(candidates, key=_candidate_lane_sort_key)
 
 
 def _rank_candidates(
@@ -801,7 +859,7 @@ def _rank_candidates(
         lane_candidates = [
             candidate for candidate in candidates if candidate.lane == lane
         ]
-        lane_candidates.sort(key=lambda candidate: candidate.raw_score, reverse=True)
+        lane_candidates.sort(key=_candidate_lane_sort_key)
         for rank, candidate in enumerate(lane_candidates, start=1):
             if control:
                 control.check(rank)
@@ -835,6 +893,14 @@ def _lane_contribution(rank: int, candidate: _Candidate) -> float:
         "domain": 300.0,
     }[candidate.lane]
     return lane_weight + candidate.raw_score + (100.0 / rank)
+
+
+def _candidate_lane_sort_key(candidate: _Candidate) -> tuple[float, int, str]:
+    return (
+        -candidate.raw_score,
+        -candidate.asset.source_priority,
+        candidate.asset.relative_path.casefold(),
+    )
 
 
 def _media_intent_adjustment(
@@ -934,30 +1000,38 @@ def _field_token_score(
     return best
 
 
-def _fuzzy_score(
+def _fuzzy_token_matches(
+    corpus: _SearchCorpus,
+    query_tokens: tuple[str, ...],
+) -> tuple[dict[int, float], ...]:
+    token_matches = []
+    for token in query_tokens:
+        threshold = 100.0 if len(token) <= 3 else 82.0
+        matches: dict[int, float] = {}
+        for _choice, score, token_index in process.extract(
+            token,
+            corpus.fuzzy_tokens,
+            scorer=fuzz.ratio,
+            score_cutoff=threshold,
+            limit=None,
+        ):
+            for asset_index in corpus.fuzzy_token_asset_indexes[token_index]:
+                matches[asset_index] = max(matches.get(asset_index, 0.0), float(score))
+        token_matches.append(matches)
+    return tuple(token_matches)
+
+
+def _fuzzy_raw_score(
     asset: _AssetRecord,
     query_tokens: tuple[str, ...],
     query: str,
-) -> tuple[float, tuple[str, ...]]:
-    field_tokens = asset.filename_tokens + asset.path_tokens
-    matched = []
-    token_scores = []
-    for token in query_tokens:
-        threshold = 100.0 if len(token) <= 3 else 82.0
-        best = max(
-            (fuzz.ratio(token, field_token) for field_token in field_tokens),
-            default=0.0,
-        )
-        if best < threshold:
-            return 0.0, ()
-        matched.append(token)
-        token_scores.append(float(best))
-
-    query_score = float(fuzz.token_set_ratio(_normalize_text(query), asset.normalized_text))
+    token_scores: tuple[float, ...],
+) -> float:
+    query_score = float(fuzz.WRatio(_normalize_text(query), asset.fuzzy_text))
     score = sum(token_scores) + query_score
     if all(token in asset.filename_tokens for token in query_tokens):
         score += 80.0
-    return score, tuple(matched)
+    return score
 
 
 def _domain_score(
@@ -996,6 +1070,7 @@ def _row_to_record(row: sqlite3.Row) -> _AssetRecord:
     normalized_text = _normalize_text(
         " ".join((row["filename"], row["stem"], row["directory"], row["relative_path"]))
     )
+    fuzzy_text = " ".join(filename_tokens + path_tokens)
     return _AssetRecord(
         asset_id=row["asset_id"],
         source_id=row["source_id"],
@@ -1016,6 +1091,7 @@ def _row_to_record(row: sqlite3.Row) -> _AssetRecord:
         directory_tokens=directory_tokens,
         path_tokens=path_tokens,
         normalized_text=normalized_text,
+        fuzzy_text=fuzzy_text,
     )
 
 
