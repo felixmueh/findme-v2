@@ -88,6 +88,14 @@ Near-repeat cache reuse, such as using a cached plural query when the user edits
 back to the singular form, is intentionally deferred. The current cache is exact
 key reuse with a bounded memory footprint.
 
+Open direction: search does not necessarily need every retrieval lane to finish
+before the UI can show useful results. Exact lexical matches may be returned
+first for the first result page, with fuzzy typo-tolerant matches and
+domain-expanded matches fetched later as enrichment, when the user scrolls far
+enough, or when the user explicitly switches/expands the mode. This keeps the
+lane model intact while allowing the fastest/highest-precision evidence to drive
+initial interaction latency.
+
 ## Candidate Interface
 
 Retrieval lanes should return normalized candidate data.

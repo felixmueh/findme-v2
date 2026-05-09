@@ -10,6 +10,7 @@ import sqlite3
 import threading
 
 from rapidfuzz import fuzz, process
+import tantivy
 import yaml
 
 
@@ -98,6 +99,7 @@ class _SearchCorpus:
     assets: tuple[_AssetRecord, ...]
     fuzzy_tokens: tuple[str, ...]
     fuzzy_token_asset_indexes: tuple[tuple[int, ...], ...]
+    lexical_index: "_TantivyLexicalIndex | None" = None
 
     @classmethod
     def from_assets(cls, assets: Iterable[_AssetRecord]) -> "_SearchCorpus":
@@ -112,6 +114,7 @@ class _SearchCorpus:
             fuzzy_token_asset_indexes=tuple(
                 tuple(asset_indexes) for asset_indexes in fuzzy_token_assets.values()
             ),
+            lexical_index=_TantivyLexicalIndex.build(asset_tuple),
         )
 
 
@@ -147,6 +150,7 @@ class SearchIndex:
     source_display_names: dict[str, str]
     fuzzy_tokens: tuple[str, ...] = ()
     fuzzy_token_asset_indexes: tuple[tuple[int, ...], ...] = ()
+    lexical_index: "_TantivyLexicalIndex | None" = None
     cache_size: int = 128
     _cache_lock: threading.Lock = field(default_factory=threading.Lock)
     _ranked_cache: OrderedDict[_SearchCacheKey, tuple[_RankedCandidate, ...]] = field(
@@ -173,6 +177,7 @@ class SearchIndex:
             },
             fuzzy_tokens=corpus.fuzzy_tokens,
             fuzzy_token_asset_indexes=corpus.fuzzy_token_asset_indexes,
+            lexical_index=corpus.lexical_index,
         )
 
     def search(
@@ -313,6 +318,7 @@ class SearchIndex:
                             self.assets,
                             self.fuzzy_tokens,
                             self.fuzzy_token_asset_indexes,
+                            self.lexical_index,
                         ),
                         source_id=source_id,
                         directory=directory,
@@ -554,7 +560,7 @@ def _rank_search_assets(
     if mode == "strict":
         candidates.extend(
             _strict_candidates(
-                corpus.assets,
+                corpus,
                 query_tokens,
                 query,
                 require_all_terms=True,
@@ -563,7 +569,7 @@ def _rank_search_assets(
         )
     if mode == "combined":
         strict_candidates = _strict_candidates(
-            corpus.assets,
+            corpus,
             query_tokens,
             query,
             require_all_terms=False,
@@ -590,7 +596,7 @@ def _rank_search_assets(
     if mode in {"domain", "combined"}:
         candidates.extend(
             _domain_candidates(
-                corpus.assets,
+                corpus,
                 query_tokens,
                 query,
                 domain_vocabulary,
@@ -629,6 +635,182 @@ def _search_cache_key(
         directory_prefix,
         tuple(sorted(domain_vocabulary.expansions.items())),
     )
+
+
+class _TantivyLexicalIndex:
+    _FIELDS = ("filename", "path", "directory", "source")
+    _TRIGRAM_FIELDS = (
+        "filename_trigrams",
+        "path_trigrams",
+        "directory_trigrams",
+        "source_trigrams",
+    )
+    _EXACT_WEIGHTS = {
+        "filename": 50.0,
+        "path": 28.0,
+        "directory": 18.0,
+        "source": 22.0,
+    }
+    _PREFIX_WEIGHTS = {
+        "filename": 38.0,
+        "path": 20.0,
+        "directory": 12.0,
+        "source": 16.0,
+    }
+    _INFIX_WEIGHTS = {
+        "filename_trigrams": 24.0,
+        "path_trigrams": 12.0,
+        "directory_trigrams": 6.0,
+        "source_trigrams": 8.0,
+    }
+
+    def __init__(
+        self,
+        index: tantivy.Index,
+        searcher: tantivy.Searcher,
+        asset_count: int,
+    ) -> None:
+        self.index = index
+        self.schema = index.schema
+        self.searcher = searcher
+        self.asset_count = asset_count
+
+    @classmethod
+    def build(cls, assets: tuple[_AssetRecord, ...]) -> "_TantivyLexicalIndex | None":
+        if not assets:
+            return None
+        schema_builder = tantivy.SchemaBuilder()
+        schema_builder.add_integer_field("asset_index", stored=True, fast=True)
+        for field_name in cls._FIELDS + cls._TRIGRAM_FIELDS:
+            schema_builder.add_text_field(field_name)
+        schema = schema_builder.build()
+        index = tantivy.Index(schema)
+        writer = index.writer(heap_size=300_000_000, num_threads=2)
+        for asset_index, asset in enumerate(assets):
+            writer.add_document(
+                tantivy.Document(
+                    asset_index=asset_index,
+                    filename=" ".join(asset.filename_tokens),
+                    path=" ".join(asset.path_tokens),
+                    directory=" ".join(asset.directory_tokens),
+                    source=" ".join(asset.source_tokens),
+                    filename_trigrams=_trigram_text(asset.filename_tokens),
+                    path_trigrams=_trigram_text(asset.path_tokens),
+                    directory_trigrams=_trigram_text(asset.directory_tokens),
+                    source_trigrams=_trigram_text(asset.source_tokens),
+                )
+            )
+        writer.commit()
+        index.reload()
+        return cls(index=index, searcher=index.searcher(), asset_count=len(assets))
+
+    def candidate_indexes(self, query_tokens: tuple[str, ...]) -> tuple[int, ...]:
+        query = self._candidate_query(query_tokens)
+        if query is None:
+            return ()
+        result = self.searcher.search(query, limit=self.asset_count, count=True)
+        doc_addresses = [doc_address for _score, doc_address in result.hits]
+        return tuple(self.searcher.fast_field_values("asset_index", doc_addresses))
+
+    def _candidate_query(
+        self,
+        query_tokens: tuple[str, ...],
+    ) -> tantivy.Query | None:
+        subqueries = [
+            (tantivy.Occur.Should, token_query)
+            for token in query_tokens
+            if (token_query := self._token_query(token)) is not None
+        ]
+        if not subqueries:
+            return None
+        return tantivy.Query.boolean_query(subqueries)
+
+    def _token_query(self, token: str) -> tantivy.Query | None:
+        subqueries: list[tuple[tantivy.Occur, tantivy.Query]] = []
+        for field_name in self._FIELDS:
+            subqueries.append(
+                (
+                    tantivy.Occur.Should,
+                    tantivy.Query.boost_query(
+                        tantivy.Query.term_query(self.schema, field_name, token),
+                        self._EXACT_WEIGHTS[field_name],
+                    ),
+                )
+            )
+            prefix_terms = [
+                term
+                for term, _doc_frequency in self.searcher.terms_with_prefix(
+                    field_name,
+                    token,
+                    limit=None,
+                )
+                if term != token
+            ]
+            if prefix_terms:
+                subqueries.append(
+                    (
+                        tantivy.Occur.Should,
+                        tantivy.Query.boost_query(
+                            tantivy.Query.term_set_query(
+                                self.schema,
+                                field_name,
+                                prefix_terms,
+                            ),
+                            self._PREFIX_WEIGHTS[field_name],
+                        ),
+                    )
+                )
+
+        trigrams = _trigrams(token)
+        if trigrams:
+            for trigram_field in self._TRIGRAM_FIELDS:
+                subqueries.append(
+                    (
+                        tantivy.Occur.Should,
+                        tantivy.Query.boost_query(
+                            tantivy.Query.boolean_query(
+                                [
+                                    (
+                                        tantivy.Occur.Must,
+                                        tantivy.Query.term_query(
+                                            self.schema,
+                                            trigram_field,
+                                            trigram,
+                                        ),
+                                    )
+                                    for trigram in trigrams
+                                ]
+                            ),
+                            self._INFIX_WEIGHTS[trigram_field],
+                        ),
+                    )
+                )
+
+        if not subqueries:
+            return None
+        return tantivy.Query.boolean_query(subqueries)
+
+
+def _trigrams(token: str) -> tuple[str, ...]:
+    if len(token) < 3:
+        return ()
+    return tuple(dict.fromkeys(token[index : index + 3] for index in range(len(token) - 2)))
+
+
+def _trigram_text(tokens: tuple[str, ...]) -> str:
+    return " ".join(trigram for token in tokens for trigram in _trigrams(token))
+
+
+def _domain_candidate_indexes(
+    corpus: _SearchCorpus,
+    expanded_terms: tuple[str, ...],
+) -> tuple[int, ...] | range:
+    if corpus.lexical_index is None:
+        return range(len(corpus.assets))
+    candidate_indexes: set[int] = set()
+    for term in expanded_terms:
+        candidate_indexes.update(corpus.lexical_index.candidate_indexes(_tokens(term)))
+    return tuple(candidate_indexes)
 
 
 def _filter_corpus(
@@ -736,17 +918,29 @@ def _fetch_assets(
 
 
 def _strict_candidates(
-    assets: Iterable[_AssetRecord],
+    corpus_or_assets: Iterable[_AssetRecord] | _SearchCorpus,
     query_tokens: tuple[str, ...],
     query: str,
     *,
     require_all_terms: bool,
     control: SearchControl | None = None,
 ) -> list[_Candidate]:
+    corpus = (
+        corpus_or_assets
+        if isinstance(corpus_or_assets, _SearchCorpus)
+        else _SearchCorpus.from_assets(corpus_or_assets)
+    )
+    assets = corpus.assets
+    candidate_indexes = (
+        corpus.lexical_index.candidate_indexes(query_tokens)
+        if corpus.lexical_index is not None
+        else range(len(assets))
+    )
     candidates = []
-    for index, asset in enumerate(assets, start=1):
+    for index, asset_index in enumerate(candidate_indexes, start=1):
         if control:
             control.check(index)
+        asset = assets[asset_index]
         score, matched = _strict_score(asset, query_tokens)
         if score <= 0:
             continue
@@ -817,7 +1011,7 @@ def _fuzzy_candidates(
 
 
 def _domain_candidates(
-    assets: Iterable[_AssetRecord],
+    corpus_or_assets: Iterable[_AssetRecord] | _SearchCorpus,
     query_tokens: tuple[str, ...],
     query: str,
     domain_vocabulary: DomainVocabulary,
@@ -827,10 +1021,18 @@ def _domain_candidates(
     expanded_terms = _expanded_terms(query_tokens, domain_vocabulary)
     if not expanded_terms:
         return []
+    corpus = (
+        corpus_or_assets
+        if isinstance(corpus_or_assets, _SearchCorpus)
+        else _SearchCorpus.from_assets(corpus_or_assets)
+    )
+    assets = corpus.assets
     candidates = []
-    for index, asset in enumerate(assets, start=1):
+    candidate_indexes = _domain_candidate_indexes(corpus, expanded_terms)
+    for index, asset_index in enumerate(candidate_indexes, start=1):
         if control:
             control.check(index)
+        asset = assets[asset_index]
         score, matched = _domain_score(asset, expanded_terms)
         if score <= 0:
             continue
