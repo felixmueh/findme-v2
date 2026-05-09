@@ -8,6 +8,7 @@
     Folder,
     ChevronRight,
     Image as ImageIcon,
+    Layers2,
     LoaderCircle,
     Search,
   } from 'lucide-svelte'
@@ -63,6 +64,7 @@
   type VisibleEntry =
     | { kind: 'asset'; asset: Asset; collection_key?: string }
     | { kind: 'collection'; collection: CollectionCard }
+    | { kind: 'collection-header'; collection: CollectionCard }
 
   type ActionProfile = {
     id: string
@@ -126,7 +128,7 @@
   const selectedAssetId = $derived(selected?.asset.asset_id ?? '')
   const visibleEntries = $derived.by(() => visibleEntriesForCards(cards, expandedCollections))
   const selectedIndex = $derived(
-    visibleEntries.findIndex((entry) => entryAsset(entry)?.asset_id === selectedAssetId)
+    visibleEntries.findIndex((entry) => entry.kind === 'asset' && entry.asset.asset_id === selectedAssetId)
   )
   const hoverPreviewAsset = $derived(
     hoveredCollection ? collectionDisplayAsset(hoveredCollection) : hoveredAsset
@@ -344,12 +346,19 @@
   function chooseRelative(offset: number) {
     if (visibleEntries.length === 0) return
     const fallback = selectedIndex < 0 ? 0 : selectedIndex
-    const next = Math.min(Math.max(fallback + offset, 0), visibleEntries.length - 1)
+    let next = Math.min(Math.max(fallback + offset, 0), visibleEntries.length - 1)
+    const step = Math.sign(offset) || 1
+    while (visibleEntries[next]?.kind === 'collection-header') {
+      const candidate = next + step
+      if (candidate < 0 || candidate >= visibleEntries.length) return
+      next = candidate
+    }
     const entry = visibleEntries[next]
     if (entry.kind === 'collection') {
       expandCollection(entry.collection)
       return
     }
+    if (entry.kind === 'collection-header') return
     void selectAsset(entry.asset)
   }
 
@@ -520,6 +529,7 @@
         entries.push({ kind: 'collection', collection: card })
         continue
       }
+      entries.push({ kind: 'collection-header', collection: card })
       for (const asset of card.variants) {
         entries.push({
           kind: 'asset',
@@ -533,6 +543,12 @@
 
   function entryAsset(entry: VisibleEntry) {
     return entry.kind === 'asset' ? entry.asset : entry.collection.representative
+  }
+
+  function visibleEntryKey(entry: VisibleEntry) {
+    if (entry.kind === 'collection') return `collection:${entry.collection.collection_key}`
+    if (entry.kind === 'collection-header') return `collection-header:${entry.collection.collection_key}`
+    return `${entry.collection_key ?? 'asset'}:${entry.asset.asset_id}`
   }
 
   function cardContainsAsset(card: ResultCard, assetId: string) {
@@ -651,7 +667,7 @@
   <section class="workspace">
     <section class="main-region" aria-label="Assets">
       <div class="tile-grid" bind:this={tileGridElement}>
-        {#each visibleEntries as entry (entry.kind === 'collection' ? `collection:${entry.collection.collection_key}` : `${entry.collection_key ?? 'asset'}:${entry.asset.asset_id}`)}
+        {#each visibleEntries as entry (visibleEntryKey(entry))}
           {#if entry.kind === 'collection'}
             {@const collection = entry.collection}
             {@const displayAsset = collection.representative}
@@ -681,6 +697,25 @@
               <span class="tile-name">{displayAsset.filename}</span>
               <span class="tile-meta">{displayAsset.directory || displayAsset.source_display_name}</span>
             </button>
+          {:else if entry.kind === 'collection-header'}
+            {@const collection = entry.collection}
+            {@const displayAsset = collection.representative}
+            <button
+              class="asset-tile collection-header"
+              style={`--collection-color: ${collectionColor(collection.collection_key)}`}
+              type="button"
+              onclick={() => foldCollection(collection.collection_key)}
+            >
+              <span class="tile-thumb">
+                <Layers2 size={32} />
+                <span class="collection-count">{collection.count}</span>
+                <span class="hover-actions">
+                  <span>Collapse</span>
+                </span>
+              </span>
+              <span class="tile-name">{displayAsset.stem}</span>
+              <span class="tile-meta">{collection.count} variants</span>
+            </button>
           {:else}
             {@const asset = entry.asset}
             {@const Icon = assetIcon(asset)}
@@ -695,7 +730,6 @@
               onfocus={() => (hoveredAsset = asset)}
               onblur={() => (hoveredAsset = hoveredAsset?.asset_id === asset.asset_id ? null : hoveredAsset)}
               onclick={() => selectAsset(asset)}
-              ondblclick={() => entry.collection_key && foldCollection(entry.collection_key)}
               onauxclick={(event) => handleAssetAuxClick(event, asset)}
             >
               <span class="tile-thumb">
