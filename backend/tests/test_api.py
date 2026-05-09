@@ -84,6 +84,83 @@ def test_api_search_returns_ranked_results(tmp_path: Path) -> None:
     assert body["assets"][0]["score"] > 0
 
 
+def test_api_search_accepts_search_mode(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    write_image(source_root / "Goblin Warrior.png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+
+    client = TestClient(create_app(config, db_path))
+
+    strict_body = client.get(
+        "/api/search",
+        params={"q": "goblin warror", "mode": "strict"},
+    ).json()
+    fuzzy_body = client.get(
+        "/api/search",
+        params={"q": "goblin warror", "mode": "fuzzy"},
+    ).json()
+
+    assert strict_body["total"] == 0
+    assert fuzzy_body["total"] == 1
+    assert fuzzy_body["assets"][0]["relative_path"] == "Goblin Warrior.png"
+
+
+def test_api_domain_search_uses_configured_vocabulary(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    write_image(source_root / "Human Mage.png")
+    vocabulary_path = tmp_path / "vocabulary.yaml"
+    vocabulary_path.write_text(
+        """
+version: 1
+expansions:
+  hero:
+    - mage
+""",
+        encoding="utf-8",
+    )
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+        domain_vocabulary_path=vocabulary_path,
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+
+    client = TestClient(create_app(config, db_path))
+
+    body = client.get("/api/search", params={"q": "hero", "mode": "domain"}).json()
+
+    assert body["total"] == 1
+    assert body["assets"][0]["relative_path"] == "Human Mage.png"
+
+
 def test_api_result_totals_ignore_limit_and_offset(tmp_path: Path) -> None:
     source_root = tmp_path / "assets"
     source_root.mkdir()

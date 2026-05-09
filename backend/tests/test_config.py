@@ -85,6 +85,38 @@ priority = 10
     assert config.thumbnail_workers == 4
 
 
+def test_load_config_reads_domain_vocabulary_path_relative_to_config(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    vocabulary_path = config_dir / "search-vocabulary.yaml"
+    vocabulary_path.write_text("version: 1\nexpansions: {}\n", encoding="utf-8")
+    config_path = config_dir / "findme.toml"
+    config_path.write_text(
+        f"""
+[app]
+data_root = "{tmp_path / "data"}"
+
+[search]
+domain_vocabulary = "search-vocabulary.yaml"
+
+[[sources]]
+id = "dnd"
+display_name = "DND"
+root = "{source_root}"
+priority = 10
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config.domain_vocabulary_path == vocabulary_path
+
+
 def test_load_config_rejects_duplicate_source_ids(tmp_path: Path) -> None:
     source_root = tmp_path / "assets"
     source_root.mkdir()

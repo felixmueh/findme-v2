@@ -188,3 +188,106 @@ queries:
     captured = capsys.readouterr()
     assert "search evaluation: 1/1 expectations passed" in captured.out
     assert "weighted score: 1.000" in captured.out
+
+
+def test_cli_search_eval_runs_strict_fuzzy_and_domain_scopes(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    write_image(source_root / "goblin_warrior.png")
+    write_image(source_root / "human_mage.png")
+    vocabulary_path = tmp_path / "vocabulary.yaml"
+    vocabulary_path.write_text(
+        """
+version: 1
+expansions:
+  hero:
+    - mage
+""",
+        encoding="utf-8",
+    )
+    config_path = tmp_path / "findme.toml"
+    data_root = tmp_path / "data"
+    config_path.write_text(
+        f"""
+[app]
+data_root = "{data_root}"
+
+[search]
+domain_vocabulary = "{vocabulary_path}"
+
+[[sources]]
+id = "tokens"
+display_name = "Tokens"
+root = "{source_root}"
+priority = 10
+media_extensions = [".png"]
+""",
+        encoding="utf-8",
+    )
+    eval_path = tmp_path / "eval.yaml"
+    eval_path.write_text(
+        """
+version: 1
+sets:
+  goblin_warriors:
+    assets:
+      - source_id: tokens
+        relative_path: goblin_warrior.png
+  mages:
+    assets:
+      - source_id: tokens
+        relative_path: human_mage.png
+queries:
+  - id: goblin-warrior
+    text: goblin warrior
+    expectations:
+      - scope: strict
+        assert: findable
+        target: goblin_warriors
+        importance: 1.0
+        gate: true
+  - id: goblin-warrior-typo
+    text: goblin warror
+    expectations:
+      - scope: fuzzy
+        assert: findable
+        target: goblin_warriors
+        importance: 1.0
+        gate: true
+  - id: hero
+    text: hero
+    expectations:
+      - scope: domain
+        assert: findable
+        target: mages
+        importance: 1.0
+        gate: true
+""",
+        encoding="utf-8",
+    )
+
+    assert run(["index", "--config", str(config_path), "--thumbnail-workers", "1"]) == 0
+    assert (
+        run(
+            [
+                "search-eval",
+                "--config",
+                str(config_path),
+                "--eval",
+                str(eval_path),
+                "--scope",
+                "strict",
+                "--scope",
+                "fuzzy",
+                "--scope",
+                "domain",
+            ]
+        )
+        == 0
+    )
+
+    captured = capsys.readouterr()
+    assert "search evaluation: 3/3 expectations passed" in captured.out

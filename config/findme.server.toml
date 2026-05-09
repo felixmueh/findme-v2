@@ -1,6 +1,9 @@
 [app]
 data_root = "/var/lib/findme-v2"
 
+[search]
+domain_vocabulary = "search-vocabulary.yaml"
+
 [[sources]]
 id = "tokens"
 display_name = "Tokens"

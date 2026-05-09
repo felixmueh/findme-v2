@@ -212,10 +212,10 @@ The report should help tune search behavior. It should not only print a single p
 
 ## Current Command
 
-The current CLI evaluator runs the implemented product search as the `combined` benchmark scope:
+The CLI evaluator can run the implemented `strict`, `fuzzy`, `domain`, and `combined` benchmark scopes:
 
 ```bash
 uv run findme search-eval --config config/findme.server.toml --eval search-eval/dnd.yaml --scope combined
 ```
 
-The configured data root must be writable and already indexed. The `strict`, `fuzzy`, and `domain` scopes are benchmark vocabulary, but they are not executable until those search behaviors are implemented.
+The configured data root must be writable and already indexed. Repeat `--scope` to evaluate multiple scopes in one run.

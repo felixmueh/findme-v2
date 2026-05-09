@@ -2,6 +2,9 @@
 data_root = ".findme-data"
 thumbnail_workers = 2
 
+[search]
+domain_vocabulary = "search-vocabulary.yaml"
+
 [[sources]]
 id = "dnd"
 display_name = "DND"

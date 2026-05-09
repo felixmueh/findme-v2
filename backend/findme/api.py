@@ -16,7 +16,13 @@ from findme.assets import (
 )
 from findme.config import AppConfig
 from findme.db import connect, initialize_database
-from findme.search import SearchResult, count_search_assets, search_assets
+from findme.search import (
+    SearchMode,
+    SearchResult,
+    count_search_assets,
+    load_domain_vocabulary,
+    search_assets,
+)
 
 
 def create_app(
@@ -80,12 +86,14 @@ def create_app(
     @app.get("/api/search")
     def search(
         q: str = Query(min_length=1),
+        mode: SearchMode = "combined",
         source_id: str | None = None,
         directory: str | None = None,
         directory_prefix: str | None = None,
         limit: int = Query(default=100, ge=1, le=500),
         offset: int = Query(default=0, ge=0),
     ) -> dict[str, object]:
+        domain_vocabulary = _load_domain_vocabulary(config)
         with connect(database_path) as db:
             initialize_database(db)
             results = search_assets(
@@ -94,6 +102,8 @@ def create_app(
                 source_id=source_id,
                 directory=directory,
                 directory_prefix=directory_prefix,
+                domain_vocabulary=domain_vocabulary,
+                mode=mode,
                 limit=limit,
                 offset=offset,
             )
@@ -103,6 +113,8 @@ def create_app(
                 source_id=source_id,
                 directory=directory,
                 directory_prefix=directory_prefix,
+                domain_vocabulary=domain_vocabulary,
+                mode=mode,
             )
         return {"assets": [_search_response(result) for result in results], "total": total}
 
@@ -139,6 +151,12 @@ def create_app(
         app.mount("/", StaticFiles(directory=static_dir, html=True), name="frontend")
 
     return app
+
+
+def _load_domain_vocabulary(config: AppConfig):
+    if config.domain_vocabulary_path is None:
+        return None
+    return load_domain_vocabulary(config.domain_vocabulary_path)
 
 
 def _load_asset_or_404(db: sqlite3.Connection, config: AppConfig, asset_id: str):

@@ -1,0 +1,12 @@
+version: 1
+expansions:
+  adventurer:
+    - warrior
+    - fighter
+    - mage
+    - wizard
+    - rogue
+    - thief
+    - ranger
+    - cleric
+    - paladin

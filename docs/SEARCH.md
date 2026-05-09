@@ -47,6 +47,15 @@ Planned lanes:
    - implementation formula is intentionally not finalized
    - must be localized in one easy-to-edit function/module
 
+Current implementation status:
+
+- `strict`: token-accurate filename/path matching. The strict benchmark scope requires every query token to match.
+- `fuzzy`: typo/separator-tolerant matching using RapidFuzz over indexed filename/path data.
+- `domain`: query-time vocabulary expansion from `config/search-vocabulary.yaml` or the configured `[search].domain_vocabulary` path.
+- `combined`: normal product search, combining strict, fuzzy, and domain candidates through the centralized ranker in `findme.search`.
+
+All modes read indexed database rows only. Domain vocabulary changes are applied at query time and do not require re-indexing.
+
 ## Candidate Interface
 
 Retrieval lanes should return normalized candidate data.
@@ -94,6 +103,19 @@ The vocabulary is:
 - server-side
 - reloadable without re-indexing
 - tuned against real crawl results
+
+The default editable vocabulary lives at:
+
+```text
+config/search-vocabulary.yaml
+```
+
+Server configs may point at a different file with:
+
+```toml
+[search]
+domain_vocabulary = "search-vocabulary.yaml"
+```
 
 Relationship types to support conceptually:
 

@@ -38,14 +38,16 @@ class AppConfig:
     data_root: Path
     sources: tuple[SourceConfig, ...]
     thumbnail_workers: int = 2
+    domain_vocabulary_path: Path | None = None
 
 
 _ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
 
 def load_config(path: Path) -> AppConfig:
+    config_path = path
     try:
-        raw = tomllib.loads(path.read_text(encoding="utf-8"))
+        raw = tomllib.loads(config_path.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
         raise ConfigError(f"config file not found: {path}") from exc
     except tomllib.TOMLDecodeError as exc:
@@ -60,6 +62,11 @@ def load_config(path: Path) -> AppConfig:
     thumbnail_workers = app.get("thumbnail_workers", 2)
     if not isinstance(thumbnail_workers, int) or thumbnail_workers < 1:
         raise ConfigError("[app].thumbnail_workers must be a positive integer")
+
+    domain_vocabulary_path = _load_domain_vocabulary_path(
+        raw.get("search"),
+        config_path.parent,
+    )
 
     source_tables = raw.get("sources")
     if not isinstance(source_tables, list) or not source_tables:
@@ -80,7 +87,28 @@ def load_config(path: Path) -> AppConfig:
         data_root=Path(data_root_raw).expanduser(),
         sources=tuple(sources),
         thumbnail_workers=thumbnail_workers,
+        domain_vocabulary_path=domain_vocabulary_path,
     )
+
+
+def _load_domain_vocabulary_path(raw: object, config_dir: Path) -> Path | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ConfigError("[search] must be a table")
+    vocabulary = raw.get("domain_vocabulary")
+    if vocabulary is None:
+        return None
+    if not isinstance(vocabulary, str) or not vocabulary:
+        raise ConfigError("[search].domain_vocabulary must be a non-empty string")
+    path = Path(vocabulary).expanduser()
+    if not path.is_absolute():
+        path = config_dir / path
+    if not path.exists():
+        raise ConfigError(f"domain vocabulary file does not exist: {path}")
+    if not path.is_file():
+        raise ConfigError(f"domain vocabulary path is not a file: {path}")
+    return path
 
 
 def _load_source(table: dict[str, object]) -> SourceConfig:
