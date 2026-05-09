@@ -89,6 +89,10 @@ sample-assets
 
 Use the sample library for normal development and tests. If more realistic coverage is needed, copy only the required assets from the read-only DND mount into `sample-assets`, keep the sample set below 40 GB, and do not bulk-mirror the full library.
 
+## Compatibility
+
+Do not preserve backwards compatibility by default. This is personal-use software in a controlled environment; when an API, data shape, CLI contract, or frontend contract should change, update callers and tests directly instead of adding compatibility layers. Add temporary compatibility only when the user explicitly asks for a migration bridge.
+
 ## Scope Discipline
 
 Do not expand v1 scope without an explicit user decision. When a design decision changes, update `docs/DESIGN.md` so future work starts from the same understanding.
