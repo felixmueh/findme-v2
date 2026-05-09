@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 import sqlite3
+import threading
+import time
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from findme.assets import (
@@ -17,19 +19,26 @@ from findme.assets import (
 from findme.config import AppConfig
 from findme.db import connect, initialize_database
 from findme.search import (
+    DirectoryMatch,
+    SearchIndex,
     SearchMode,
     SearchResult,
-    count_search_assets,
+    SearchControl,
+    SearchSuperseded,
     load_domain_vocabulary,
-    search_assets,
 )
 
 
 def create_app(
     config: AppConfig, db_path: Path | None = None, static_dir: Path | None = None
 ) -> FastAPI:
-    app = FastAPI(title="Findme V2")
     database_path = db_path or config.data_root / "findme.sqlite3"
+    with connect(database_path) as db:
+        initialize_database(db)
+        search_index = SearchIndex.load(db)
+    search_revisions = _SearchRevisionRegistry()
+
+    app = FastAPI(title="Findme V2")
 
     @app.get("/api/health")
     def health() -> dict[str, str]:
@@ -57,7 +66,6 @@ def create_app(
         offset: int = Query(default=0, ge=0),
     ) -> dict[str, object]:
         with connect(database_path) as db:
-            initialize_database(db)
             rows = _fetch_assets(
                 db,
                 source_id=source_id,
@@ -76,12 +84,25 @@ def create_app(
 
     @app.get("/api/directories")
     def list_directories(
-        source_id: str | None = None, q: str | None = None
-    ) -> dict[str, list[dict[str, object]]]:
-        with connect(database_path) as db:
-            initialize_database(db)
-            directories = _fetch_directories(db, config, source_id=source_id, query=q)
-        return {"directories": directories}
+        source_id: str | None = None,
+        q: str | None = None,
+        search_session: str | None = None,
+        search_revision: int | None = None,
+    ) -> object:
+        control = search_revisions.control(search_session, search_revision)
+        if control and control.is_cancelled():
+            return Response(status_code=204)
+        domain_vocabulary = _load_domain_vocabulary(config)
+        try:
+            directories = search_index.directory_matches(
+                q,
+                source_id=source_id,
+                domain_vocabulary=domain_vocabulary,
+                control=control,
+            )
+        except SearchSuperseded:
+            return Response(status_code=204)
+        return {"directories": [_directory_response(directory) for directory in directories]}
 
     @app.get("/api/search")
     def search(
@@ -92,12 +113,15 @@ def create_app(
         directory_prefix: str | None = None,
         limit: int = Query(default=100, ge=1, le=500),
         offset: int = Query(default=0, ge=0),
-    ) -> dict[str, object]:
+        search_session: str | None = None,
+        search_revision: int | None = None,
+    ) -> object:
+        control = search_revisions.control(search_session, search_revision)
+        if control and control.is_cancelled():
+            return Response(status_code=204)
         domain_vocabulary = _load_domain_vocabulary(config)
-        with connect(database_path) as db:
-            initialize_database(db)
-            results = search_assets(
-                db,
+        try:
+            page = search_index.search(
                 q,
                 source_id=source_id,
                 directory=directory,
@@ -106,29 +130,24 @@ def create_app(
                 mode=mode,
                 limit=limit,
                 offset=offset,
+                control=control,
             )
-            total = count_search_assets(
-                db,
-                q,
-                source_id=source_id,
-                directory=directory,
-                directory_prefix=directory_prefix,
-                domain_vocabulary=domain_vocabulary,
-                mode=mode,
-            )
-        return {"assets": [_search_response(result) for result in results], "total": total}
+        except SearchSuperseded:
+            return Response(status_code=204)
+        return {
+            "assets": [_search_response(result) for result in page.assets],
+            "total": page.total,
+        }
 
     @app.get("/api/assets/{asset_id}")
     def asset_detail(asset_id: str) -> dict[str, object]:
         with connect(database_path) as db:
-            initialize_database(db)
             asset = _load_asset_or_404(db, config, asset_id)
         return {"asset": asset_response(asset), "actions": asset_actions(config, asset)}
 
     @app.get("/api/assets/{asset_id}/file")
     def asset_file(asset_id: str, download: bool = False) -> FileResponse:
         with connect(database_path) as db:
-            initialize_database(db)
             asset = _load_asset_or_404(db, config, asset_id)
         if not asset.absolute_path.is_file():
             raise HTTPException(status_code=404, detail="asset file is missing")
@@ -141,7 +160,6 @@ def create_app(
     @app.get("/api/assets/{asset_id}/thumb")
     def asset_thumbnail(asset_id: str) -> FileResponse:
         with connect(database_path) as db:
-            initialize_database(db)
             asset = _load_asset_or_404(db, config, asset_id)
         if asset.thumbnail_path is None or not asset.thumbnail_path.is_file():
             raise HTTPException(status_code=404, detail="asset thumbnail is missing")
@@ -151,6 +169,33 @@ def create_app(
         app.mount("/", StaticFiles(directory=static_dir, html=True), name="frontend")
 
     return app
+
+
+class _SearchRevisionRegistry:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._latest_by_session: dict[str, tuple[int, float]] = {}
+
+    def control(
+        self,
+        session: str | None,
+        revision: int | None,
+    ) -> SearchControl | None:
+        if session is None or revision is None:
+            return None
+        with self._lock:
+            current = self._latest_by_session.get(session)
+            if current is None or revision > current[0]:
+                self._latest_by_session[session] = (revision, time.monotonic())
+            else:
+                self._latest_by_session[session] = (current[0], time.monotonic())
+
+        return SearchControl(lambda: not self._is_current(session, revision))
+
+    def _is_current(self, session: str, revision: int) -> bool:
+        with self._lock:
+            current = self._latest_by_session.get(session)
+            return current is not None and current[0] == revision
 
 
 def _load_domain_vocabulary(config: AppConfig):
@@ -246,76 +291,6 @@ def _count_assets(
     return int(row["total"])
 
 
-def _fetch_directories(
-    db: sqlite3.Connection, config: AppConfig, *, source_id: str | None, query: str | None
-) -> list[dict[str, object]]:
-    source_lookup = {source.id: source.display_name for source in config.sources}
-    total_counts = _directory_counts(db, source_id=source_id)
-    match_counts = total_counts
-    if query and query.strip():
-        matched_assets = search_assets(db, query, source_id=source_id, limit=10_000)
-        match_counts = _counts_from_asset_directories(
-            [(asset.source_id, asset.directory) for asset in matched_assets]
-        )
-    directories = []
-    for (source, path), total_count in total_counts.items():
-        matched_count = match_counts.get((source, path), 0)
-        if matched_count == 0:
-            continue
-        name = source_lookup.get(source, source) if path == "" else path.rsplit("/", 1)[-1]
-        depth = 0 if path == "" else len(path.split("/"))
-        directories.append(
-            {
-                "source_id": source,
-                "path": path,
-                "name": name,
-                "depth": depth,
-                "asset_count": total_count,
-                "matched_asset_count": matched_count,
-            }
-        )
-    return sorted(directories, key=lambda item: (item["path"].lower() != "", item["path"].lower()))
-
-
-def _directory_counts(db: sqlite3.Connection, *, source_id: str | None) -> dict[tuple[str, str], int]:
-    where = ["stale = 0"]
-    params: list[object] = []
-    if source_id:
-        where.append("source_id = ?")
-        params.append(source_id)
-
-    rows = db.execute(
-        f"""
-        SELECT source_id, directory, COUNT(*) AS direct_count
-        FROM assets
-        WHERE {" AND ".join(where)}
-        GROUP BY source_id, directory
-        """,
-        params,
-    ).fetchall()
-    return _counts_from_asset_directories(
-        [(row["source_id"], row["directory"], row["direct_count"]) for row in rows]
-    )
-
-
-def _counts_from_asset_directories(
-    directories: list[tuple[str, str] | tuple[str, str, int]],
-) -> dict[tuple[str, str], int]:
-    counts: dict[tuple[str, str], int] = {}
-    for item in directories:
-        source = item[0]
-        directory = item[1]
-        direct_count = item[2] if len(item) == 3 else 1
-        counts[(source, "")] = counts.get((source, ""), 0) + direct_count
-        if not directory:
-            continue
-        parts = directory.split("/")
-        for index in range(1, len(parts) + 1):
-            path = "/".join(parts[:index])
-            counts[(source, path)] = counts.get((source, path), 0) + direct_count
-    return counts
-
-
 def _asset_response(row: sqlite3.Row) -> dict[str, object]:
     response = {
         "asset_id": row["asset_id"],
@@ -334,6 +309,17 @@ def _asset_response(row: sqlite3.Row) -> dict[str, object]:
         response["thumbnail_width"] = row["thumbnail_width"]
         response["thumbnail_height"] = row["thumbnail_height"]
     return response
+
+
+def _directory_response(directory: DirectoryMatch) -> dict[str, object]:
+    return {
+        "source_id": directory.source_id,
+        "path": directory.path,
+        "name": directory.name,
+        "depth": directory.depth,
+        "asset_count": directory.asset_count,
+        "matched_asset_count": directory.matched_asset_count,
+    }
 
 
 def _search_response(result: SearchResult) -> dict[str, object]:

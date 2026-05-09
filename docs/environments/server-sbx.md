@@ -12,6 +12,7 @@ This profile is for the server Docker sandbox.
 
 - Repository files for normal development.
 - `/var/lib/findme-v2` for the SQLite database and generated cache files.
+- Development tools and dependencies may be installed in the sandbox when needed.
 
 ## Read-Only
 
@@ -36,7 +37,6 @@ http://localhost:8001
 
 ## Requires Explicit Confirmation
 
-- Installing tools or dependencies in the sandbox.
 - Destructive cleanup of `/var/lib/findme-v2`.
 - Rebuilding all thumbnails with `--rebuild-thumbnails`.
 - Any command that needs Docker host access, host credentials, systemd, firewall access, or host service changes.

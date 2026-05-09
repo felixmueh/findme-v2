@@ -78,10 +78,14 @@ References: [Design: Derived Resources And Actions](../docs/DESIGN.md#derived-re
 
 - [x] Indexed-only search path.
 - [x] Basic SQLite FTS-backed lexical search.
+- [x] Process-local in-memory search corpus loaded from SQLite at app startup.
+- [x] Running app may require restart after indexing before new search data is visible.
 - [x] Source filter.
 - [x] Directory and directory-prefix filters.
 - [x] Stale assets hidden from normal search.
 - [x] Source priority included in current scoring.
+- [x] Bounded, process-local result cache for repeated exact queries.
+- [ ] Near-repeat search cache reuse, e.g. `Goblins` then `Goblin`, with a max memory size.
 - [ ] Real crawl and search engine comparison.
 - [ ] Final lexical search engine choice.
 - [ ] Domain vocabulary file.
@@ -122,6 +126,7 @@ References: [Design: Result Loading](../docs/DESIGN.md#result-loading), [Design:
 ## Frontend Experience
 
 - [x] Search input with debounce.
+- [ ] Heavier debounce in search.
 - [x] Stale response ignoring through request ids.
 - [x] Thumbnail result grid.
 - [x] Selected asset preview panel.

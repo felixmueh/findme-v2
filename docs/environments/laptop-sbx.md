@@ -13,6 +13,7 @@ This profile is for the laptop Docker sandbox.
 - Repository files for normal development.
 - `.findme-data` through `config/findme.dev.toml`. This may be shared with the laptop host.
 - `sample-assets` for selected copied fixtures.
+- Development tools and dependencies may be installed in the sandbox when needed.
 
 ## Read-Only
 
@@ -36,7 +37,6 @@ http://localhost:8000
 
 ## Requires Explicit Confirmation
 
-- Installing tools or dependencies in the sandbox.
 - Copying selected assets from `/media/NAS/main/Documents/DND` into `sample-assets`.
 - Any command that needs Docker host access, host credentials, systemd, or firewall access.
 - Long-running benchmark or indexing jobs that do not use `sample-assets`.

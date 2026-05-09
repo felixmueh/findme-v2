@@ -1,9 +1,18 @@
 from pathlib import Path
+import threading
+import time
 
+import findme.search as search_module
 from findme.config import AppConfig, SourceConfig
 from findme.db import connect, initialize_database
 from findme.indexer import index_sources
-from findme.search import DomainVocabulary, search_assets
+from findme.search import (
+    DomainVocabulary,
+    SearchControl,
+    SearchIndex,
+    SearchSuperseded,
+    search_assets,
+)
 
 from helpers import write_image
 
@@ -183,6 +192,167 @@ def test_combined_search_penalizes_audio_sources_for_visual_object_queries(
         "StoneDoor.png",
         "door_big_close.mp3",
     ]
+
+
+def test_search_index_stops_when_control_is_cancelled(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    write_image(source_root / "Goblin.png")
+    write_image(source_root / "Goblin Warrior.png")
+    config = _config(tmp_path, source_root)
+
+    with connect(tmp_path / "findme.sqlite3") as db:
+        initialize_database(db)
+        index_sources(db, config)
+        search_index = SearchIndex.load(db)
+
+    control = SearchControl(lambda: True, check_every=1)
+
+    try:
+        search_index.search("goblin", control=control)
+    except SearchSuperseded:
+        pass
+    else:
+        raise AssertionError("search did not stop after cancellation")
+
+
+def test_search_index_reuses_ranked_result_for_directory_matches(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source_root = tmp_path / "assets"
+    (source_root / "Creatures").mkdir(parents=True)
+    write_image(source_root / "Creatures" / "Goblin.png")
+    config = _config(tmp_path, source_root)
+
+    with connect(tmp_path / "findme.sqlite3") as db:
+        initialize_database(db)
+        index_sources(db, config)
+        search_index = SearchIndex.load(db)
+
+    calls = 0
+    original_rank_search_assets = search_module._rank_search_assets
+
+    def count_rank_calls(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original_rank_search_assets(*args, **kwargs)
+
+    monkeypatch.setattr(search_module, "_rank_search_assets", count_rank_calls)
+
+    search_index.search("goblin")
+    directories = search_index.directory_matches("goblin")
+
+    assert calls == 1
+    assert [(directory.path, directory.matched_asset_count) for directory in directories] == [
+        ("", 1),
+        ("Creatures", 1),
+    ]
+
+
+def test_search_index_coalesces_concurrent_identical_queries(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source_root = tmp_path / "assets"
+    (source_root / "Creatures").mkdir(parents=True)
+    write_image(source_root / "Creatures" / "Goblin.png")
+    config = _config(tmp_path, source_root)
+
+    with connect(tmp_path / "findme.sqlite3") as db:
+        initialize_database(db)
+        index_sources(db, config)
+        search_index = SearchIndex.load(db)
+
+    calls = 0
+    original_rank_search_assets = search_module._rank_search_assets
+
+    def slow_rank_search(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        time.sleep(0.1)
+        return original_rank_search_assets(*args, **kwargs)
+
+    monkeypatch.setattr(search_module, "_rank_search_assets", slow_rank_search)
+
+    barrier = threading.Barrier(2)
+    errors = []
+
+    def run_search() -> None:
+        try:
+            barrier.wait()
+            search_index.search("goblin")
+        except Exception as exc:
+            errors.append(exc)
+
+    def run_directories() -> None:
+        try:
+            barrier.wait()
+            search_index.directory_matches("goblin")
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=run_search), threading.Thread(target=run_directories)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    assert calls == 1
+
+
+def test_search_index_retries_after_cancelled_in_flight_query(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source_root = tmp_path / "assets"
+    (source_root / "Creatures").mkdir(parents=True)
+    write_image(source_root / "Creatures" / "Goblin.png")
+    config = _config(tmp_path, source_root)
+
+    with connect(tmp_path / "findme.sqlite3") as db:
+        initialize_database(db)
+        index_sources(db, config)
+        search_index = SearchIndex.load(db)
+
+    calls = 0
+    release_owner = threading.Event()
+    owner_started = threading.Event()
+    original_rank_search_assets = search_module._rank_search_assets
+
+    def controlled_rank_search(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            owner_started.set()
+            release_owner.wait(timeout=1)
+        return original_rank_search_assets(*args, **kwargs)
+
+    monkeypatch.setattr(search_module, "_rank_search_assets", controlled_rank_search)
+
+    first_cancelled = False
+    first_control = SearchControl(lambda: first_cancelled, check_every=1)
+    errors = []
+
+    def run_first_search() -> None:
+        try:
+            search_index.search("goblin", control=first_control)
+        except SearchSuperseded:
+            pass
+        except Exception as exc:
+            errors.append(exc)
+
+    thread = threading.Thread(target=run_first_search)
+    thread.start()
+    assert owner_started.wait(timeout=1)
+    first_cancelled = True
+    release_owner.set()
+
+    page = search_index.search("goblin", control=SearchControl(lambda: False, check_every=1))
+
+    thread.join(timeout=1)
+    assert not thread.is_alive()
+    assert errors == []
+    assert calls == 2
+    assert [asset.filename for asset in page.assets] == ["Goblin.png"]
 
 
 def _config(tmp_path: Path, source_root: Path) -> AppConfig:

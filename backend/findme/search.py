@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from collections import defaultdict
-from collections.abc import Iterable
-from dataclasses import dataclass
+from collections import OrderedDict, defaultdict
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 import re
 import sqlite3
+import threading
 
 from rapidfuzz import fuzz
 import yaml
@@ -31,6 +32,36 @@ class SearchResult:
     thumbnail_width: int | None
     thumbnail_height: int | None
     score: float
+
+
+@dataclass(frozen=True)
+class SearchResultsPage:
+    assets: list[SearchResult]
+    total: int
+
+
+@dataclass(frozen=True)
+class DirectoryMatch:
+    source_id: str
+    path: str
+    name: str
+    depth: int
+    asset_count: int
+    matched_asset_count: int
+
+
+class SearchSuperseded(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True)
+class SearchControl:
+    is_cancelled: Callable[[], bool]
+    check_every: int = 4096
+
+    def check(self, count: int) -> None:
+        if count % self.check_every == 0 and self.is_cancelled():
+            raise SearchSuperseded
 
 
 @dataclass(frozen=True)
@@ -76,6 +107,252 @@ class _RankedCandidate:
     score: float
 
 
+_SearchCacheKey = tuple[object, ...]
+
+
+@dataclass
+class _InFlightSearch:
+    done: threading.Event = field(default_factory=threading.Event)
+    result: tuple[_RankedCandidate, ...] | None = None
+    error: BaseException | None = None
+
+
+@dataclass
+class SearchIndex:
+    assets: tuple[_AssetRecord, ...]
+    directory_counts: dict[tuple[str, str], int]
+    source_display_names: dict[str, str]
+    cache_size: int = 128
+    _cache_lock: threading.Lock = field(default_factory=threading.Lock)
+    _ranked_cache: OrderedDict[_SearchCacheKey, tuple[_RankedCandidate, ...]] = field(
+        default_factory=OrderedDict
+    )
+    _in_flight: dict[_SearchCacheKey, _InFlightSearch] = field(default_factory=dict)
+
+    @classmethod
+    def load(cls, db: sqlite3.Connection) -> "SearchIndex":
+        assets = _fetch_assets(
+            db,
+            source_id=None,
+            directory=None,
+            directory_prefix=None,
+        )
+        return cls(
+            assets=assets,
+            directory_counts=_counts_from_asset_directories(
+                [(asset.source_id, asset.directory) for asset in assets]
+            ),
+            source_display_names={
+                asset.source_id: asset.source_display_name for asset in assets
+            },
+        )
+
+    def search(
+        self,
+        query: str,
+        *,
+        source_id: str | None = None,
+        directory: str | None = None,
+        directory_prefix: str | None = None,
+        domain_vocabulary: DomainVocabulary | None = None,
+        mode: SearchMode = "combined",
+        limit: int = 100,
+        offset: int = 0,
+        control: SearchControl | None = None,
+    ) -> SearchResultsPage:
+        ranked = self._ranked_search(
+            query,
+            source_id=source_id,
+            directory=directory,
+            directory_prefix=directory_prefix,
+            domain_vocabulary=domain_vocabulary or DEFAULT_DOMAIN_VOCABULARY,
+            mode=mode,
+            control=control,
+        )
+        return SearchResultsPage(
+            assets=[
+                _record_to_result(candidate.asset, candidate.score)
+                for candidate in ranked[offset : offset + limit]
+            ],
+            total=len(ranked),
+        )
+
+    def directory_matches(
+        self,
+        query: str | None = None,
+        *,
+        source_id: str | None = None,
+        domain_vocabulary: DomainVocabulary | None = None,
+        mode: SearchMode = "combined",
+        control: SearchControl | None = None,
+    ) -> list[DirectoryMatch]:
+        total_counts = _filter_directory_counts(self.directory_counts, source_id)
+        match_counts = total_counts
+        if query and query.strip():
+            ranked = self._ranked_search(
+                query,
+                source_id=source_id,
+                directory=None,
+                directory_prefix=None,
+                domain_vocabulary=domain_vocabulary or DEFAULT_DOMAIN_VOCABULARY,
+                mode=mode,
+                control=control,
+            )
+            match_counts = _counts_from_asset_directories(
+                [
+                    (candidate.asset.source_id, candidate.asset.directory)
+                    for candidate in ranked
+                ]
+            )
+
+        directories = []
+        for (source, path), total_count in total_counts.items():
+            matched_count = match_counts.get((source, path), 0)
+            if matched_count == 0:
+                continue
+            name = self.source_display_names.get(source, source) if path == "" else path.rsplit("/", 1)[-1]
+            depth = 0 if path == "" else len(path.split("/"))
+            directories.append(
+                DirectoryMatch(
+                    source_id=source,
+                    path=path,
+                    name=name,
+                    depth=depth,
+                    asset_count=total_count,
+                    matched_asset_count=matched_count,
+                )
+            )
+        return sorted(
+            directories,
+            key=lambda item: (item.path.lower() != "", item.path.lower()),
+        )
+
+    def _ranked_search(
+        self,
+        query: str,
+        *,
+        source_id: str | None,
+        directory: str | None,
+        directory_prefix: str | None,
+        domain_vocabulary: DomainVocabulary,
+        mode: SearchMode,
+        control: SearchControl | None,
+    ) -> tuple[_RankedCandidate, ...]:
+        if control and control.is_cancelled():
+            raise SearchSuperseded
+        key = _search_cache_key(
+            query,
+            source_id=source_id,
+            directory=directory,
+            directory_prefix=directory_prefix,
+            domain_vocabulary=domain_vocabulary,
+            mode=mode,
+        )
+        cached = self._cache_get(key)
+        if cached is not None:
+            return cached
+
+        owner = False
+        with self._cache_lock:
+            cached = self._cache_get_locked(key)
+            if cached is not None:
+                return cached
+            in_flight = self._in_flight.get(key)
+            if in_flight is None:
+                in_flight = _InFlightSearch()
+                self._in_flight[key] = in_flight
+                owner = True
+
+        if not owner:
+            ranked = self._wait_for_in_flight(key, in_flight, control)
+            if ranked is not None:
+                return ranked
+            return self._ranked_search(
+                query,
+                source_id=source_id,
+                directory=directory,
+                directory_prefix=directory_prefix,
+                domain_vocabulary=domain_vocabulary,
+                mode=mode,
+                control=control,
+            )
+
+        try:
+            ranked = tuple(
+                _rank_search_assets(
+                    _filter_assets(
+                        self.assets,
+                        source_id=source_id,
+                        directory=directory,
+                        directory_prefix=directory_prefix,
+                        control=control,
+                    ),
+                    query,
+                    domain_vocabulary=domain_vocabulary,
+                    mode=mode,
+                    control=control,
+                )
+            )
+        except BaseException as exc:
+            with self._cache_lock:
+                in_flight.error = exc
+                self._in_flight.pop(key, None)
+                in_flight.done.set()
+            raise
+
+        with self._cache_lock:
+            self._cache_put_locked(key, ranked)
+            in_flight.result = ranked
+            self._in_flight.pop(key, None)
+            in_flight.done.set()
+        return ranked
+
+    def _wait_for_in_flight(
+        self,
+        key: _SearchCacheKey,
+        in_flight: _InFlightSearch,
+        control: SearchControl | None,
+    ) -> tuple[_RankedCandidate, ...] | None:
+        while not in_flight.done.wait(0.025):
+            if control and control.is_cancelled():
+                raise SearchSuperseded
+        if in_flight.error is not None:
+            if control and control.is_cancelled():
+                raise SearchSuperseded
+            cached = self._cache_get(key)
+            if cached is not None:
+                return cached
+            if isinstance(in_flight.error, SearchSuperseded):
+                return None
+            raise in_flight.error
+        if in_flight.result is None:
+            raise RuntimeError("search finished without a result")
+        return in_flight.result
+
+    def _cache_get(self, key: _SearchCacheKey) -> tuple[_RankedCandidate, ...] | None:
+        with self._cache_lock:
+            return self._cache_get_locked(key)
+
+    def _cache_get_locked(
+        self, key: _SearchCacheKey
+    ) -> tuple[_RankedCandidate, ...] | None:
+        cached = self._ranked_cache.get(key)
+        if cached is None:
+            return None
+        self._ranked_cache.move_to_end(key)
+        return cached
+
+    def _cache_put_locked(
+        self,
+        key: _SearchCacheKey,
+        ranked: tuple[_RankedCandidate, ...],
+    ) -> None:
+        self._ranked_cache[key] = ranked
+        self._ranked_cache.move_to_end(key)
+        while len(self._ranked_cache) > self.cache_size:
+            self._ranked_cache.popitem(last=False)
+
+
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 DEFAULT_DOMAIN_VOCABULARY = DomainVocabulary(
     expansions={
@@ -106,6 +383,31 @@ def search_assets(
     limit: int = 100,
     offset: int = 0,
 ) -> list[SearchResult]:
+    return search_asset_page(
+        db,
+        query,
+        source_id=source_id,
+        directory=directory,
+        directory_prefix=directory_prefix,
+        domain_vocabulary=domain_vocabulary,
+        mode=mode,
+        limit=limit,
+        offset=offset,
+    ).assets
+
+
+def search_asset_page(
+    db: sqlite3.Connection,
+    query: str,
+    *,
+    source_id: str | None = None,
+    directory: str | None = None,
+    directory_prefix: str | None = None,
+    domain_vocabulary: DomainVocabulary | None = None,
+    mode: SearchMode = "combined",
+    limit: int = 100,
+    offset: int = 0,
+) -> SearchResultsPage:
     ranked = _rank_search(
         db,
         query,
@@ -115,10 +417,13 @@ def search_assets(
         domain_vocabulary=domain_vocabulary or DEFAULT_DOMAIN_VOCABULARY,
         mode=mode,
     )
-    return [
-        _record_to_result(candidate.asset, candidate.score)
-        for candidate in ranked[offset : offset + limit]
-    ]
+    return SearchResultsPage(
+        assets=[
+            _record_to_result(candidate.asset, candidate.score)
+            for candidate in ranked[offset : offset + limit]
+        ],
+        total=len(ranked),
+    )
 
 
 def count_search_assets(
@@ -181,41 +486,168 @@ def _rank_search(
     domain_vocabulary: DomainVocabulary,
     mode: SearchMode,
 ) -> list[_RankedCandidate]:
+    return _rank_search_assets(
+        _fetch_assets(
+            db,
+            source_id=source_id,
+            directory=directory,
+            directory_prefix=directory_prefix,
+        ),
+        query,
+        domain_vocabulary=domain_vocabulary,
+        mode=mode,
+    )
+
+
+def _rank_search_assets(
+    assets: Iterable[_AssetRecord],
+    query: str,
+    *,
+    domain_vocabulary: DomainVocabulary,
+    mode: SearchMode,
+    control: SearchControl | None = None,
+) -> list[_RankedCandidate]:
     query_tokens = _tokens(query)
     if not query_tokens:
         return []
     if mode not in {"strict", "fuzzy", "domain", "combined"}:
         raise ValueError(f"unsupported search mode: {mode}")
 
-    assets = _fetch_assets(
-        db,
-        source_id=source_id,
-        directory=directory,
-        directory_prefix=directory_prefix,
-    )
     candidates: list[_Candidate] = []
     if mode == "strict":
         candidates.extend(
-            _strict_candidates(assets, query_tokens, query, require_all_terms=True)
-        )
-    if mode == "combined":
-        candidates.extend(
-            _strict_candidates(assets, query_tokens, query, require_all_terms=False)
-        )
-    if mode in {"fuzzy", "combined"}:
-        candidates.extend(
-            _fuzzy_candidates(
+            _strict_candidates(
                 assets,
                 query_tokens,
                 query,
-                suppress_strict_all_terms=mode == "combined",
+                require_all_terms=True,
+                control=control,
             )
         )
+    if mode == "combined":
+        strict_candidates = _strict_candidates(
+            assets,
+            query_tokens,
+            query,
+            require_all_terms=False,
+            control=control,
+        )
+        candidates.extend(strict_candidates)
+    if mode in {"fuzzy", "combined"}:
+        if not (
+            mode == "combined"
+            and _has_plenty_of_strict_all_term_matches(
+                strict_candidates,
+                query_tokens,
+            )
+        ):
+            candidates.extend(
+                _fuzzy_candidates(
+                    assets,
+                    query_tokens,
+                    query,
+                    suppress_strict_all_terms=mode == "combined",
+                    control=control,
+                )
+            )
     if mode in {"domain", "combined"}:
         candidates.extend(
-            _domain_candidates(assets, query_tokens, query, domain_vocabulary)
+            _domain_candidates(
+                assets,
+                query_tokens,
+                query,
+                domain_vocabulary,
+                control=control,
+            )
         )
-    return _rank_candidates(candidates, query_tokens)
+    return _rank_candidates(candidates, query_tokens, control=control)
+
+
+def _has_plenty_of_strict_all_term_matches(
+    candidates: list[_Candidate],
+    query_tokens: tuple[str, ...],
+) -> bool:
+    query_token_set = set(query_tokens)
+    return sum(
+        1
+        for candidate in candidates
+        if set(candidate.matched_terms) == query_token_set
+    ) >= 500
+
+
+def _search_cache_key(
+    query: str,
+    *,
+    source_id: str | None,
+    directory: str | None,
+    directory_prefix: str | None,
+    domain_vocabulary: DomainVocabulary,
+    mode: SearchMode,
+) -> _SearchCacheKey:
+    return (
+        _normalize_text(query),
+        mode,
+        source_id,
+        directory,
+        directory_prefix,
+        tuple(sorted(domain_vocabulary.expansions.items())),
+    )
+
+
+def _filter_assets(
+    assets: Iterable[_AssetRecord],
+    *,
+    source_id: str | None,
+    directory: str | None,
+    directory_prefix: str | None,
+    control: SearchControl | None = None,
+) -> tuple[_AssetRecord, ...]:
+    filtered = []
+    for index, asset in enumerate(assets, start=1):
+        if control:
+            control.check(index)
+        if source_id and asset.source_id != source_id:
+            continue
+        if directory is not None and asset.directory != directory:
+            continue
+        if directory_prefix and not (
+            asset.directory == directory_prefix
+            or asset.directory.startswith(f"{directory_prefix}/")
+        ):
+            continue
+        filtered.append(asset)
+    return tuple(filtered)
+
+
+def _filter_directory_counts(
+    directory_counts: dict[tuple[str, str], int],
+    source_id: str | None,
+) -> dict[tuple[str, str], int]:
+    if not source_id:
+        return directory_counts
+    return {
+        (source, path): count
+        for (source, path), count in directory_counts.items()
+        if source == source_id
+    }
+
+
+def _counts_from_asset_directories(
+    directories: Iterable[tuple[str, str] | tuple[str, str, int]],
+) -> dict[tuple[str, str], int]:
+    counts: dict[tuple[str, str], int] = {}
+    for item in directories:
+        source = item[0]
+        directory = item[1]
+        direct_count = item[2] if len(item) == 3 else 1
+        counts[(source, "")] = counts.get((source, ""), 0) + direct_count
+        if not directory:
+            continue
+        parts = directory.split("/")
+        for index in range(1, len(parts) + 1):
+            path = "/".join(parts[:index])
+            counts[(source, path)] = counts.get((source, path), 0) + direct_count
+    return counts
 
 
 def _fetch_assets(
@@ -269,9 +701,12 @@ def _strict_candidates(
     query: str,
     *,
     require_all_terms: bool,
+    control: SearchControl | None = None,
 ) -> list[_Candidate]:
     candidates = []
-    for asset in assets:
+    for index, asset in enumerate(assets, start=1):
+        if control:
+            control.check(index)
         score, matched = _strict_score(asset, query_tokens)
         if score <= 0:
             continue
@@ -295,9 +730,12 @@ def _fuzzy_candidates(
     query: str,
     *,
     suppress_strict_all_terms: bool,
+    control: SearchControl | None = None,
 ) -> list[_Candidate]:
     candidates = []
-    for asset in assets:
+    for index, asset in enumerate(assets, start=1):
+        if control:
+            control.check(index)
         strict_score, strict_matched = _strict_score(asset, query_tokens)
         if (
             suppress_strict_all_terms
@@ -325,12 +763,16 @@ def _domain_candidates(
     query_tokens: tuple[str, ...],
     query: str,
     domain_vocabulary: DomainVocabulary,
+    *,
+    control: SearchControl | None = None,
 ) -> list[_Candidate]:
     expanded_terms = _expanded_terms(query_tokens, domain_vocabulary)
     if not expanded_terms:
         return []
     candidates = []
-    for asset in assets:
+    for index, asset in enumerate(assets, start=1):
+        if control:
+            control.check(index)
         score, matched = _domain_score(asset, expanded_terms)
         if score <= 0:
             continue
@@ -349,18 +791,26 @@ def _domain_candidates(
 def _rank_candidates(
     candidates: list[_Candidate],
     query_tokens: tuple[str, ...],
+    *,
+    control: SearchControl | None = None,
 ) -> list[_RankedCandidate]:
     by_asset: dict[str, list[tuple[int, _Candidate]]] = defaultdict(list)
     for lane in ("strict", "fuzzy", "domain"):
+        if control:
+            control.check(0)
         lane_candidates = [
             candidate for candidate in candidates if candidate.lane == lane
         ]
         lane_candidates.sort(key=lambda candidate: candidate.raw_score, reverse=True)
         for rank, candidate in enumerate(lane_candidates, start=1):
+            if control:
+                control.check(rank)
             by_asset[candidate.asset.asset_id].append((rank, candidate))
 
     ranked = []
-    for lane_matches in by_asset.values():
+    for index, lane_matches in enumerate(by_asset.values(), start=1):
+        if control:
+            control.check(index)
         asset = lane_matches[0][1].asset
         score = sum(
             _lane_contribution(rank, candidate) for rank, candidate in lane_matches

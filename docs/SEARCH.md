@@ -54,7 +54,39 @@ Current implementation status:
 - `domain`: query-time vocabulary expansion from `config/search-vocabulary.yaml` or the configured `[search].domain_vocabulary` path.
 - `combined`: normal product search, combining strict, fuzzy, and domain candidates through the centralized ranker in `findme.search`.
 
-All modes read indexed database rows only. Domain vocabulary changes are applied at query time and do not require re-indexing.
+SQLite is durable storage for indexed assets, not the interactive search path. The
+running app loads the indexed rows into a process-local in-memory search
+representation at startup. Interactive search, ranking, and matched directory
+counts operate on that representation. After running the indexer, restart the app
+before expecting the served search UI/API to reflect newly indexed data.
+
+Do not add lazy or partial index loading for v1. If the real data set becomes too
+large to keep in memory, revisit this design explicitly.
+
+Domain vocabulary changes are applied at query time and do not require re-indexing.
+
+## Runtime Performance
+
+The API keeps a bounded process-local LRU cache of fully ranked results for exact
+query/scope/mode/vocabulary combinations. Asset results and matched directory
+counts are both projected from the same ranked result, so a single query should
+not rank the corpus twice just because the frontend asks for both assets and
+directories.
+
+Concurrent identical searches are coalesced in process: the first request owns
+the ranking work, and later identical requests wait for the same result unless
+they are superseded. This is an optimization only; SQLite remains the durable
+source and the in-memory cache can be discarded at any time.
+
+The frontend sends monotonically increasing search revisions per browser session.
+When a newer request supersedes an older one, backend ranking loops check
+cooperatively and return `204 No Content` for obsolete work. Do not forcibly kill
+threads for search cancellation; keep cancellation checks in long-running search
+loops and make new retrieval lanes participate in the same control mechanism.
+
+Near-repeat cache reuse, such as using a cached plural query when the user edits
+back to the singular form, is intentionally deferred. The current cache is exact
+key reuse with a bounded memory footprint.
 
 ## Candidate Interface
 

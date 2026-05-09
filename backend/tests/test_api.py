@@ -195,6 +195,187 @@ def test_api_result_totals_ignore_limit_and_offset(tmp_path: Path) -> None:
     assert len(search_body["assets"]) == 1
 
 
+def test_api_search_uses_startup_search_index_until_app_restart(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    write_image(source_root / "Goblin.png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+
+    client = TestClient(create_app(config, db_path))
+
+    with connect(db_path) as db:
+        db.execute("UPDATE assets SET stale = 1 WHERE relative_path = ?", ("Goblin.png",))
+        db.execute("DELETE FROM asset_search WHERE filename = ?", ("Goblin.png",))
+
+    body = client.get("/api/search", params={"q": "goblin"}).json()
+
+    assert body["total"] == 1
+    assert body["assets"][0]["relative_path"] == "Goblin.png"
+
+
+def test_api_directories_use_startup_search_index_until_app_restart(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    (source_root / "Creatures").mkdir(parents=True)
+    write_image(source_root / "Creatures" / "Goblin.png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+
+    client = TestClient(create_app(config, db_path))
+
+    with connect(db_path) as db:
+        db.execute(
+            "UPDATE assets SET stale = 1 WHERE relative_path = ?",
+            ("Creatures/Goblin.png",),
+        )
+        db.execute("DELETE FROM asset_search WHERE filename = ?", ("Goblin.png",))
+
+    body = client.get("/api/directories", params={"q": "goblin"}).json()
+
+    directories = {(item["source_id"], item["path"]): item for item in body["directories"]}
+    assert directories[("dnd", "")]["asset_count"] == 1
+    assert directories[("dnd", "")]["matched_asset_count"] == 1
+    assert directories[("dnd", "Creatures")]["asset_count"] == 1
+    assert directories[("dnd", "Creatures")]["matched_asset_count"] == 1
+
+
+def test_api_search_rejects_superseded_search_revision(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    write_image(source_root / "Goblin.png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+
+    client = TestClient(create_app(config, db_path))
+
+    current = client.get(
+        "/api/search",
+        params={"q": "goblin", "search_session": "tab-1", "search_revision": 2},
+    )
+    superseded = client.get(
+        "/api/search",
+        params={"q": "goblin", "search_session": "tab-1", "search_revision": 1},
+    )
+
+    assert current.status_code == 200
+    assert superseded.status_code == 204
+
+
+def test_api_directories_reject_superseded_search_revision(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    write_image(source_root / "Goblin.png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+
+    client = TestClient(create_app(config, db_path))
+
+    current = client.get(
+        "/api/directories",
+        params={"q": "goblin", "search_session": "tab-1", "search_revision": 2},
+    )
+    superseded = client.get(
+        "/api/directories",
+        params={"q": "goblin", "search_session": "tab-1", "search_revision": 1},
+    )
+
+    assert current.status_code == 200
+    assert superseded.status_code == 204
+
+
+def test_api_requests_do_not_initialize_database(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+
+    client = TestClient(create_app(config, db_path))
+
+    def fail_request_time_initialization(_db) -> None:
+        raise AssertionError("request attempted schema initialization")
+
+    monkeypatch.setattr(
+        "findme.api.initialize_database", fail_request_time_initialization
+    )
+
+    response = client.get("/api/assets")
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 0
+
+
 def test_api_serves_static_frontend_when_configured(tmp_path: Path) -> None:
     static_dir = tmp_path / "dist"
     static_dir.mkdir()

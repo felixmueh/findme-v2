@@ -82,11 +82,19 @@
   let debounceTimer: number | undefined
   let directoryDebounceTimer: number | undefined
   let requestId = 0
+  let searchRevision = 0
+  let assetRequestController: AbortController | undefined
+  let directoryRequestController: AbortController | undefined
   let searchInput: HTMLInputElement
   let tileGridElement = $state<HTMLDivElement>()
   let loadMoreTrigger = $state<HTMLDivElement>()
 
   const pageSize = 100
+  const searchSessionId =
+    typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random()}`
+  const directorySearchSessionId = `${searchSessionId}:directories`
 
   const selectedAssetId = $derived(selected?.asset.asset_id ?? '')
   const selectedIndex = $derived(assets.findIndex((asset) => asset.asset_id === selectedAssetId))
@@ -120,18 +128,20 @@
     sourceId
     selectedDirectory
     selectedDirectorySourceId
+    const revision = ++searchRevision
     window.clearTimeout(debounceTimer)
     debounceTimer = window.setTimeout(() => {
-      void loadAssets()
+      void loadAssets(revision)
     }, 150)
   })
 
   $effect(() => {
     query
     sourceId
+    const revision = searchRevision
     window.clearTimeout(directoryDebounceTimer)
     directoryDebounceTimer = window.setTimeout(() => {
-      void loadDirectories()
+      void loadDirectories(revision)
     }, 150)
   })
 
@@ -167,31 +177,53 @@
     collapsedDirectories = new Set()
   }
 
-  async function loadDirectories() {
+  async function loadDirectories(revision?: number) {
+    directoryRequestController?.abort()
+    const controller = new AbortController()
+    directoryRequestController = controller
     const params = new URLSearchParams()
     if (sourceId) params.set('source_id', sourceId)
     const trimmed = query.trim()
-    if (trimmed) params.set('q', trimmed)
-    const response = await fetch(`/api/directories?${params}`)
-    if (!response.ok) {
-      error = 'Could not load folders'
-      return
+    if (trimmed) {
+      params.set('q', trimmed)
+      if (revision !== undefined) {
+        params.set('search_session', directorySearchSessionId)
+        params.set('search_revision', String(revision))
+      }
     }
-    const body = await response.json()
-    directories = body.directories
+    try {
+      const response = await fetch(`/api/directories?${params}`, { signal: controller.signal })
+      if (response.status === 204) return
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const body = await response.json()
+      if (directoryRequestController === controller) {
+        directories = body.directories
+      }
+    } catch (caught) {
+      if (!isAbortError(caught) && directoryRequestController === controller) {
+        error = 'Could not load folders'
+      }
+    } finally {
+      if (directoryRequestController === controller) {
+        directoryRequestController = undefined
+      }
+    }
   }
 
-  async function loadAssets() {
-    await loadAssetPage({ offset: 0, append: false })
+  async function loadAssets(revision = searchRevision) {
+    await loadAssetPage({ offset: 0, append: false, revision })
   }
 
   async function loadMoreAssets() {
     if (!hasMoreAssets || loading || loadingMore) return
-    await loadAssetPage({ offset: assets.length, append: true })
+    await loadAssetPage({ offset: assets.length, append: true, revision: searchRevision })
   }
 
-  async function loadAssetPage({ offset, append }: { offset: number; append: boolean }) {
+  async function loadAssetPage({ offset, append, revision }: { offset: number; append: boolean; revision: number }) {
     const currentRequest = ++requestId
+    assetRequestController?.abort()
+    const controller = new AbortController()
+    assetRequestController = controller
     const params = new URLSearchParams()
     params.set('limit', String(pageSize))
     params.set('offset', String(offset))
@@ -200,7 +232,11 @@
     if (selectedDirectory) params.set('directory_prefix', selectedDirectory)
     const trimmed = query.trim()
     const path = trimmed ? '/api/search' : '/api/assets'
-    if (trimmed) params.set('q', trimmed)
+    if (trimmed) {
+      params.set('q', trimmed)
+      params.set('search_session', searchSessionId)
+      params.set('search_revision', String(revision))
+    }
 
     if (append) {
       loadingMore = true
@@ -211,7 +247,8 @@
     }
     error = ''
     try {
-      const response = await fetch(`${path}?${params}`)
+      const response = await fetch(`${path}?${params}`, { signal: controller.signal })
+      if (response.status === 204) return
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       const body = await response.json()
       if (currentRequest !== requestId) return
@@ -224,14 +261,21 @@
       } else if (!append && selected && !assets.some((asset) => asset.asset_id === selectedAssetId)) {
         selected = null
       }
-    } catch {
-      if (currentRequest === requestId) error = 'Search failed'
+    } catch (caught) {
+      if (!isAbortError(caught) && currentRequest === requestId) error = 'Search failed'
     } finally {
       if (currentRequest === requestId) {
         loading = false
         loadingMore = false
       }
+      if (assetRequestController === controller) {
+        assetRequestController = undefined
+      }
     }
+  }
+
+  function isAbortError(caught: unknown) {
+    return caught instanceof DOMException && caught.name === 'AbortError'
   }
 
   async function selectAsset(asset: Asset) {
@@ -279,7 +323,8 @@
 
   async function selectFirstResultFromSearch() {
     window.clearTimeout(debounceTimer)
-    await loadAssetPage({ offset: 0, append: false })
+    const revision = ++searchRevision
+    await loadAssetPage({ offset: 0, append: false, revision })
     if (assets.length === 0) return
     await selectAsset(assets[0])
     searchInput?.blur()

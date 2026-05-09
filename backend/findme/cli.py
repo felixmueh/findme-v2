@@ -12,7 +12,7 @@ from findme.api import create_app
 from findme.config import ConfigError, load_config
 from findme.db import connect, initialize_database
 from findme.indexer import count_indexable_files, index_sources
-from findme.search import SearchMode, load_domain_vocabulary, search_assets
+from findme.search import SearchIndex, SearchMode, load_domain_vocabulary
 from findme.search_eval import (
     EvaluationQuery,
     SearchEvaluation,
@@ -91,17 +91,17 @@ def run(argv: list[str]) -> int:
                 else None
             )
             with connect(db_path) as db:
+                search_index = SearchIndex.load(db)
                 report = evaluate_search(
                     evaluation,
                     runner=lambda scope, query: [
                         SearchResultRef(result.source_id, result.relative_path)
-                        for result in search_assets(
-                            db,
+                        for result in search_index.search(
                             query,
                             domain_vocabulary=domain_vocabulary,
                             mode=_search_mode(scope),
                             limit=args.limit,
-                        )
+                        ).assets
                     ],
                 )
             passed = report.total_expectations - report.failed_expectations
