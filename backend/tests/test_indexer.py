@@ -4,7 +4,7 @@ from findme.config import AppConfig, SourceConfig
 from findme.db import connect, initialize_database
 from findme.indexer import count_indexable_files, index_sources
 
-from helpers import write_image
+from helpers import write_image, write_video
 
 
 def test_index_sources_adds_media_files_and_ignores_legacy_findme_data(tmp_path: Path) -> None:
@@ -117,6 +117,32 @@ def test_index_sources_skips_unchanged_thumbnail_generation(tmp_path: Path) -> N
         initialize_database(db)
         first = index_sources(db, config)
         second = index_sources(db, config)
+
+    assert first.generated_thumbnails == 1
+    assert second.generated_thumbnails == 0
+
+
+def test_index_sources_skips_unchanged_video_poster_generation(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    write_video(source_root / "portal.mp4")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".mp4"}),
+            ),
+        ),
+    )
+
+    with connect(tmp_path / "findme.sqlite3") as db:
+        initialize_database(db)
+        first = index_sources(db, config, thumbnail_workers=1)
+        second = index_sources(db, config, thumbnail_workers=1)
 
     assert first.generated_thumbnails == 1
     assert second.generated_thumbnails == 0

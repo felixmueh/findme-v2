@@ -54,7 +54,7 @@ References: [Design: Core Model](../docs/DESIGN.md#core-model), [Design: Identit
 - [x] Bounded worker pool for thumbnail generation.
 - [x] Indexing progress output.
 - [x] Clear thumbnail failure reporting.
-- [ ] Video poster generation with `ffmpeg`.
+- [x] Video poster generation with `ffmpeg`.
 - [ ] Index status and errors surfaced through the API/UI.
 - [ ] Benchmark indexing against realistic source data.
 

@@ -7,7 +7,7 @@ from findme.db import connect, initialize_database
 from findme.indexer import index_sources
 from findme.thumbnails import thumbnail_cache_path
 
-from helpers import write_image
+from helpers import write_image, write_video
 
 
 def test_thumbnail_cache_path_uses_data_root_and_fingerprint(tmp_path: Path) -> None:
@@ -80,3 +80,45 @@ def test_index_sources_preserves_thumbnail_alpha(tmp_path: Path) -> None:
     with Image.open(thumbnail_path) as thumb:
         assert thumb.mode == "RGBA"
         assert thumb.getpixel((0, 0))[3] == 0
+
+
+def test_index_sources_generates_video_poster_thumbnail(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    video_path = source_root / "Animations" / "Portal.mp4"
+    write_video(video_path, size=(640, 360))
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".mp4"}),
+            ),
+        ),
+    )
+
+    with connect(tmp_path / "findme.sqlite3") as db:
+        initialize_database(db)
+        summary = index_sources(db, config, thumbnail_workers=1)
+        row = db.execute(
+            """
+            SELECT media_type, thumbnail_path, thumbnail_width, thumbnail_height
+            FROM assets
+            WHERE relative_path = 'Animations/Portal.mp4'
+            """
+        ).fetchone()
+
+    assert summary.generated_thumbnails == 1
+    assert row["media_type"] == "video"
+    assert row["thumbnail_path"] is not None
+    assert Path(row["thumbnail_path"]).is_file()
+    assert row["thumbnail_width"] == 256
+    assert row["thumbnail_height"] == 144
+    with Image.open(row["thumbnail_path"]) as thumb:
+        assert thumb.size == (256, 144)
+        red, green, blue = thumb.convert("RGB").getpixel((0, 0))
+        assert red > 200
+        assert green < 80
+        assert blue < 80

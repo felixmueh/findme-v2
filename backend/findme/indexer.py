@@ -10,7 +10,12 @@ from typing import Protocol
 
 from findme.config import AppConfig, SourceConfig
 from findme.identity import asset_id_for
-from findme.thumbnails import ThumbnailError, ThumbnailResult, generate_thumbnail
+from findme.thumbnails import (
+    ThumbnailError,
+    ThumbnailResult,
+    generate_thumbnail,
+    generate_video_poster,
+)
 
 
 IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif"})
@@ -237,7 +242,10 @@ def _current_cached_thumbnail(
     db: sqlite3.Connection,
     pending: PendingAsset,
 ) -> ThumbnailResult | None:
-    if pending.media_type != "image" or pending.file_path.suffix.lower() == ".gif":
+    if (
+        pending.media_type not in {"image", "video"}
+        or pending.file_path.suffix.lower() == ".gif"
+    ):
         return None
     row = db.execute(
         """
@@ -379,14 +387,26 @@ def _thumbnail_for(
     mtime_ns: int,
     media_type: str,
 ) -> ThumbnailResult | None:
-    if media_type != "image" or file_path.suffix.lower() == ".gif":
+    if media_type == "image" and file_path.suffix.lower() == ".gif":
         return None
-    return generate_thumbnail(
-        file_path,
-        data_root,
-        asset_id=asset_id,
-        source_id=source.id,
-        relative_path=relative_path,
-        size_bytes=size_bytes,
-        mtime_ns=mtime_ns,
-    )
+    if media_type == "image":
+        return generate_thumbnail(
+            file_path,
+            data_root,
+            asset_id=asset_id,
+            source_id=source.id,
+            relative_path=relative_path,
+            size_bytes=size_bytes,
+            mtime_ns=mtime_ns,
+        )
+    if media_type == "video":
+        return generate_video_poster(
+            file_path,
+            data_root,
+            asset_id=asset_id,
+            source_id=source.id,
+            relative_path=relative_path,
+            size_bytes=size_bytes,
+            mtime_ns=mtime_ns,
+        )
+    return None

@@ -1,4 +1,5 @@
 from pathlib import Path
+import subprocess
 
 from PIL import Image
 
@@ -9,3 +10,26 @@ def write_image(path: Path, *, size: tuple[int, int] = (32, 24), alpha: int = 25
     color = (30, 120, 90) if mode == "RGB" else (30, 120, 90, alpha)
     image = Image.new(mode, size, color)
     image.save(path)
+
+
+def write_video(path: Path, *, size: tuple[int, int] = (640, 360)) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            f"color=c=red:s={size[0]}x{size[1]}:d=1",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            str(path),
+        ],
+        check=True,
+    )
