@@ -28,6 +28,7 @@ class SearchResult:
     extension: str
     directory: str
     size_bytes: int
+    mtime_ns: int
     media_type: str
     thumbnail_path: str | None
     thumbnail_width: int | None
@@ -82,6 +83,7 @@ class _AssetRecord:
     extension: str
     directory: str
     size_bytes: int
+    mtime_ns: int
     media_type: str
     thumbnail_path: str | None
     thumbnail_width: int | None
@@ -1068,6 +1070,7 @@ def _fetch_assets(
           assets.extension,
           assets.directory,
           assets.size_bytes,
+          assets.mtime_ns,
           assets.media_type,
           assets.thumbnail_path,
           assets.thumbnail_width,
@@ -1458,6 +1461,7 @@ def _row_to_record(row: sqlite3.Row) -> _AssetRecord:
         extension=row["extension"],
         directory=row["directory"],
         size_bytes=row["size_bytes"],
+        mtime_ns=row["mtime_ns"],
         media_type=row["media_type"],
         thumbnail_path=row["thumbnail_path"],
         thumbnail_width=row["thumbnail_width"],
@@ -1482,6 +1486,7 @@ def _record_to_result(asset: _AssetRecord, score: float) -> SearchResult:
         extension=asset.extension,
         directory=asset.directory,
         size_bytes=asset.size_bytes,
+        mtime_ns=asset.mtime_ns,
         media_type=asset.media_type,
         thumbnail_path=asset.thumbnail_path,
         thumbnail_width=asset.thumbnail_width,

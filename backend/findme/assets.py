@@ -27,6 +27,7 @@ class AssetRecord:
     extension: str
     directory: str
     size_bytes: int
+    mtime_ns: int
     media_type: str
     thumbnail_path: Path | None
     thumbnail_width: int | None
@@ -47,6 +48,7 @@ def get_asset(db: sqlite3.Connection, config: AppConfig, asset_id: str) -> Asset
           assets.extension,
           assets.directory,
           assets.size_bytes,
+          assets.mtime_ns,
           assets.media_type,
           assets.thumbnail_path,
           assets.thumbnail_width,
@@ -71,6 +73,7 @@ def get_asset(db: sqlite3.Connection, config: AppConfig, asset_id: str) -> Asset
         extension=row["extension"],
         directory=row["directory"],
         size_bytes=row["size_bytes"],
+        mtime_ns=row["mtime_ns"],
         media_type=row["media_type"],
         thumbnail_path=Path(row["thumbnail_path"]) if row["thumbnail_path"] else None,
         thumbnail_width=row["thumbnail_width"],
@@ -115,10 +118,18 @@ def asset_response(asset: AssetRecord) -> dict[str, object]:
         "media_type": asset.media_type,
     }
     if asset.thumbnail_path is not None:
-        response["thumbnail_url"] = f"/api/assets/{asset.asset_id}/thumb"
+        response["thumbnail_url"] = thumbnail_url(
+            asset.asset_id,
+            size_bytes=asset.size_bytes,
+            mtime_ns=asset.mtime_ns,
+        )
         response["thumbnail_width"] = asset.thumbnail_width
         response["thumbnail_height"] = asset.thumbnail_height
     return response
+
+
+def thumbnail_url(asset_id: str, *, size_bytes: int, mtime_ns: int) -> str:
+    return f"/api/assets/{asset_id}/thumb?v={size_bytes}-{mtime_ns}"
 
 
 def _primary_action(

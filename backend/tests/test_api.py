@@ -49,6 +49,9 @@ def test_api_lists_sources_and_current_assets(tmp_path: Path) -> None:
     assert assets[0]["source_id"] == "dnd"
     assert assets[0]["relative_path"] == "goblin.png"
     assert assets[0]["media_type"] == "image"
+    assert assets[0]["thumbnail_url"].startswith(
+        f"/api/assets/{assets[0]['asset_id']}/thumb?v="
+    )
 
 
 def test_api_search_returns_ranked_results(tmp_path: Path) -> None:
@@ -81,6 +84,9 @@ def test_api_search_returns_ranked_results(tmp_path: Path) -> None:
     body = response.json()
     assert body["total"] == 1
     assert body["assets"][0]["relative_path"] == "Goblin Warrior.png"
+    assert body["assets"][0]["thumbnail_url"].startswith(
+        f"/api/assets/{body['assets'][0]['asset_id']}/thumb?v="
+    )
     assert body["assets"][0]["score"] > 0
 
 

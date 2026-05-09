@@ -35,13 +35,15 @@ def test_asset_detail_includes_derived_actions_and_serves_file(tmp_path: Path) -
     with connect(db_path) as db:
         initialize_database(db)
         index_sources(db, config)
-        asset_id = db.execute("SELECT asset_id FROM assets").fetchone()["asset_id"]
+        row = db.execute("SELECT asset_id, size_bytes, mtime_ns FROM assets").fetchone()
+        asset_id = row["asset_id"]
+        thumbnail_url = f"/api/assets/{asset_id}/thumb?v={row['size_bytes']}-{row['mtime_ns']}"
 
     client = TestClient(create_app(config, db_path))
     detail = client.get(f"/api/assets/{asset_id}").json()
 
     assert detail["asset"]["relative_path"] == "Goblin Warrior.png"
-    assert detail["asset"]["thumbnail_url"] == f"/api/assets/{asset_id}/thumb"
+    assert detail["asset"]["thumbnail_url"] == thumbnail_url
     assert detail["actions"]["primary"]["value"] == "assets/dnd/Goblin Warrior.png"
     assert detail["actions"]["profiles"] == [
         {
@@ -55,6 +57,10 @@ def test_asset_detail_includes_derived_actions_and_serves_file(tmp_path: Path) -
     thumbnail_response = client.get(detail["asset"]["thumbnail_url"])
     assert thumbnail_response.status_code == 200
     assert thumbnail_response.headers["content-type"] == "image/webp"
+    assert (
+        thumbnail_response.headers["cache-control"]
+        == "public, max-age=31536000, immutable"
+    )
 
 
 def test_missing_asset_file_returns_404(tmp_path: Path) -> None:

@@ -15,6 +15,7 @@ from findme.assets import (
     asset_actions,
     asset_response,
     get_asset,
+    thumbnail_url,
 )
 from findme.config import AppConfig
 from findme.db import connect, initialize_database
@@ -163,7 +164,11 @@ def create_app(
             asset = _load_asset_or_404(db, config, asset_id)
         if asset.thumbnail_path is None or not asset.thumbnail_path.is_file():
             raise HTTPException(status_code=404, detail="asset thumbnail is missing")
-        return FileResponse(asset.thumbnail_path, media_type="image/webp")
+        return FileResponse(
+            asset.thumbnail_path,
+            media_type="image/webp",
+            headers={"Cache-Control": "public, max-age=31536000, immutable"},
+        )
 
     if static_dir is not None and static_dir.exists():
         app.mount("/", StaticFiles(directory=static_dir, html=True), name="frontend")
@@ -247,6 +252,7 @@ def _fetch_assets(
           assets.extension,
           assets.directory,
           assets.size_bytes,
+          assets.mtime_ns,
           assets.media_type,
           assets.thumbnail_path,
           assets.thumbnail_width,
@@ -305,7 +311,11 @@ def _asset_response(row: sqlite3.Row) -> dict[str, object]:
         "media_type": row["media_type"],
     }
     if row["thumbnail_path"] is not None:
-        response["thumbnail_url"] = f"/api/assets/{row['asset_id']}/thumb"
+        response["thumbnail_url"] = thumbnail_url(
+            row["asset_id"],
+            size_bytes=row["size_bytes"],
+            mtime_ns=row["mtime_ns"],
+        )
         response["thumbnail_width"] = row["thumbnail_width"]
         response["thumbnail_height"] = row["thumbnail_height"]
     return response
@@ -337,7 +347,11 @@ def _search_response(result: SearchResult) -> dict[str, object]:
         "score": result.score,
     }
     if result.thumbnail_path is not None:
-        response["thumbnail_url"] = f"/api/assets/{result.asset_id}/thumb"
+        response["thumbnail_url"] = thumbnail_url(
+            result.asset_id,
+            size_bytes=result.size_bytes,
+            mtime_ns=result.mtime_ns,
+        )
         response["thumbnail_width"] = result.thumbnail_width
         response["thumbnail_height"] = result.thumbnail_height
     return response
