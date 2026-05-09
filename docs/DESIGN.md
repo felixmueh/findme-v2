@@ -293,10 +293,12 @@ It should:
 - show sources ordered by configured priority/name
 - show expandable indexed directories
 - show asset counts per source/directory
-- act as a hard filter for search and browse
+- act as a hard filter for search and browse through explicit include/exclude subtree rules
 - never perform live filesystem walking from the UI
 
-Selecting a source or directory with no text query should show assets under that subtree. Global empty-query behavior can be more conservative, such as showing nothing, recent assets, or preferred assets.
+The final sidebar filtering model is tracked in `docs/SIDEBAR_FILTERING.md`. In that model, source roots and directories can be marked as green whitelist or red blacklist rules. The nearest specified ancestor decides whether an asset is included, and the existence of any whitelist rule globally excludes otherwise-unspecified assets. This rule model replaces a single selected-directory hard filter.
+
+A row selection can still focus, expand, or provide preview context, but final hard filtering should come from the explicit include/exclude subtree rules. Global empty-query behavior can be conservative, such as showing nothing, recent assets, or preferred assets.
 
 ## Preview Experience
 
