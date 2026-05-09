@@ -45,6 +45,25 @@
     score?: number
   }
 
+  type AssetCard = {
+    kind: 'asset'
+    asset: Asset
+  }
+
+  type CollectionCard = {
+    kind: 'collection'
+    collection_key: string
+    representative: Asset
+    variants: Asset[]
+    count: number
+  }
+
+  type ResultCard = AssetCard | CollectionCard
+
+  type VisibleEntry =
+    | { kind: 'asset'; asset: Asset; collection_key?: string }
+    | { kind: 'collection'; collection: CollectionCard }
+
   type ActionProfile = {
     id: string
     label: string
@@ -73,9 +92,13 @@
   let sources = $state<Source[]>([])
   let directories = $state<DirectoryNode[]>([])
   let collapsedDirectories = $state<Set<string>>(new Set())
-  let assets = $state<Asset[]>([])
+  let cards = $state<ResultCard[]>([])
+  let expandedCollections = $state<Set<string>>(new Set())
   let selected = $state<AssetDetail | null>(null)
   let hoveredAsset = $state<Asset | null>(null)
+  let hoveredCollection = $state<CollectionCard | null>(null)
+  let cyclingCollectionKey = $state('')
+  let cyclingVariantIndex = $state(0)
   let loading = $state(false)
   let loadingMore = $state(false)
   let hasMoreAssets = $state(false)
@@ -86,6 +109,7 @@
   let directoryDebounceTimer: number | undefined
   let requestId = 0
   let searchRevision = 0
+  let collectionCycleTimer: number | undefined
   let assetRequestController: AbortController | undefined
   let directoryRequestController: AbortController | undefined
   let searchInput: HTMLInputElement
@@ -100,8 +124,14 @@
   const directorySearchSessionId = `${searchSessionId}:directories`
 
   const selectedAssetId = $derived(selected?.asset.asset_id ?? '')
-  const selectedIndex = $derived(assets.findIndex((asset) => asset.asset_id === selectedAssetId))
-  const resultLabel = $derived(`${resultTotal} ${resultTotal === 1 ? 'asset' : 'assets'}`)
+  const visibleEntries = $derived.by(() => visibleEntriesForCards(cards, expandedCollections))
+  const selectedIndex = $derived(
+    visibleEntries.findIndex((entry) => entryAsset(entry)?.asset_id === selectedAssetId)
+  )
+  const hoverPreviewAsset = $derived(
+    hoveredCollection ? collectionDisplayAsset(hoveredCollection) : hoveredAsset
+  )
+  const resultLabel = $derived(`${resultTotal} ${resultTotal === 1 ? 'card' : 'cards'}`)
   const visibleDirectories = $derived(directories.filter((directory) => isDirectoryVisible(directory)))
   const visibleDirectoryKeys = $derived.by(
     () => new Set(visibleDirectories.map((directory) => directoryKey(directory)))
@@ -226,7 +256,7 @@
 
   async function loadMoreAssets() {
     if (!hasMoreAssets || loading || loadingMore) return
-    await loadAssetPage({ offset: assets.length, append: true, revision: searchRevision })
+    await loadAssetPage({ offset: cards.length, append: true, revision: searchRevision })
   }
 
   async function loadAssetPage({ offset, append, revision }: { offset: number; append: boolean; revision: number }) {
@@ -263,13 +293,17 @@
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       const body = await response.json()
       if (currentRequest !== requestId) return
-      const nextAssets = body.assets as Asset[]
-      resultTotal = Number(body.total ?? nextAssets.length)
-      assets = append ? [...assets, ...nextAssets] : nextAssets
-      hasMoreAssets = assets.length < resultTotal
-      if (!append && assets.length === 0) {
+      const nextCards = body.cards as ResultCard[]
+      resultTotal = Number(body.total ?? nextCards.length)
+      cards = append ? [...cards, ...nextCards] : nextCards
+      hasMoreAssets = cards.length < resultTotal
+      if (!append) {
+        expandedCollections = new Set()
+        stopCollectionCycle()
+      }
+      if (!append && cards.length === 0) {
         selected = null
-      } else if (!append && selected && !assets.some((asset) => asset.asset_id === selectedAssetId)) {
+      } else if (!append && selected && !cards.some((card) => cardContainsAsset(card, selectedAssetId))) {
         selected = null
       }
     } catch (caught) {
@@ -308,10 +342,15 @@
   }
 
   function chooseRelative(offset: number) {
-    if (assets.length === 0) return
+    if (visibleEntries.length === 0) return
     const fallback = selectedIndex < 0 ? 0 : selectedIndex
-    const next = Math.min(Math.max(fallback + offset, 0), assets.length - 1)
-    void selectAsset(assets[next])
+    const next = Math.min(Math.max(fallback + offset, 0), visibleEntries.length - 1)
+    const entry = visibleEntries[next]
+    if (entry.kind === 'collection') {
+      expandCollection(entry.collection)
+      return
+    }
+    void selectAsset(entry.asset)
   }
 
   function chooseGridRelative(direction: 'left' | 'right' | 'up' | 'down') {
@@ -332,13 +371,10 @@
     return Math.max(columns.split(' ').filter(Boolean).length, 1)
   }
 
-  async function selectFirstResultFromSearch() {
+  async function refreshSearchFromInput() {
     window.clearTimeout(debounceTimer)
     const revision = ++searchRevision
     await loadAssetPage({ offset: 0, append: false, revision })
-    if (assets.length === 0) return
-    await selectAsset(assets[0])
-    searchInput?.blur()
   }
 
   function handleKeydown(event: KeyboardEvent) {
@@ -357,7 +393,7 @@
     }
     if (event.key === 'Enter' && target === searchInput) {
       event.preventDefault()
-      void selectFirstResultFromSearch()
+      void refreshSearchFromInput()
       return
     }
     if (event.key === 'Escape') {
@@ -472,6 +508,88 @@
     event.preventDefault()
     openAsset(asset)
   }
+
+  function visibleEntriesForCards(resultCards: ResultCard[], expanded: Set<string>) {
+    const entries: VisibleEntry[] = []
+    for (const card of resultCards) {
+      if (card.kind === 'asset') {
+        entries.push({ kind: 'asset', asset: card.asset })
+        continue
+      }
+      if (!expanded.has(card.collection_key)) {
+        entries.push({ kind: 'collection', collection: card })
+        continue
+      }
+      for (const asset of card.variants) {
+        entries.push({
+          kind: 'asset',
+          asset,
+          collection_key: card.collection_key,
+        })
+      }
+    }
+    return entries
+  }
+
+  function entryAsset(entry: VisibleEntry) {
+    return entry.kind === 'asset' ? entry.asset : entry.collection.representative
+  }
+
+  function cardContainsAsset(card: ResultCard, assetId: string) {
+    if (card.kind === 'asset') return card.asset.asset_id === assetId
+    return card.variants.some((asset) => asset.asset_id === assetId)
+  }
+
+  function expandCollection(collection: CollectionCard) {
+    const next = new Set(expandedCollections)
+    next.add(collection.collection_key)
+    expandedCollections = next
+    stopCollectionCycle()
+  }
+
+  function foldCollection(collectionKey: string) {
+    const next = new Set(expandedCollections)
+    next.delete(collectionKey)
+    expandedCollections = next
+  }
+
+  function collectionDisplayAsset(collection: CollectionCard) {
+    if (cyclingCollectionKey !== collection.collection_key) return collection.representative
+    return collection.variants[cyclingVariantIndex % collection.variants.length] ?? collection.representative
+  }
+
+  function startCollectionCycle(collection: CollectionCard) {
+    if (collection.variants.length < 2) return
+    window.clearInterval(collectionCycleTimer)
+    hoveredAsset = null
+    hoveredCollection = collection
+    cyclingCollectionKey = collection.collection_key
+    cyclingVariantIndex = Math.max(
+      collection.variants.findIndex((asset) => asset.asset_id === collection.representative.asset_id),
+      0
+    )
+    collectionCycleTimer = window.setInterval(() => {
+      cyclingVariantIndex = (cyclingVariantIndex + 1) % collection.variants.length
+    }, 600)
+  }
+
+  function stopCollectionCycle(collectionKey?: string) {
+    if (collectionKey && cyclingCollectionKey !== collectionKey) return
+    window.clearInterval(collectionCycleTimer)
+    collectionCycleTimer = undefined
+    hoveredCollection = null
+    cyclingCollectionKey = ''
+    cyclingVariantIndex = 0
+  }
+
+  function collectionColor(collectionKey: string) {
+    const colors = ['#c2410c', '#0f766e', '#7c3aed', '#b45309', '#be123c', '#4d7c0f']
+    let hash = 0
+    for (let index = 0; index < collectionKey.length; index += 1) {
+      hash = (hash * 31 + collectionKey.charCodeAt(index)) >>> 0
+    }
+    return colors[hash % colors.length]
+  }
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -533,36 +651,71 @@
   <section class="workspace">
     <section class="main-region" aria-label="Assets">
       <div class="tile-grid" bind:this={tileGridElement}>
-        {#each assets as asset (asset.asset_id)}
-          {@const Icon = assetIcon(asset)}
-          <button
-            class:selected={asset.asset_id === selectedAssetId}
-            class="asset-tile"
-            type="button"
-            onmouseenter={() => (hoveredAsset = asset)}
-            onmouseleave={() => (hoveredAsset = hoveredAsset?.asset_id === asset.asset_id ? null : hoveredAsset)}
-            onfocus={() => (hoveredAsset = asset)}
-            onblur={() => (hoveredAsset = hoveredAsset?.asset_id === asset.asset_id ? null : hoveredAsset)}
-            onclick={() => selectAsset(asset)}
-            onauxclick={(event) => handleAssetAuxClick(event, asset)}
-          >
-            <span class="tile-thumb">
-              {#if asset.thumbnail_url}
-                <img src={asset.thumbnail_url} alt="" loading="lazy" />
-              {:else}
-                <Icon size={28} />
-              {/if}
-              <span class="hover-actions">
-                <span>Preview</span>
+        {#each visibleEntries as entry (entry.kind === 'collection' ? `collection:${entry.collection.collection_key}` : `${entry.collection_key ?? 'asset'}:${entry.asset.asset_id}`)}
+          {#if entry.kind === 'collection'}
+            {@const collection = entry.collection}
+            {@const displayAsset = collection.representative}
+            {@const Icon = assetIcon(displayAsset)}
+            <button
+              class="asset-tile collection-tile"
+              style={`--collection-color: ${collectionColor(collection.collection_key)}`}
+              type="button"
+              onmouseenter={() => startCollectionCycle(collection)}
+              onmouseleave={() => stopCollectionCycle(collection.collection_key)}
+              onfocus={() => startCollectionCycle(collection)}
+              onblur={() => stopCollectionCycle(collection.collection_key)}
+              onclick={() => expandCollection(collection)}
+              ondblclick={() => expandCollection(collection)}
+            >
+              <span class="tile-thumb">
+                {#if displayAsset.thumbnail_url}
+                  <img src={displayAsset.thumbnail_url} alt="" loading="lazy" />
+                {:else}
+                  <Icon size={28} />
+                {/if}
+                <span class="collection-count">{collection.count}</span>
+                <span class="hover-actions">
+                  <span>Expand</span>
+                </span>
               </span>
-            </span>
-            <span class="tile-name">{asset.filename}</span>
-            <span class="tile-meta">{asset.directory || asset.source_display_name}</span>
-          </button>
+              <span class="tile-name">{displayAsset.filename}</span>
+              <span class="tile-meta">{displayAsset.directory || displayAsset.source_display_name}</span>
+            </button>
+          {:else}
+            {@const asset = entry.asset}
+            {@const Icon = assetIcon(asset)}
+            <button
+              class:selected={asset.asset_id === selectedAssetId}
+              class:collection-member={Boolean(entry.collection_key)}
+              class="asset-tile"
+              style={entry.collection_key ? `--collection-color: ${collectionColor(entry.collection_key)}` : ''}
+              type="button"
+              onmouseenter={() => (hoveredAsset = asset)}
+              onmouseleave={() => (hoveredAsset = hoveredAsset?.asset_id === asset.asset_id ? null : hoveredAsset)}
+              onfocus={() => (hoveredAsset = asset)}
+              onblur={() => (hoveredAsset = hoveredAsset?.asset_id === asset.asset_id ? null : hoveredAsset)}
+              onclick={() => selectAsset(asset)}
+              ondblclick={() => entry.collection_key && foldCollection(entry.collection_key)}
+              onauxclick={(event) => handleAssetAuxClick(event, asset)}
+            >
+              <span class="tile-thumb">
+                {#if asset.thumbnail_url}
+                  <img src={asset.thumbnail_url} alt="" loading="lazy" />
+                {:else}
+                  <Icon size={28} />
+                {/if}
+                <span class="hover-actions">
+                  <span>Preview</span>
+                </span>
+              </span>
+              <span class="tile-name">{asset.filename}</span>
+              <span class="tile-meta">{asset.directory || asset.source_display_name}</span>
+            </button>
+          {/if}
         {:else}
           <div class="empty">No assets found</div>
         {/each}
-        {#if assets.length > 0}
+        {#if cards.length > 0}
           <div class="load-more" bind:this={loadMoreTrigger}>
             {#if hasMoreAssets}
               <button type="button" onclick={loadMoreAssets} disabled={loadingMore}>
@@ -575,10 +728,10 @@
         {/if}
       </div>
 
-      {#if hoveredAsset?.thumbnail_url}
+      {#if hoverPreviewAsset?.thumbnail_url}
         <aside class="hover-preview" aria-label="Hovered asset preview">
-          <img src={hoveredAsset.thumbnail_url} alt="" />
-          <span>{hoveredAsset.filename}</span>
+          <img src={hoverPreviewAsset.thumbnail_url} alt="" />
+          <span>{hoverPreviewAsset.filename}</span>
         </aside>
       {/if}
 

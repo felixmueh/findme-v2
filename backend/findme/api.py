@@ -6,7 +6,7 @@ import threading
 import time
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from findme.assets import (
@@ -18,6 +18,7 @@ from findme.assets import (
 )
 from findme.config import AppConfig
 from findme.db import connect, initialize_database
+from findme.result_cards import ResultCardResolver
 from findme.search import (
     DirectoryMatch,
     SearchIndex,
@@ -36,6 +37,9 @@ def create_app(
     with connect(database_path) as db:
         initialize_database(db)
         search_index = SearchIndex.load(db)
+    card_resolver = ResultCardResolver.from_assets(
+        [_search_response(result) for result in search_index.scoped_assets()]
+    )
     search_revisions = _SearchRevisionRegistry()
 
     app = FastAPI(title="Findme V2")
@@ -65,22 +69,17 @@ def create_app(
         limit: int = Query(default=100, ge=1, le=500),
         offset: int = Query(default=0, ge=0),
     ) -> dict[str, object]:
-        with connect(database_path) as db:
-            rows = _fetch_assets(
-                db,
-                source_id=source_id,
-                directory=directory,
-                directory_prefix=directory_prefix,
-                limit=limit,
-                offset=offset,
-            )
-            total = _count_assets(
-                db,
-                source_id=source_id,
-                directory=directory,
-                directory_prefix=directory_prefix,
-            )
-        return {"assets": [_asset_response(row) for row in rows], "total": total}
+        scoped_assets = search_index.scoped_assets(
+            source_id=source_id,
+            directory=directory,
+            directory_prefix=directory_prefix,
+        )
+        cards, total = card_resolver.page_for(
+            [_search_response(result) for result in scoped_assets],
+            offset=offset,
+            limit=limit,
+        )
+        return JSONResponse({"cards": cards, "total": total})
 
     @app.get("/api/directories")
     def list_directories(
@@ -128,16 +127,24 @@ def create_app(
                 directory_prefix=directory_prefix,
                 domain_vocabulary=domain_vocabulary,
                 mode=mode,
-                limit=limit,
-                offset=offset,
+                limit=len(search_index.assets),
+                offset=0,
+                control=control,
+            )
+            scoped_assets = search_index.scoped_assets(
+                source_id=source_id,
+                directory=directory,
+                directory_prefix=directory_prefix,
                 control=control,
             )
         except SearchSuperseded:
             return Response(status_code=204)
-        return {
-            "assets": [_search_response(result) for result in page.assets],
-            "total": page.total,
-        }
+        cards, total = card_resolver.page_for(
+            [_search_response(result) for result in page.assets],
+            offset=offset,
+            limit=limit,
+        )
+        return JSONResponse({"cards": cards, "total": total})
 
     @app.get("/api/assets/{asset_id}")
     def asset_detail(asset_id: str) -> dict[str, object]:
@@ -211,104 +218,6 @@ def _load_asset_or_404(db: sqlite3.Connection, config: AppConfig, asset_id: str)
         raise HTTPException(status_code=404, detail="asset not found") from exc
     except UnsafeAssetPathError as exc:
         raise HTTPException(status_code=500, detail="asset path is outside source root") from exc
-
-
-def _fetch_assets(
-    db: sqlite3.Connection,
-    *,
-    source_id: str | None,
-    directory: str | None,
-    directory_prefix: str | None,
-    limit: int,
-    offset: int,
-) -> list[sqlite3.Row]:
-    where = ["assets.stale = 0"]
-    params: list[object] = []
-    if source_id:
-        where.append("assets.source_id = ?")
-        params.append(source_id)
-    if directory is not None:
-        where.append("assets.directory = ?")
-        params.append(directory)
-    if directory_prefix:
-        where.append("(assets.directory = ? OR assets.directory LIKE ?)")
-        params.extend([directory_prefix, f"{directory_prefix}/%"])
-
-    params.extend([limit, offset])
-    return db.execute(
-        f"""
-        SELECT
-          assets.asset_id,
-          assets.source_id,
-          sources.display_name AS source_display_name,
-          assets.relative_path,
-          assets.filename,
-          assets.stem,
-          assets.extension,
-          assets.directory,
-          assets.size_bytes,
-          assets.media_type,
-          assets.thumbnail_path,
-          assets.thumbnail_width,
-          assets.thumbnail_height
-        FROM assets
-        JOIN sources ON sources.id = assets.source_id
-        WHERE {" AND ".join(where)}
-        ORDER BY sources.priority DESC, assets.relative_path COLLATE NOCASE
-        LIMIT ? OFFSET ?
-        """,
-        params,
-    ).fetchall()
-
-
-def _count_assets(
-    db: sqlite3.Connection,
-    *,
-    source_id: str | None,
-    directory: str | None,
-    directory_prefix: str | None,
-) -> int:
-    where = ["assets.stale = 0"]
-    params: list[object] = []
-    if source_id:
-        where.append("assets.source_id = ?")
-        params.append(source_id)
-    if directory is not None:
-        where.append("assets.directory = ?")
-        params.append(directory)
-    if directory_prefix:
-        where.append("(assets.directory = ? OR assets.directory LIKE ?)")
-        params.extend([directory_prefix, f"{directory_prefix}/%"])
-
-    row = db.execute(
-        f"""
-        SELECT COUNT(*) AS total
-        FROM assets
-        WHERE {" AND ".join(where)}
-        """,
-        params,
-    ).fetchone()
-    return int(row["total"])
-
-
-def _asset_response(row: sqlite3.Row) -> dict[str, object]:
-    response = {
-        "asset_id": row["asset_id"],
-        "source_id": row["source_id"],
-        "source_display_name": row["source_display_name"],
-        "relative_path": row["relative_path"],
-        "filename": row["filename"],
-        "stem": row["stem"],
-        "extension": row["extension"],
-        "directory": row["directory"],
-        "size_bytes": row["size_bytes"],
-        "media_type": row["media_type"],
-    }
-    if row["thumbnail_path"] is not None:
-        response["thumbnail_url"] = f"/api/assets/{row['asset_id']}/thumb"
-        response["thumbnail_width"] = row["thumbnail_width"]
-        response["thumbnail_height"] = row["thumbnail_height"]
-    return response
 
 
 def _directory_response(directory: DirectoryMatch) -> dict[str, object]:

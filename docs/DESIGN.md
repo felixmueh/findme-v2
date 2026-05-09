@@ -266,6 +266,24 @@ offset=100&limit=100
 
 This fits virtualized grids and huge thumbnail sets better than traditional page navigation.
 
+Result ranges are over visible result cards, not necessarily raw assets. Similar
+assets may fold into a single collection card. For v1, collections are detected
+within the same source and directory by stripping a trailing number from the
+filename stem, including glued numbers and parenthesized or bracketed numbers.
+Examples include `Goblin2.png`, `Goblin 03.webp`, `Goblin (4).png`, and
+`Goblin [5].jpg`.
+
+Collections are computed from indexed metadata when the server loads the
+in-memory search data, not persisted as indexer output. This keeps the rule easy
+to replace later with server-side domain rules without rewriting source
+directories or requiring a re-index for rule changes.
+
+Search should group after ranking and before applying API range slicing so a
+collection cannot be split across pages. A collection result includes all known
+variants in that source/directory collection, even when only one variant matched
+the query. The representative is the highest-scored matching variant for search
+and the first naturally sorted variant for browsing.
+
 ## Source Tree And Browsing
 
 The source/directory tree is first-class UI, not decoration.
@@ -309,6 +327,14 @@ Other layouts can be prototyped and reviewed if they preserve the same fast sear
 
 Grid cards should stay visually minimal. For v1, result cards show only the thumbnail image. Filename, source, path, and actions appear in the preview area below the larger preview image.
 
+Folded collection cards should be visually distinct from single-asset cards and
+show a variant count. Hovering a folded collection cycles through its variants
+about every 600 ms in the hover preview, while the grid card itself stays stable;
+it should not select or copy an asset. Clicking a folded collection expands it
+in place. Expanded variants occupy normal grid positions, lose the folded count
+badge, share a collection-colored background treatment, and behave like normal
+asset cards. Double-clicking an expanded variant folds its collection again.
+
 Preview behavior:
 
 - hover updates preview after a short configurable delay
@@ -327,6 +353,8 @@ Expected interaction style:
 - Vim-style movement where applicable
 - arrow keys or Vim keys navigate results
 - Enter copies the default derived path
+- Enter in the search field refreshes results only; it must not auto-select or
+  auto-expand the first result
 - shortcuts for secondary actions can be added for raw path, download, and preview
 
 Mouse interaction should still be efficient, but keyboard flow should be designed from the start.

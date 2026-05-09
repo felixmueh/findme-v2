@@ -231,6 +231,28 @@ class SearchIndex:
             total=len(ranked),
         )
 
+    def scoped_assets(
+        self,
+        *,
+        source_id: str | None = None,
+        directory: str | None = None,
+        directory_prefix: str | None = None,
+        control: SearchControl | None = None,
+    ) -> list[SearchResult]:
+        corpus = _filter_corpus(
+            _SearchCorpus(
+                self.assets,
+                self.fuzzy_tokens,
+                self.fuzzy_token_asset_indexes,
+                self.lexical_index,
+            ),
+            source_id=source_id,
+            directory=directory,
+            directory_prefix=directory_prefix,
+            control=control,
+        )
+        return [_record_to_result(asset, 0) for asset in corpus.assets]
+
     def directory_matches(
         self,
         query: str | None = None,
@@ -1075,6 +1097,7 @@ def _fetch_assets(
         FROM assets
         JOIN sources ON sources.id = assets.source_id
         WHERE {" AND ".join(where)}
+        ORDER BY sources.priority DESC, assets.relative_path COLLATE NOCASE
         """,
         params,
     ).fetchall()
