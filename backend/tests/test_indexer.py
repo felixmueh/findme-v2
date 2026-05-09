@@ -119,7 +119,9 @@ def test_index_sources_skips_unchanged_thumbnail_generation(tmp_path: Path) -> N
         second = index_sources(db, config)
 
     assert first.generated_thumbnails == 1
+    assert first.upserted_assets == 1
     assert second.generated_thumbnails == 0
+    assert second.upserted_assets == 0
 
 
 def test_index_sources_skips_unchanged_video_poster_generation(tmp_path: Path) -> None:
@@ -145,7 +147,9 @@ def test_index_sources_skips_unchanged_video_poster_generation(tmp_path: Path) -
         second = index_sources(db, config, thumbnail_workers=1)
 
     assert first.generated_thumbnails == 1
+    assert first.upserted_assets == 1
     assert second.generated_thumbnails == 0
+    assert second.upserted_assets == 0
 
 
 def test_index_sources_reports_thumbnail_failures_without_aborting(tmp_path: Path) -> None:

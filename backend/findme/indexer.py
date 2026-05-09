@@ -73,6 +73,12 @@ class PreparedAsset:
     pending: PendingAsset
     thumbnail: ThumbnailResult | None
     thumbnail_failure: ThumbnailFailure | None = None
+    upsert_required: bool = True
+
+
+@dataclass(frozen=True)
+class CurrentAsset:
+    thumbnail: ThumbnailResult | None
 
 
 def index_sources(
@@ -107,7 +113,8 @@ def index_sources(
         for prepared in _prepare_assets(db, config, source, max_workers=worker_count):
             seen_paths.add(prepared.pending.relative_path)
             scanned += 1
-            upserted += _upsert_asset(db, prepared)
+            if prepared.upsert_required:
+                upserted += _upsert_asset(db, prepared)
             if prepared.thumbnail is not None and prepared.thumbnail.generated:
                 thumbnails += 1
             if prepared.thumbnail_failure is not None:
@@ -175,9 +182,15 @@ def _prepare_assets(
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         for file_path in _iter_source_files(source):
             pending = _pending_asset(source, file_path)
-            cached = _current_cached_thumbnail(db, pending)
-            if cached is not None:
-                yield PreparedAsset(pending=pending, thumbnail=cached)
+            current = _current_asset(db, pending)
+            if current is not None and (
+                current.thumbnail is not None or not _needs_thumbnail(pending)
+            ):
+                yield PreparedAsset(
+                    pending=pending,
+                    thumbnail=current.thumbnail,
+                    upsert_required=False,
+                )
                 continue
             in_flight.add(executor.submit(_prepare_asset, config, pending))
             if len(in_flight) >= limit:
@@ -238,15 +251,10 @@ def _prepare_asset(config: AppConfig, pending: PendingAsset) -> PreparedAsset:
         )
 
 
-def _current_cached_thumbnail(
+def _current_asset(
     db: sqlite3.Connection,
     pending: PendingAsset,
-) -> ThumbnailResult | None:
-    if (
-        pending.media_type not in {"image", "video"}
-        or pending.file_path.suffix.lower() == ".gif"
-    ):
-        return None
+) -> CurrentAsset | None:
     row = db.execute(
         """
         SELECT thumbnail_path, thumbnail_width, thumbnail_height
@@ -264,17 +272,27 @@ def _current_cached_thumbnail(
             pending.mtime_ns,
         ),
     ).fetchone()
-    if row is None or row["thumbnail_path"] is None:
+    if row is None:
         return None
-    thumbnail_path = Path(row["thumbnail_path"])
-    if not thumbnail_path.is_file():
-        return None
-    return ThumbnailResult(
-        thumbnail_path,
-        row["thumbnail_width"],
-        row["thumbnail_height"],
-        generated=False,
-    )
+    thumbnail = None
+    if row["thumbnail_path"] is not None:
+        thumbnail_path = Path(row["thumbnail_path"])
+        if thumbnail_path.is_file():
+            thumbnail = ThumbnailResult(
+                thumbnail_path,
+                row["thumbnail_width"],
+                row["thumbnail_height"],
+                generated=False,
+            )
+    return CurrentAsset(thumbnail=thumbnail)
+
+
+def _needs_thumbnail(pending: PendingAsset) -> bool:
+    if pending.media_type == "video":
+        return True
+    if pending.media_type == "image" and pending.file_path.suffix.lower() != ".gif":
+        return True
+    return False
 
 
 def _upsert_asset(db: sqlite3.Connection, prepared: PreparedAsset) -> int:
