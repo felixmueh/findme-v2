@@ -82,6 +82,18 @@
   const selectedIndex = $derived(assets.findIndex((asset) => asset.asset_id === selectedAssetId))
   const resultLabel = $derived(`${assets.length} ${assets.length === 1 ? 'asset' : 'assets'}`)
   const visibleDirectories = $derived(directories.filter((directory) => isDirectoryVisible(directory.path)))
+  const visibleDirectoryPaths = $derived.by(() => new Set(visibleDirectories.map((directory) => directory.path)))
+  const directoryPathsWithChildren = $derived.by(() => {
+    const paths = new Set<string>()
+    for (const directory of directories) {
+      if (!directory.path) continue
+      const parentPath = directory.path.includes('/')
+        ? directory.path.slice(0, directory.path.lastIndexOf('/'))
+        : ''
+      paths.add(parentPath)
+    }
+    return paths
+  })
 
   $effect(() => {
     void loadSources()
@@ -231,14 +243,7 @@
   }
 
   function hasChildren(path: string) {
-    const prefix = path ? `${path}/` : ''
-    const childDepth = path ? path.split('/').length + 1 : 1
-    return directories.some(
-      (directory) =>
-        (path === '' || directory.path.startsWith(prefix)) &&
-        directory.path !== path &&
-        directory.depth === childDepth,
-    )
+    return directoryPathsWithChildren.has(path)
   }
 
   function isCollapsed(path: string) {
@@ -388,7 +393,7 @@
         <Folder size={15} />
         <span>All folders</span>
       </button>
-      {#if selectedDirectory && !visibleDirectories.some((directory) => directory.path === selectedDirectory)}
+      {#if selectedDirectory && !visibleDirectoryPaths.has(selectedDirectory)}
         <button class="folder-row active retained" type="button" onclick={() => (selectedDirectory = '')}>
           <span class="folder-spacer"></span>
           <Folder size={15} />
