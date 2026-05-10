@@ -23,7 +23,6 @@ from findme.config import AppConfig
 from findme.db import connect
 from findme.result_cards import ResultCardResolver
 from findme.search import (
-    DirectoryMatch,
     DomainVocabulary,
     SearchIndex,
     SearchMode,
@@ -110,22 +109,6 @@ def create_app(
             or source_id is not None
             or directory is not None
             or directory_prefix is not None
-        )
-
-    def directories_for_browse_scope(
-        *,
-        preferences,
-        source_id: str | None,
-        directory: str | None,
-        directory_prefix: str | None,
-        control: SearchControl | None = None,
-    ) -> list[DirectoryMatch]:
-        return search_index.directories_for_scope(
-            source_id=source_id,
-            directory=directory,
-            directory_prefix=directory_prefix,
-            preferences=preferences,
-            control=control,
         )
 
     def card_page_for_browse_scope(
@@ -349,7 +332,8 @@ def create_app(
         control = search_revisions.control(search_session, search_revision)
         if control and control.is_cancelled():
             return Response(status_code=204)
-        if not _trimmed_query(q):
+        trimmed_query = _trimmed_query(q)
+        if not trimmed_query:
             cards, total = card_page_for_browse_scope(
                 preferences=preferences,
                 source_id=source_id,
@@ -359,11 +343,34 @@ def create_app(
                 limit=limit,
             )
             return JSONResponse({"cards": cards, "total": total})
+        if _uses_numeric_search_path(
+            mode=mode,
+            source_id=source_id,
+            directory=directory,
+            directory_prefix=directory_prefix,
+        ):
+            try:
+                page = search_index.search(
+                    trimmed_query,
+                    preferences=preferences,
+                    mode=mode,
+                    limit=limit,
+                    offset=offset,
+                    control=control,
+                )
+            except SearchSuperseded:
+                return Response(status_code=204)
+            cards, _card_total = card_resolver.page_for(
+                [_search_response(result) for result in page.assets],
+                offset=0,
+                limit=limit,
+            )
+            return JSONResponse({"cards": cards, "total": page.total})
         domain_vocabulary = _load_domain_vocabulary(config)
         try:
             matched_assets = _matched_assets(
                 search_index,
-                q,
+                trimmed_query,
                 source_id=source_id,
                 directory=directory,
                 directory_prefix=directory_prefix,
@@ -402,7 +409,8 @@ def create_app(
         control = search_revisions.control(search_session, search_revision)
         if control and control.is_cancelled():
             return Response(status_code=204)
-        if not _trimmed_query(q):
+        trimmed_query = _trimmed_query(q)
+        if not trimmed_query:
             cards, total = card_page_for_browse_scope(
                 preferences=preferences,
                 source_id=source_id,
@@ -412,11 +420,12 @@ def create_app(
                 limit=limit,
             )
             try:
-                directories = directories_for_browse_scope(
+                directories = search_index.directory_responses_for_scope(
                     preferences=preferences,
                     source_id=source_id,
                     directory=directory,
                     directory_prefix=directory_prefix,
+                    dirty_folder_subtree_keys=dirty_folder_subtree_keys,
                     control=control,
                 )
             except SearchSuperseded:
@@ -425,20 +434,43 @@ def create_app(
                 {
                     "cards": cards,
                     "total": total,
-                    "directories": [
-                        _directory_response(
-                            directory,
-                            dirty_folder_subtree_keys=dirty_folder_subtree_keys,
-                        )
-                        for directory in directories
-                    ],
+                    "directories": directories,
+                }
+            )
+        if _uses_numeric_search_path(
+            mode=mode,
+            source_id=source_id,
+            directory=directory,
+            directory_prefix=directory_prefix,
+        ):
+            try:
+                search_response = search_index.search_with_directory_responses(
+                    trimmed_query,
+                    preferences=preferences,
+                    limit=limit,
+                    offset=offset,
+                    dirty_folder_subtree_keys=dirty_folder_subtree_keys,
+                    control=control,
+                )
+            except SearchSuperseded:
+                return Response(status_code=204)
+            cards, _card_total = card_resolver.page_for(
+                [_search_response(result) for result in search_response.page.assets],
+                offset=0,
+                limit=limit,
+            )
+            return JSONResponse(
+                {
+                    "cards": cards,
+                    "total": search_response.page.total,
+                    "directories": search_response.directories,
                 }
             )
         domain_vocabulary = _load_domain_vocabulary(config)
         try:
             matched_assets = _matched_assets(
                 search_index,
-                q,
+                trimmed_query,
                 source_id=source_id,
                 directory=directory,
                 directory_prefix=directory_prefix,
@@ -455,7 +487,7 @@ def create_app(
             limit=limit,
         )
         try:
-            directories = search_index.directories_for_search(
+            directories = search_index.directory_responses_for_search(
                 _trimmed_query(q),
                 source_id=source_id,
                 directory=directory,
@@ -463,6 +495,7 @@ def create_app(
                 preferences=preferences,
                 domain_vocabulary=domain_vocabulary,
                 mode=mode,
+                dirty_folder_subtree_keys=dirty_folder_subtree_keys,
                 control=control,
             )
         except SearchSuperseded:
@@ -471,13 +504,7 @@ def create_app(
             {
                 "cards": cards,
                 "total": total,
-                "directories": [
-                    _directory_response(
-                        directory,
-                        dirty_folder_subtree_keys=dirty_folder_subtree_keys,
-                    )
-                    for directory in directories
-                ],
+                "directories": directories,
             }
         )
 
@@ -554,6 +581,21 @@ def _trimmed_query(query: str | None) -> str:
     return query.strip() if query is not None else ""
 
 
+def _uses_numeric_search_path(
+    *,
+    mode: SearchMode,
+    source_id: str | None,
+    directory: str | None,
+    directory_prefix: str | None,
+) -> bool:
+    return (
+        mode == "strict"
+        and source_id is None
+        and directory is None
+        and directory_prefix is None
+    )
+
+
 def _matched_assets(
     search_index: SearchIndex,
     query: str | None,
@@ -597,28 +639,6 @@ def _load_asset_or_404(db: sqlite3.Connection, config: AppConfig, asset_id: str)
         raise HTTPException(status_code=404, detail="asset not found") from exc
     except UnsafeAssetPathError as exc:
         raise HTTPException(status_code=500, detail="asset path is outside source root") from exc
-
-
-def _directory_response(
-    directory: DirectoryMatch,
-    *,
-    dirty_folder_subtree_keys: frozenset[tuple[str, str]] = frozenset(),
-) -> dict[str, object]:
-    return {
-        "source_id": directory.source_id,
-        "path": directory.path,
-        "name": directory.name,
-        "depth": directory.depth,
-        "asset_count": directory.asset_count,
-        "matched_asset_count": directory.matched_asset_count,
-        "included_asset_count": directory.included_asset_count,
-        "quality": directory.quality,
-        "quality_override": directory.quality_override,
-        "selection_state": directory.selection_state,
-        "selection_effective": directory.selection_effective,
-        "profile_dirty": (directory.source_id, directory.path)
-        in dirty_folder_subtree_keys,
-    }
 
 
 def _search_response(result: SearchResult) -> dict[str, object]:

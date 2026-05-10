@@ -687,6 +687,60 @@ def test_api_search_with_directory_counts_uses_one_search_scope(
     assert directories[("dnd", "Tokens")]["matched_asset_count"] == 1
 
 
+def test_api_strict_unscoped_query_uses_paged_numeric_path(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source_root = tmp_path / "assets"
+    write_image(source_root / "Maps" / "Goblin Cave.png")
+    write_image(source_root / "Maps" / "Goblin Camp.png")
+    write_image(source_root / "Tokens" / "Goblin.png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+    rebuild_search_corpus(config, db_path)
+
+    def reject_full_materialization(*_args, **_kwargs):
+        raise AssertionError("strict unscoped API should not materialize all matches")
+
+    monkeypatch.setattr("findme.api._matched_assets", reject_full_materialization)
+    client = TestClient(create_app(config, db_path))
+
+    search_body = client.get(
+        "/api/search",
+        params={"q": "goblin", "limit": 1},
+    ).json()
+    directory_body = client.get(
+        "/api/search-with-directory-counts",
+        params={"q": "goblin", "limit": 1},
+    ).json()
+
+    assert search_body["total"] == 3
+    assert len(search_body["cards"]) == 1
+    assert directory_body["total"] == 3
+    assert len(directory_body["cards"]) == 1
+    directories = {
+        (directory["source_id"], directory["path"]): directory
+        for directory in directory_body["directories"]
+    }
+    assert directories[("dnd", "")]["matched_asset_count"] == 3
+    assert directories[("dnd", "Maps")]["matched_asset_count"] == 2
+    assert directories[("dnd", "Tokens")]["matched_asset_count"] == 1
+
+
 def test_api_domain_search_uses_configured_vocabulary(tmp_path: Path) -> None:
     source_root = tmp_path / "assets"
     source_root.mkdir()
@@ -1388,7 +1442,11 @@ def test_api_search_with_directory_counts_rejects_superseded_directory_counts(
     def supersede_directory_counts(*_args, **_kwargs):
         raise SearchSuperseded
 
-    monkeypatch.setattr(SearchIndex, "directories_for_search", supersede_directory_counts)
+    monkeypatch.setattr(
+        SearchIndex,
+        "search_with_directory_responses",
+        supersede_directory_counts,
+    )
 
     response = client.get(
         "/api/search-with-directory-counts",

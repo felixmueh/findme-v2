@@ -2,7 +2,6 @@ from pathlib import Path
 import threading
 import time
 
-import findme.search as search_module
 from findme.config import AppConfig, SourceConfig
 from findme.db import connect, initialize_database
 from findme.indexer import index_sources
@@ -413,14 +412,19 @@ def test_search_index_builds_directories_from_existing_ranked_results(
         search_index = SearchIndex.load(db)
 
     calls = 0
-    original_rank_search_assets = search_module._rank_search_assets
+    assert search_index.lexical_index is not None
+    original_search_with_scores = search_index.lexical_index.search_with_scores
 
-    def count_rank_calls(*args, **kwargs):
+    def count_search_calls(*args, **kwargs):
         nonlocal calls
         calls += 1
-        return original_rank_search_assets(*args, **kwargs)
+        return original_search_with_scores(*args, **kwargs)
 
-    monkeypatch.setattr(search_module, "_rank_search_assets", count_rank_calls)
+    monkeypatch.setattr(
+        search_index.lexical_index,
+        "search_with_scores",
+        count_search_calls,
+    )
 
     page = search_index.search("goblin")
     directories = search_index.directories_for_matches(page.assets)
@@ -446,15 +450,16 @@ def test_search_index_coalesces_concurrent_identical_queries(
         search_index = SearchIndex.load(db)
 
     calls = 0
-    original_rank_search_assets = search_module._rank_search_assets
+    assert search_index.lexical_index is not None
+    original_search_with_scores = search_index.lexical_index.search_with_scores
 
-    def slow_rank_search(*args, **kwargs):
+    def slow_search(*args, **kwargs):
         nonlocal calls
         calls += 1
         time.sleep(0.1)
-        return original_rank_search_assets(*args, **kwargs)
+        return original_search_with_scores(*args, **kwargs)
 
-    monkeypatch.setattr(search_module, "_rank_search_assets", slow_rank_search)
+    monkeypatch.setattr(search_index.lexical_index, "search_with_scores", slow_search)
 
     barrier = threading.Barrier(2)
     errors = []
@@ -499,17 +504,18 @@ def test_search_index_retries_after_cancelled_in_flight_query(
     calls = 0
     release_owner = threading.Event()
     owner_started = threading.Event()
-    original_rank_search_assets = search_module._rank_search_assets
+    assert search_index.lexical_index is not None
+    original_search_with_scores = search_index.lexical_index.search_with_scores
 
-    def controlled_rank_search(*args, **kwargs):
+    def controlled_search(*args, **kwargs):
         nonlocal calls
         calls += 1
         if calls == 1:
             owner_started.set()
             release_owner.wait(timeout=1)
-        return original_rank_search_assets(*args, **kwargs)
+        return original_search_with_scores(*args, **kwargs)
 
-    monkeypatch.setattr(search_module, "_rank_search_assets", controlled_rank_search)
+    monkeypatch.setattr(search_index.lexical_index, "search_with_scores", controlled_search)
 
     first_cancelled = False
     first_control = SearchControl(lambda: first_cancelled, check_every=1)
