@@ -14,6 +14,27 @@ const sampleAsset = {
   thumbnail_url: '',
 }
 
+function actionsFor(asset: typeof sampleAsset, absolutePath: string) {
+  const fileUrl = `/api/assets/${asset.asset_id}/file`
+  return {
+    open: { id: 'open', label: 'Open', url: fileUrl },
+    copy: { id: 'copy', label: 'Copy', url: fileUrl, enabled: true },
+    copy_thumbnail: {
+      id: 'copy_thumbnail',
+      label: 'Copy Thumbnail',
+      url: `/api/assets/${asset.asset_id}/thumb?v=1-1`,
+      enabled: true,
+    },
+    download: { id: 'download', label: 'Download', url: `${fileUrl}?download=1` },
+    copy_path: { id: 'copy_path', label: 'Copy path', value: absolutePath },
+    copy_foundryvtt_path: {
+      id: 'copy_foundryvtt_path',
+      label: 'Copy FoundryVTT path',
+      value: `library/Sample Assets/${asset.relative_path}`,
+    },
+  }
+}
+
 function sampleDirectory(quality = 4, qualityOverride: number | null = null) {
   return {
     source_id: 'sample',
@@ -63,14 +84,7 @@ test.beforeEach(async ({ page }) => {
     await route.fulfill({
       json: {
         asset: sampleAsset,
-        actions: {
-          primary: { id: 'foundry', label: 'FoundryVTT', value: 'worlds/assets/maps/castle.png' },
-          profiles: [],
-          source_relative: sampleAsset.relative_path,
-          absolute_path: '/tmp/sample-assets/maps/castle.png',
-          open_url: '/api/assets/asset-castle/file',
-          download_url: '/api/assets/asset-castle/download',
-        },
+        actions: actionsFor(sampleAsset, '/tmp/sample-assets/maps/castle.png'),
       },
     })
   })
@@ -461,14 +475,7 @@ test('selecting an asset unfolds and scrolls to its folder path without refoldin
     await route.fulfill({
       json: {
         asset: farAsset,
-        actions: {
-          primary: { id: 'foundry', label: 'FoundryVTT', value: 'worlds/assets/folder-32/deep/obelisk.png' },
-          profiles: [],
-          source_relative: farAsset.relative_path,
-          absolute_path: '/tmp/sample-assets/folder-32/deep/obelisk.png',
-          open_url: '/api/assets/asset-obelisk/file',
-          download_url: '/api/assets/asset-obelisk/download',
-        },
+        actions: actionsFor(farAsset, '/tmp/sample-assets/folder-32/deep/obelisk.png'),
       },
     })
   })
@@ -505,7 +512,7 @@ test('selecting an asset unfolds and scrolls to its folder path without refoldin
   await expect(page.getByRole('group', { name: 'hidden folder' })).toBeVisible()
 })
 
-test('copies the selected asset primary path', async ({ page }) => {
+test('copies the selected asset FoundryVTT path', async ({ page }) => {
   await page.addInitScript(() => {
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
@@ -525,12 +532,12 @@ test('copies the selected asset primary path', async ({ page }) => {
   await expect(page.getByRole('group', { name: 'maps folder' })).toHaveClass(/selected-folder/)
   await expect(page.getByRole('note', { name: 'Current selection path' })).toHaveText('castle.png')
 
-  await page.getByRole('button', { name: 'Copy' }).click()
+  await page.getByRole('button', { name: 'Copy FoundryVTT path' }).click()
 
   await expect(page.getByRole('button', { name: 'Copied' })).toBeVisible()
   await expect
     .poll(() => page.evaluate(() => (window as unknown as { __copiedText?: string }).__copiedText))
-    .toBe('worlds/assets/maps/castle.png')
+    .toBe('library/Sample Assets/maps/castle.png')
 })
 
 test('updates folder quality through the picker and refreshes ranked search results', async ({ page }) => {

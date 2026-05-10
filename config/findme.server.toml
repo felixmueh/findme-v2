@@ -15,7 +15,7 @@ primary_output = "foundry"
 [[sources.output_profiles]]
 id = "foundry"
 label = "Foundry"
-prefix = "assets/dnd/Tokens"
+prefix = "library/Tokens"
 
 [[sources]]
 id = "maps"
@@ -28,7 +28,7 @@ primary_output = "foundry"
 [[sources.output_profiles]]
 id = "foundry"
 label = "Foundry"
-prefix = "assets/dnd/Maps"
+prefix = "library/Maps"
 
 [[sources]]
 id = "mapmaking"
@@ -41,7 +41,7 @@ primary_output = "foundry"
 [[sources.output_profiles]]
 id = "foundry"
 label = "Foundry"
-prefix = "assets/dnd/MapMaking"
+prefix = "library/MapMaking"
 
 [[sources]]
 id = "music"
@@ -54,7 +54,7 @@ primary_output = "foundry"
 [[sources.output_profiles]]
 id = "foundry"
 label = "Foundry"
-prefix = "assets/dnd/Music"
+prefix = "library/Music"
 
 [[sources]]
 id = "sounds"
@@ -67,7 +67,7 @@ primary_output = "foundry"
 [[sources.output_profiles]]
 id = "foundry"
 label = "Foundry"
-prefix = "assets/dnd/Sounds"
+prefix = "library/Sounds"
 
 [[sources]]
 id = "curseofstrahd"
@@ -94,4 +94,4 @@ primary_output = "foundry"
 [[sources.output_profiles]]
 id = "foundry"
 label = "Foundry"
-prefix = "assets/dnd/Adventures/CurseOfStrahd"
+prefix = "library/Adventures/CurseOfStrahd"

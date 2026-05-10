@@ -39,7 +39,20 @@
 
   type FilterRuleState = 'whitelist' | 'blacklist'
 
-  type ActionProfile = {
+  type UrlAction = {
+    id: string
+    label: string
+    url: string
+  }
+
+  type ClipboardUrlAction = {
+    id: string
+    label: string
+    enabled: boolean
+    url: string | null
+  }
+
+  type ValueAction = {
     id: string
     label: string
     value: string
@@ -48,12 +61,12 @@
   type AssetDetail = {
     asset: Asset
     actions: {
-      primary: ActionProfile
-      profiles: ActionProfile[]
-      source_relative: string
-      absolute_path: string
-      open_url: string
-      download_url: string
+      open: UrlAction
+      copy: ClipboardUrlAction
+      copy_thumbnail: ClipboardUrlAction
+      download: UrlAction
+      copy_path: ValueAction
+      copy_foundryvtt_path: ValueAction
     }
   }
 
@@ -325,12 +338,38 @@
     revealSelectedAssetDirectory(detail.asset)
   }
 
-  async function copyPrimary() {
+  async function copyFoundryVttPath() {
     if (!selected) return
-    await navigator.clipboard.writeText(selected.actions.primary.value)
-    copied = selected.asset.asset_id
+    await copyValueAction(selected.actions.copy_foundryvtt_path)
+  }
+
+  async function copyValueAction(action: ValueAction) {
+    await navigator.clipboard.writeText(action.value)
+    markCopied(action.id)
+  }
+
+  async function copyUrlAction(action: ClipboardUrlAction) {
+    if (!action.enabled || !action.url) return
+    if (!navigator.clipboard?.write || typeof ClipboardItem === 'undefined') {
+      error = 'Image clipboard is not available'
+      return
+    }
+    try {
+      const response = await fetch(action.url)
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const blob = await response.blob()
+      const type = blob.type || 'image/png'
+      await navigator.clipboard.write([new ClipboardItem({ [type]: blob })])
+      markCopied(action.id)
+    } catch {
+      error = 'Could not copy image'
+    }
+  }
+
+  function markCopied(actionId: string) {
+    copied = actionId
     window.setTimeout(() => {
-      copied = ''
+      if (copied === actionId) copied = ''
     }, 1200)
   }
 
@@ -418,7 +457,7 @@
       chooseGridRelative('up')
     } else if (event.key === 'Enter' && selected) {
       event.preventDefault()
-      void copyPrimary()
+      void copyFoundryVttPath()
     }
   }
 
@@ -901,13 +940,14 @@
 
       {#if selected}
         {@const SelectedIcon = assetIcon(selected.asset)}
+        {@const actions = selected.actions}
         <aside class="asset-panel" aria-label="Selected asset">
           <div class="preview">
             {#if selected.asset.media_type === 'image'}
-              <img src={selected.actions.open_url} alt={selected.asset.filename} />
+              <img src={actions.open.url} alt={selected.asset.filename} />
             {:else if selected.asset.media_type === 'video'}
               <!-- svelte-ignore a11y_media_has_caption -->
-              <video src={selected.actions.open_url} controls preload="metadata" autoplay muted loop playsinline></video>
+              <video src={actions.open.url} controls preload="metadata" autoplay muted loop playsinline></video>
             {:else}
               <div class="file-preview">
                 <SelectedIcon size={30} />
@@ -922,18 +962,52 @@
           </div>
 
           <div class="commands">
-            <button type="button" class="copy-button" onclick={copyPrimary} title="Copy primary path">
-              <Copy size={16} />
-              <span>{copied === selected.asset.asset_id ? 'Copied' : 'Copy'}</span>
-            </button>
-            <a href={selected.actions.open_url} target="_blank" rel="noreferrer" title="Open original">
+            <a href={actions.open.url} target="_blank" rel="noreferrer" title="Open original">
               <ExternalLink size={16} />
               <span>Open</span>
             </a>
-            <a href={selected.actions.download_url} title="Download original">
+            <button
+              type="button"
+              class="copy-button"
+              onclick={() => copyUrlAction(actions.copy)}
+              disabled={!actions.copy.enabled}
+              title="Copy original image"
+            >
+              <Copy size={16} />
+              <span>{copied === actions.copy.id ? 'Copied' : 'Copy'}</span>
+            </button>
+            <button
+              type="button"
+              class="copy-button"
+              onclick={() => copyUrlAction(actions.copy_thumbnail)}
+              disabled={!actions.copy_thumbnail.enabled}
+              title="Copy thumbnail image"
+            >
+              <ImageIcon size={16} />
+              <span>{copied === actions.copy_thumbnail.id ? 'Copied' : 'Copy Thumbnail'}</span>
+            </button>
+            <a href={actions.download.url} title="Download original">
               <Download size={16} />
               <span>Download</span>
             </a>
+            <button
+              type="button"
+              class="copy-button"
+              onclick={() => copyValueAction(actions.copy_path)}
+              title="Copy absolute path"
+            >
+              <Copy size={16} />
+              <span>{copied === actions.copy_path.id ? 'Copied' : 'Copy path'}</span>
+            </button>
+            <button
+              type="button"
+              class="copy-button"
+              onclick={() => copyValueAction(actions.copy_foundryvtt_path)}
+              title="Copy FoundryVTT path"
+            >
+              <Copy size={16} />
+              <span>{copied === actions.copy_foundryvtt_path.id ? 'Copied' : 'Copy FoundryVTT path'}</span>
+            </button>
           </div>
         </aside>
       {/if}

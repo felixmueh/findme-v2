@@ -16,4 +16,4 @@ primary_output = "foundry"
 [[sources.output_profiles]]
 id = "foundry"
 label = "Foundry"
-prefix = "assets/dnd"
+prefix = "library/DND"

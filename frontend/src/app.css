@@ -448,6 +448,15 @@ a:focus-visible {
   background: var(--accent-hover);
 }
 
+.commands button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.commands .copy-button:disabled:hover {
+  background: var(--accent);
+}
+
 .panel-title {
   height: 38px;
   display: flex;

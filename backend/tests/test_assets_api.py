@@ -26,7 +26,7 @@ def test_asset_detail_includes_derived_actions_and_serves_file(tmp_path: Path) -
                 media_extensions=frozenset({".png"}),
                 primary_output="foundry",
                 output_profiles=(
-                    OutputProfile(id="foundry", label="Foundry", prefix="assets/dnd"),
+                    OutputProfile(id="foundry", label="FoundryVTT", prefix="library/Tokens"),
                 ),
             ),
         ),
@@ -44,16 +44,41 @@ def test_asset_detail_includes_derived_actions_and_serves_file(tmp_path: Path) -
 
     assert detail["asset"]["relative_path"] == "Goblin Warrior.png"
     assert detail["asset"]["thumbnail_url"] == thumbnail_url
-    assert detail["actions"]["primary"]["value"] == "assets/dnd/Goblin Warrior.png"
-    assert detail["actions"]["profiles"] == [
-        {
-            "id": "foundry",
-            "label": "Foundry",
-            "value": "assets/dnd/Goblin Warrior.png",
-        }
-    ]
-    assert detail["actions"]["download_url"] == f"/api/assets/{asset_id}/file?download=1"
-    assert client.get(detail["actions"]["open_url"]).content == asset_path.read_bytes()
+    assert detail["actions"] == {
+        "open": {
+            "id": "open",
+            "label": "Open",
+            "url": f"/api/assets/{asset_id}/file",
+        },
+        "copy": {
+            "id": "copy",
+            "label": "Copy",
+            "url": f"/api/assets/{asset_id}/file",
+            "enabled": True,
+        },
+        "copy_thumbnail": {
+            "id": "copy_thumbnail",
+            "label": "Copy Thumbnail",
+            "url": thumbnail_url,
+            "enabled": True,
+        },
+        "download": {
+            "id": "download",
+            "label": "Download",
+            "url": f"/api/assets/{asset_id}/file?download=1",
+        },
+        "copy_path": {
+            "id": "copy_path",
+            "label": "Copy path",
+            "value": str(asset_path.resolve()),
+        },
+        "copy_foundryvtt_path": {
+            "id": "copy_foundryvtt_path",
+            "label": "Copy FoundryVTT path",
+            "value": "library/Tokens/Goblin Warrior.png",
+        },
+    }
+    assert client.get(detail["actions"]["open"]["url"]).content == asset_path.read_bytes()
     thumbnail_response = client.get(detail["asset"]["thumbnail_url"])
     assert thumbnail_response.status_code == 200
     assert thumbnail_response.headers["content-type"] == "image/webp"

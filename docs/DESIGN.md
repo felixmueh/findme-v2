@@ -88,16 +88,18 @@ Each source should conceptually define:
 - priority
 - enabled media types
 - indexing/thumbnail settings
-- derived actions or output profiles
+- derived actions and output profiles
 
 Path transformations should be source-owned with named output profiles. A global default can exist, but source-specific rules should win.
 
-Example profiles might include:
+Example actions include:
 
-- raw/source-relative path
-- FoundryVTT path
-- download URL
-- open/preview URL
+- open original in a new tab
+- copy the original image to the clipboard when the browser supports it
+- copy the generated thumbnail to the clipboard
+- download the original file
+- copy the absolute filesystem path
+- copy the FoundryVTT path
 
 ## Derived Resources And Actions
 
@@ -113,9 +115,12 @@ An action can produce:
 
 Derived actions are computed from the indexed asset plus current source configuration. They should not require re-indexing when changed.
 
+FoundryVTT paths are configured per source using output profiles. On the server, the Foundry `Data/library` directory contains symlinks into `/media/NAS/main/Documents/DND`, so copied Foundry paths are relative to `Data` and start with `library/...`.
+
 V1 interaction model:
 
-- default click or Enter copies the primary derived path
+- click selects the asset
+- Enter copies the configured FoundryVTT path for the selected asset
 - secondary actions live in a compact per-result menu or details panel
 - v1 focuses on single-asset actions, not bulk actions
 
@@ -360,7 +365,7 @@ Preview behavior:
 
 - hover updates preview after a short configurable delay
 - keyboard focus updates preview immediately
-- click or Enter copies the primary derived path and pins/updates the preview
+- click pins/updates the preview and Enter copies the configured FoundryVTT path
 - moving hover away returns to the pinned preview when there is one
 - no modal is used for the primary browsing flow
 
