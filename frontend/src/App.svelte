@@ -26,6 +26,8 @@
     depth: number
     asset_count: number
     matched_asset_count: number
+    quality: number
+    quality_override: number | null
   }
 
   type Asset = {
@@ -97,6 +99,8 @@
   let selected = $state<AssetDetail | null>(null)
   let hoveredAsset = $state<Asset | null>(null)
   let hoveredCollection = $state<CollectionCard | null>(null)
+  let qualityTargetKey = $state('')
+  let qualityHoverKey = $state('')
   let cyclingCollectionKey = $state('')
   let cyclingVariantIndex = $state(0)
   let loading = $state(false)
@@ -135,6 +139,12 @@
   const visibleDirectories = $derived(directories.filter((directory) => isDirectoryVisible(directory)))
   const visibleDirectoryKeys = $derived.by(
     () => new Set(visibleDirectories.map((directory) => directoryKey(directory)))
+  )
+  const qualityTargetDirectory = $derived.by(
+    () =>
+      directories.find(
+        (directory) => directoryKey(directory) === (qualityHoverKey || qualityTargetKey)
+      ) ?? null
   )
   const directoryPathsWithChildren = $derived.by(() => {
     const paths = new Set<string>()
@@ -399,8 +409,10 @@
     if (event.key === 'Escape') {
       event.preventDefault()
       selected = null
+      qualityTargetKey = ''
       return
     }
+    if (handleFolderQualityShortcut(event)) return
     if (isTyping) return
     if (event.key === 'ArrowRight' || event.key === 'l') {
       event.preventDefault()
@@ -492,6 +504,65 @@
       next.add(key)
     }
     collapsedDirectories = next
+  }
+
+  async function setFolderQuality(directory: DirectoryNode, quality: number) {
+    const nextQuality = Math.max(0, Math.min(10, quality))
+    if (nextQuality === directory.quality && directory.quality_override === null) return
+    const response = await fetch('/api/folder-quality', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        source_id: directory.source_id,
+        directory: directory.path,
+        quality: nextQuality,
+      }),
+    })
+    if (!response.ok) {
+      error = 'Could not update folder quality'
+      return
+    }
+    const revision = ++searchRevision
+    await loadDirectories(revision)
+    await loadAssetPage({ offset: 0, append: false, revision })
+  }
+
+  function changeFolderQuality(event: MouseEvent, directory: DirectoryNode, quality: number) {
+    event.stopPropagation()
+    void setFolderQuality(directory, quality)
+    qualityTargetKey = ''
+  }
+
+  function handleFolderQualityShortcut(event: KeyboardEvent) {
+    const directory = qualityTargetDirectory
+    if (!directory) return false
+    let quality: number | null = null
+    if (event.key === '+' || event.key === '=') {
+      quality = directory.quality + 1
+    } else if (event.key === '-') {
+      quality = directory.quality - 1
+    } else if (/^\d$/.test(event.key)) {
+      quality = Number(event.key)
+    }
+    if (quality === null) return false
+    event.preventDefault()
+    void setFolderQuality(directory, quality)
+    return true
+  }
+
+  function setQualityHover(directory: DirectoryNode) {
+    qualityHoverKey = directoryKey(directory)
+  }
+
+  function clearQualityHover(directory: DirectoryNode) {
+    const key = directoryKey(directory)
+    if (qualityHoverKey === key) qualityHoverKey = ''
+  }
+
+  function toggleQualityPicker(event: MouseEvent, directory: DirectoryNode) {
+    event.stopPropagation()
+    const key = directoryKey(directory)
+    qualityTargetKey = qualityTargetKey === key ? '' : key
   }
 
   function clearDirectory() {
@@ -796,22 +867,26 @@
       {/if}
       {#each visibleDirectories as directory (directoryKey(directory))}
         {@const children = hasChildren(directory)}
-        <button
+        <div
           class:active={isDirectorySelected(directory)}
           class:collapsed={children && isCollapsed(directory)}
           class:leaf={!children}
           class="folder-row"
+          role="group"
+          aria-label={`${directory.name} folder`}
           style={`--depth: ${directory.depth}`}
-          type="button"
-          onclick={(event) => handleDirectoryClick(event, directory)}
+          onmouseenter={() => setQualityHover(directory)}
+          onmouseleave={() => clearQualityHover(directory)}
         >
-          {#if children}
-            <ChevronRight class="folder-chevron" size={14} />
-          {:else}
-            <span class="folder-spacer"></span>
-          {/if}
-          <Folder size={15} />
-          <span>{directory.name}</span>
+          <button class="folder-main" type="button" onclick={(event) => handleDirectoryClick(event, directory)}>
+            {#if children}
+              <ChevronRight class="folder-chevron" size={14} />
+            {:else}
+              <span class="folder-spacer"></span>
+            {/if}
+            <Folder size={15} />
+            <span>{directory.name}</span>
+          </button>
           <em>
             {#if directory.matched_asset_count !== directory.asset_count}
               <b>{directory.matched_asset_count}</b>/{directory.asset_count}
@@ -819,7 +894,39 @@
               {directory.asset_count}
             {/if}
           </em>
-        </button>
+          <span
+            class="quality-control"
+            role="group"
+            tabindex="-1"
+            aria-label={`Quality controls for ${directory.name}`}
+          >
+            <button
+              class:override={directory.quality_override !== null}
+              type="button"
+              aria-label={`Quality ${directory.quality} for ${directory.name}`}
+              aria-expanded={qualityTargetKey === directoryKey(directory)}
+              onfocus={() => setQualityHover(directory)}
+              onclick={(event) => toggleQualityPicker(event, directory)}
+            >
+              {directory.quality}
+            </button>
+            {#if qualityTargetKey === directoryKey(directory)}
+              <span class="quality-popover" role="listbox" aria-label={`Set quality for ${directory.name}`}>
+                {#each Array.from({ length: 11 }, (_, quality) => quality) as quality}
+                  <button
+                    class:active={quality === directory.quality}
+                    type="button"
+                    role="option"
+                    aria-selected={quality === directory.quality}
+                    onclick={(event) => changeFolderQuality(event, directory, quality)}
+                  >
+                    {quality}
+                  </button>
+                {/each}
+              </span>
+            {/if}
+          </span>
+        </div>
       {/each}
     </aside>
   </section>

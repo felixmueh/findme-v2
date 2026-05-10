@@ -459,7 +459,7 @@ a:focus-visible {
   width: 100%;
   min-height: 30px;
   display: grid;
-  grid-template-columns: 14px 16px minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 6px;
   align-items: center;
   padding: 0 9px 0 calc(9px + var(--depth, 0) * 14px);
@@ -468,8 +468,31 @@ a:focus-visible {
   text-align: left;
 }
 
+button.folder-row {
+  grid-template-columns: 14px minmax(0, 1fr);
+}
+
+button.folder-row.retained {
+  grid-template-columns: 14px 16px minmax(0, 1fr) auto;
+}
+
+.folder-main {
+  min-width: 0;
+  min-height: 30px;
+  display: grid;
+  grid-template-columns: 14px 16px minmax(0, 1fr);
+  gap: 6px;
+  align-items: center;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
 .folder-row:hover,
-.folder-row.active {
+.folder-row.active,
+.folder-row:hover .folder-main,
+.folder-row.active .folder-main {
   background: var(--surface-alt);
 }
 
@@ -481,11 +504,12 @@ a:focus-visible {
   border-bottom: 1px solid var(--border);
 }
 
-.folder-row svg {
+.folder-row svg,
+.folder-main svg {
   color: var(--muted);
 }
 
-.folder-row .folder-chevron {
+.folder-main .folder-chevron {
   color: var(--faint);
   transform: rotate(90deg);
 }
@@ -498,7 +522,8 @@ a:focus-visible {
   width: 14px;
 }
 
-.folder-row span {
+.folder-row > span:not(.quality-control),
+.folder-main > span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -515,6 +540,68 @@ a:focus-visible {
 .folder-row em b {
   color: var(--danger);
   font-weight: 700;
+}
+
+.quality-control {
+  position: relative;
+  display: flex;
+  align-items: center;
+  overflow: visible;
+}
+
+.quality-control > button {
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--faint);
+  font-size: 11px;
+  text-align: center;
+}
+
+.quality-control > button:hover,
+.quality-control > button:focus-visible {
+  color: var(--text);
+  background: var(--surface-alt);
+}
+
+.quality-control > button.override {
+  color: var(--accent-hover);
+  border-color: var(--accent);
+  font-weight: 650;
+}
+
+.quality-popover {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 4px);
+  z-index: 20;
+  display: grid;
+  grid-template-columns: repeat(11, 22px);
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 16%);
+}
+
+.quality-popover button {
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  text-align: center;
+}
+
+.quality-popover button:hover,
+.quality-popover button.active {
+  color: var(--text);
+  background: var(--surface-alt);
 }
 
 .empty {

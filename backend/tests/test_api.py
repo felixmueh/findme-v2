@@ -108,6 +108,79 @@ def test_api_lists_numbered_variants_as_collection_cards(tmp_path: Path) -> None
     assert asset_paths == ["Portraits/Goblin4.png", "Tokens/Orc.png"]
 
 
+def test_api_updates_folder_quality_and_applies_it_to_current_ranking(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "assets"
+    write_image(source_root / "Bad" / "Goblin.png")
+    write_image(source_root / "Good" / "Goblin.png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+
+    client = TestClient(create_app(config, db_path))
+
+    before = client.get("/api/search", params={"q": "goblin"}).json()
+    assert [
+        _card_asset(card)["relative_path"] for card in before["cards"]
+    ] == [
+        "Bad/Goblin.png",
+        "Good/Goblin.png",
+    ]
+
+    response = client.put(
+        "/api/folder-quality",
+        json={"source_id": "dnd", "directory": "Good", "quality": 10},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "source_id": "dnd",
+        "directory": "Good",
+        "quality": 10,
+        "quality_override": 10,
+    }
+    after = client.get("/api/search", params={"q": "goblin"}).json()
+    strict_after = client.get(
+        "/api/search", params={"q": "goblin", "mode": "strict"}
+    ).json()
+
+    assert [
+        _card_asset(card)["relative_path"] for card in after["cards"]
+    ] == [
+        "Good/Goblin.png",
+        "Bad/Goblin.png",
+    ]
+    assert [
+        _card_asset(card)["relative_path"] for card in strict_after["cards"]
+    ] == [
+        "Good/Goblin.png",
+        "Bad/Goblin.png",
+    ]
+
+    persisted_client = TestClient(create_app(config, db_path))
+    directories = persisted_client.get(
+        "/api/directories", params={"source_id": "dnd"}
+    ).json()["directories"]
+
+    assert next(directory for directory in directories if directory["path"] == "Good")[
+        "quality"
+    ] == 10
+
+
 def test_api_groups_numbered_variants_with_accidental_embedded_image_extension(
     tmp_path: Path,
 ) -> None:

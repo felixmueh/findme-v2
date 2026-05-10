@@ -222,6 +222,7 @@ Potential ranking inputs:
 
 - text match score
 - source priority
+- user-defined source/directory quality
 - selected source/directory filters
 - media type
 - recency
@@ -303,6 +304,14 @@ It should:
 - show asset counts per source/directory
 - act as a hard filter for search and browse
 - never perform live filesystem walking from the UI
+- expose a persistent user-defined quality label from 0 to 10 for each indexed
+  source/directory
+
+Directory quality is user-edited runtime preference data and lives in the app
+database, not in source folders or server config. It is a ranking signal, not a
+hard filter. Changing quality should update the live search index preferences,
+clear ranked result caches, and make the current query/browse ordering change
+without re-indexing or restarting the app.
 
 Selecting a source or directory with no text query should show assets under that subtree. Global empty-query behavior can be more conservative, such as showing nothing, recent assets, or preferred assets.
 

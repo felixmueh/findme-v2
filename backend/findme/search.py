@@ -15,6 +15,8 @@ import yaml
 
 
 SearchMode = Literal["strict", "fuzzy", "domain", "combined"]
+DEFAULT_FOLDER_QUALITY = 5
+FOLDER_QUALITY_WEIGHT = 20.0
 
 
 @dataclass(frozen=True)
@@ -50,6 +52,8 @@ class DirectoryMatch:
     depth: int
     asset_count: int
     matched_asset_count: int
+    quality: int
+    quality_override: int | None
 
 
 class SearchSuperseded(RuntimeError):
@@ -73,6 +77,7 @@ class DomainVocabulary:
 
 @dataclass(frozen=True)
 class _AssetRecord:
+    asset_index: int
     asset_id: str
     source_id: str
     source_display_name: str
@@ -150,6 +155,10 @@ class SearchIndex:
     assets: tuple[_AssetRecord, ...]
     directory_counts: dict[tuple[str, str], int]
     source_display_names: dict[str, str]
+    source_sort_keys: dict[str, tuple[int, str, str]]
+    folder_quality_overrides: dict[tuple[str, str], int] = field(default_factory=dict)
+    preference_adjustments: tuple[float, ...] = ()
+    preferences_revision: int = 0
     fuzzy_tokens: tuple[str, ...] = ()
     fuzzy_token_asset_indexes: tuple[tuple[int, ...], ...] = ()
     lexical_index: "_TantivyLexicalIndex | None" = None
@@ -168,6 +177,7 @@ class SearchIndex:
             directory=None,
             directory_prefix=None,
         )
+        folder_quality_overrides = _fetch_folder_quality_overrides(db)
         corpus = _SearchCorpus.from_assets(assets)
         return cls(
             assets=assets,
@@ -177,6 +187,19 @@ class SearchIndex:
             source_display_names={
                 asset.source_id: asset.source_display_name for asset in assets
             },
+            source_sort_keys={
+                asset.source_id: (
+                    -asset.source_priority,
+                    asset.source_display_name.casefold(),
+                    asset.source_id,
+                )
+                for asset in assets
+            },
+            folder_quality_overrides=folder_quality_overrides,
+            preference_adjustments=_preference_adjustments(
+                assets,
+                folder_quality_overrides,
+            ),
             fuzzy_tokens=corpus.fuzzy_tokens,
             fuzzy_token_asset_indexes=corpus.fuzzy_token_asset_indexes,
             lexical_index=corpus.lexical_index,
@@ -214,6 +237,7 @@ class SearchIndex:
                 query,
                 limit=limit,
                 offset=offset,
+                preference_adjustment=self._preference_adjustment,
                 control=control,
             )
         ranked = self._ranked_search(
@@ -254,6 +278,46 @@ class SearchIndex:
             control=control,
         )
         return [_record_to_result(asset, 0) for asset in corpus.assets]
+
+    def set_folder_quality(self, source_id: str, directory: str, quality: int) -> None:
+        if quality < 0 or quality > 10:
+            raise ValueError("folder quality must be between 0 and 10")
+        if (source_id, directory) not in self.directory_counts:
+            raise KeyError((source_id, directory))
+        next_overrides = dict(self.folder_quality_overrides)
+        if quality == DEFAULT_FOLDER_QUALITY:
+            next_overrides.pop((source_id, directory), None)
+        else:
+            next_overrides[(source_id, directory)] = quality
+        self._replace_folder_quality_overrides(next_overrides)
+
+    def folder_quality(self, source_id: str, directory: str) -> tuple[int, int | None]:
+        override = self.folder_quality_overrides.get((source_id, directory))
+        return (
+            _effective_folder_quality(
+                self.folder_quality_overrides,
+                source_id,
+                directory,
+            ),
+            override,
+        )
+
+    def _replace_folder_quality_overrides(
+        self,
+        folder_quality_overrides: dict[tuple[str, str], int],
+    ) -> None:
+        preference_adjustments = _preference_adjustments(
+            self.assets,
+            folder_quality_overrides,
+        )
+        with self._cache_lock:
+            self.folder_quality_overrides = folder_quality_overrides
+            self.preference_adjustments = preference_adjustments
+            self.preferences_revision += 1
+            self._ranked_cache.clear()
+
+    def _preference_adjustment(self, asset: _AssetRecord) -> float:
+        return self.preference_adjustments[asset.asset_index]
 
     def directory_matches(
         self,
@@ -307,6 +371,7 @@ class SearchIndex:
                 continue
             name = self.source_display_names.get(source, source) if path == "" else path.rsplit("/", 1)[-1]
             depth = 0 if path == "" else len(path.split("/"))
+            quality, quality_override = self.folder_quality(source, path)
             directories.append(
                 DirectoryMatch(
                     source_id=source,
@@ -315,12 +380,21 @@ class SearchIndex:
                     depth=depth,
                     asset_count=total_count,
                     matched_asset_count=matched_count,
+                    quality=quality,
+                    quality_override=quality_override,
                 )
             )
         return sorted(
             directories,
-            key=lambda item: (item.path.lower() != "", item.path.lower()),
+            key=self._directory_sort_key,
         )
+
+    def _directory_sort_key(self, directory: DirectoryMatch) -> tuple[object, ...]:
+        source_key = self.source_sort_keys.get(
+            directory.source_id,
+            (0, directory.source_id.casefold(), directory.source_id),
+        )
+        return (*source_key, _directory_path_sort_key(directory.path))
 
     def _ranked_search(
         self,
@@ -342,6 +416,7 @@ class SearchIndex:
             directory_prefix=directory_prefix,
             domain_vocabulary=domain_vocabulary,
             mode=mode,
+            preferences_revision=self.preferences_revision,
         )
         cached = self._cache_get(key)
         if cached is not None:
@@ -390,6 +465,7 @@ class SearchIndex:
                     query,
                     domain_vocabulary=domain_vocabulary,
                     mode=mode,
+                    preference_adjustment=self._preference_adjustment,
                     control=control,
                 )
             )
@@ -549,6 +625,10 @@ def count_search_assets(
     )
 
 
+def _default_preference_adjustment(asset: _AssetRecord) -> float:
+    return asset.source_priority * 0.01
+
+
 def load_domain_vocabulary(path: Path) -> DomainVocabulary:
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
@@ -598,6 +678,7 @@ def _rank_search(
         query,
         domain_vocabulary=domain_vocabulary,
         mode=mode,
+        preference_adjustment=_default_preference_adjustment,
     )
 
 
@@ -607,43 +688,64 @@ def _strict_search_page(
     *,
     limit: int,
     offset: int,
+    preference_adjustment: Callable[[_AssetRecord], float] = _default_preference_adjustment,
     control: SearchControl | None = None,
 ) -> SearchResultsPage:
     query_tokens = _tokens(query)
     if not query_tokens:
         return SearchResultsPage(assets=[], total=0)
     if corpus.lexical_index is None:
-        ranked = _rank_candidates(
-            _strict_candidates(
-                corpus.assets,
-                query_tokens,
-                query,
-                require_all_terms=True,
-                control=control,
-            ),
-            query_tokens,
-            control=control,
-        )
-        return SearchResultsPage(
-            assets=[
-                _record_to_result(candidate.asset, candidate.score)
-                for candidate in ranked[offset : offset + limit]
-            ],
-            total=len(ranked),
-        )
+        raise RuntimeError("strict lexical index is unavailable")
 
+    ranked, total = _strict_ranked_candidates(
+        corpus,
+        query_tokens,
+        preference_adjustment=preference_adjustment,
+        control=control,
+    )
+    return SearchResultsPage(
+        assets=[
+            _record_to_result(candidate.asset, candidate.score)
+            for candidate in ranked[offset : offset + limit]
+        ],
+        total=total,
+    )
+
+
+def _strict_ranked_candidates(
+    corpus: _SearchCorpus,
+    query_tokens: tuple[str, ...],
+    *,
+    preference_adjustment: Callable[[_AssetRecord], float],
+    control: SearchControl | None = None,
+) -> tuple[list[_RankedCandidate], int]:
+    if corpus.lexical_index is None:
+        raise RuntimeError("strict lexical index is unavailable")
     matches, total = corpus.lexical_index.search_with_scores(
         query_tokens,
         require_all_terms=True,
-        limit=limit,
-        offset=offset,
+        limit=corpus.lexical_index.asset_count,
+        offset=0,
     )
-    results = []
+    ranked = []
     for index, (asset_index, score) in enumerate(matches, start=1):
         if control:
             control.check(index)
-        results.append(_record_to_result(corpus.assets[asset_index], score))
-    return SearchResultsPage(assets=results, total=total)
+        asset = corpus.assets[asset_index]
+        ranked.append(
+            _RankedCandidate(
+                asset=asset,
+                score=score + preference_adjustment(asset),
+            )
+        )
+    ranked.sort(
+        key=lambda candidate: (
+            -candidate.score,
+            -candidate.asset.source_priority,
+            candidate.asset.relative_path.casefold(),
+        )
+    )
+    return ranked, total
 
 
 def _strict_match_directories(
@@ -687,6 +789,7 @@ def _rank_search_assets(
     *,
     domain_vocabulary: DomainVocabulary,
     mode: SearchMode,
+    preference_adjustment: Callable[[_AssetRecord], float] = _default_preference_adjustment,
     control: SearchControl | None = None,
 ) -> list[_RankedCandidate]:
     corpus = (
@@ -698,17 +801,16 @@ def _rank_search_assets(
     if mode not in {"strict", "fuzzy", "domain", "combined"}:
         raise ValueError(f"unsupported search mode: {mode}")
 
-    candidates: list[_Candidate] = []
     if mode == "strict":
-        candidates.extend(
-            _strict_candidates(
-                corpus,
-                query_tokens,
-                query,
-                require_all_terms=True,
-                control=control,
-            )
+        ranked, _total = _strict_ranked_candidates(
+            corpus,
+            query_tokens,
+            preference_adjustment=preference_adjustment,
+            control=control,
         )
+        return ranked
+
+    candidates: list[_Candidate] = []
     if mode == "combined":
         strict_candidates = _strict_candidates(
             corpus,
@@ -745,7 +847,12 @@ def _rank_search_assets(
                 control=control,
             )
         )
-    return _rank_candidates(candidates, query_tokens, control=control)
+    return _rank_candidates(
+        candidates,
+        query_tokens,
+        preference_adjustment=preference_adjustment,
+        control=control,
+    )
 
 
 def _has_plenty_of_strict_all_term_matches(
@@ -768,6 +875,7 @@ def _search_cache_key(
     directory_prefix: str | None,
     domain_vocabulary: DomainVocabulary,
     mode: SearchMode,
+    preferences_revision: int = 0,
 ) -> _SearchCacheKey:
     return (
         _normalize_text(query),
@@ -776,6 +884,7 @@ def _search_cache_key(
         directory,
         directory_prefix,
         tuple(sorted(domain_vocabulary.expansions.items())),
+        preferences_revision,
     )
 
 
@@ -1104,7 +1213,103 @@ def _fetch_assets(
         """,
         params,
     ).fetchall()
-    return tuple(_row_to_record(row) for row in rows)
+    return tuple(_row_to_record(row, index) for index, row in enumerate(rows))
+
+
+def _fetch_folder_quality_overrides(
+    db: sqlite3.Connection,
+) -> dict[tuple[str, str], int]:
+    rows = db.execute(
+        """
+        SELECT source_id, directory, quality
+        FROM folder_quality_overrides
+        """
+    ).fetchall()
+    return {
+        (row["source_id"], row["directory"]): row["quality"]
+        for row in rows
+    }
+
+
+def upsert_folder_quality(
+    db: sqlite3.Connection,
+    *,
+    source_id: str,
+    directory: str,
+    quality: int,
+) -> None:
+    if quality < 0 or quality > 10:
+        raise ValueError("folder quality must be between 0 and 10")
+    if quality == DEFAULT_FOLDER_QUALITY:
+        db.execute(
+            """
+            DELETE FROM folder_quality_overrides
+            WHERE source_id = ? AND directory = ?
+            """,
+            (source_id, directory),
+        )
+        return
+    db.execute(
+        """
+        INSERT INTO folder_quality_overrides(source_id, directory, quality, updated_at)
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(source_id, directory) DO UPDATE SET
+          quality = excluded.quality,
+          updated_at = CURRENT_TIMESTAMP
+        """,
+        (source_id, directory, quality),
+    )
+
+
+def _preference_adjustments(
+    assets: tuple[_AssetRecord, ...],
+    folder_quality_overrides: dict[tuple[str, str], int],
+) -> tuple[float, ...]:
+    return tuple(
+        _default_preference_adjustment(asset)
+        + _folder_quality_adjustment(
+            _effective_folder_quality(
+                folder_quality_overrides,
+                asset.source_id,
+                asset.directory,
+            )
+        )
+        for asset in assets
+    )
+
+
+def _effective_folder_quality(
+    folder_quality_overrides: dict[tuple[str, str], int],
+    source_id: str,
+    directory: str,
+) -> int:
+    for path in _directory_ancestors(directory):
+        override = folder_quality_overrides.get((source_id, path))
+        if override is not None:
+            return override
+    return DEFAULT_FOLDER_QUALITY
+
+
+def _directory_ancestors(directory: str) -> tuple[str, ...]:
+    if not directory:
+        return ("",)
+    ancestors = [directory]
+    current = directory
+    while "/" in current:
+        current = current.rsplit("/", 1)[0]
+        ancestors.append(current)
+    ancestors.append("")
+    return tuple(ancestors)
+
+
+def _directory_path_sort_key(path: str) -> tuple[str, ...]:
+    if not path:
+        return ()
+    return tuple(part.casefold() for part in path.split("/"))
+
+
+def _folder_quality_adjustment(quality: int) -> float:
+    return (quality - DEFAULT_FOLDER_QUALITY) * FOLDER_QUALITY_WEIGHT
 
 
 def _strict_candidates(
@@ -1243,6 +1448,7 @@ def _rank_candidates(
     candidates: list[_Candidate],
     query_tokens: tuple[str, ...],
     *,
+    preference_adjustment: Callable[[_AssetRecord], float] = _default_preference_adjustment,
     control: SearchControl | None = None,
 ) -> list[_RankedCandidate]:
     by_asset: dict[str, list[tuple[int, _Candidate]]] = defaultdict(list)
@@ -1266,7 +1472,7 @@ def _rank_candidates(
         score = sum(
             _lane_contribution(rank, candidate) for rank, candidate in lane_matches
         )
-        score += asset.source_priority * 0.01
+        score += preference_adjustment(asset)
         score += _media_intent_adjustment(asset, query_tokens)
         ranked.append(_RankedCandidate(asset=asset, score=score))
     return sorted(
@@ -1464,7 +1670,7 @@ def _expanded_terms(
     return tuple(dict.fromkeys(expanded))
 
 
-def _row_to_record(row: sqlite3.Row) -> _AssetRecord:
+def _row_to_record(row: sqlite3.Row, asset_index: int) -> _AssetRecord:
     source_tokens = _tokens(f"{row['source_id']} {row['source_display_name']}")
     filename_tokens = _tokens(row["filename"])
     directory_tokens = _tokens(row["directory"])
@@ -1474,6 +1680,7 @@ def _row_to_record(row: sqlite3.Row) -> _AssetRecord:
     )
     fuzzy_text = " ".join(filename_tokens + path_tokens)
     return _AssetRecord(
+        asset_index=asset_index,
         asset_id=row["asset_id"],
         source_id=row["source_id"],
         source_display_name=row["source_display_name"],
