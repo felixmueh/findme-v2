@@ -26,13 +26,6 @@
   } from './lib/result-cards'
   import SearchLaneTabs, { type SearchMode } from './lib/SearchLaneTabs.svelte'
 
-  type Source = {
-    id: string
-    display_name: string
-    priority: number
-    root: string
-  }
-
   type DirectoryNode = {
     source_id: string
     path: string
@@ -66,9 +59,7 @@
 
   let query = $state('')
   let searchMode = $state<SearchMode>('strict')
-  let sourceId = $state('')
   let filterRules = $state<Map<string, FilterRuleState>>(new Map())
-  let sources = $state<Source[]>([])
   let directories = $state<DirectoryNode[]>([])
   let collapsedDirectories = $state<Set<string>>(new Set())
   let cards = $state<ResultCard[]>([])
@@ -98,6 +89,7 @@
   let folderPanelElement = $state<HTMLElement>()
   let loadMoreTrigger = $state<HTMLDivElement>()
   let folderHoverRestoreScrollTop: number | null = null
+  let hasInitializedFolderCollapse = false
 
   const pageSize = 100
   const searchSessionId =
@@ -146,21 +138,7 @@
         (directory) => directoryKey(directory) === (qualityHoverKey || qualityTargetKey)
       ) ?? null
   )
-  const directoryPathsWithChildren = $derived.by(() => {
-    const paths = new Set<string>()
-    for (const directory of directories) {
-      if (!directory.path) continue
-      const parentPath = directory.path.includes('/')
-        ? directory.path.slice(0, directory.path.lastIndexOf('/'))
-        : ''
-      paths.add(directoryKey({ source_id: directory.source_id, path: parentPath }))
-    }
-    return paths
-  })
-
-  $effect(() => {
-    void loadSources()
-  })
+  const directoryPathsWithChildren = $derived.by(() => directoryParentKeys(directories))
 
   $effect(() => {
     void loadDirectories()
@@ -169,7 +147,6 @@
   $effect(() => {
     query
     searchMode
-    sourceId
     filterRules
     const revision = ++searchRevision
     window.clearTimeout(debounceTimer)
@@ -181,7 +158,6 @@
   $effect(() => {
     query
     searchMode
-    sourceId
     filterRules
     const revision = searchRevision
     window.clearTimeout(directoryDebounceTimer)
@@ -218,22 +194,6 @@
     void scrollHoveredDirectoryIntoView(key)
   })
 
-  async function loadSources() {
-    const response = await fetch('/api/sources')
-    if (!response.ok) {
-      error = 'Could not load sources'
-      return
-    }
-    const body = await response.json()
-    sources = body.sources
-    await loadDirectories()
-  }
-
-  function changeSource(event: Event) {
-    sourceId = (event.currentTarget as HTMLSelectElement).value
-    collapsedDirectories = new Set()
-  }
-
   function setSearchMode(mode: SearchMode) {
     searchMode = mode
   }
@@ -243,7 +203,6 @@
     const controller = new AbortController()
     directoryRequestController = controller
     const params = new URLSearchParams()
-    if (sourceId) params.set('source_id', sourceId)
     appendFilterRules(params)
     const trimmed = query.trim()
     if (trimmed) {
@@ -260,7 +219,12 @@
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       const body = await response.json()
       if (directoryRequestController === controller) {
-        directories = body.directories
+        const nextDirectories = body.directories as DirectoryNode[]
+        directories = nextDirectories
+        if (!hasInitializedFolderCollapse) {
+          collapsedDirectories = initiallyCollapsedDirectoryKeys(nextDirectories)
+          hasInitializedFolderCollapse = true
+        }
       }
     } catch (caught) {
       if (!isAbortError(caught) && directoryRequestController === controller) {
@@ -290,7 +254,6 @@
     const params = new URLSearchParams()
     params.set('limit', String(pageSize))
     params.set('offset', String(offset))
-    if (sourceId) params.set('source_id', sourceId)
     appendFilterRules(params)
     const trimmed = query.trim()
     const path = trimmed ? '/api/search' : '/api/assets'
@@ -351,7 +314,9 @@
       error = 'Could not load asset'
       return
     }
-    selected = await response.json()
+    const detail = (await response.json()) as AssetDetail
+    selected = detail
+    revealSelectedAssetDirectory(detail.asset)
   }
 
   async function copyPrimary() {
@@ -489,6 +454,60 @@
       folderHoverRestoreScrollTop = panel.scrollTop
     }
     row.scrollIntoView({ block: 'nearest' })
+  }
+
+  function revealSelectedAssetDirectory(asset: Asset) {
+    unfoldAssetDirectoryPath(asset)
+    void scrollSelectedDirectoryIntoView(asset)
+  }
+
+  function unfoldAssetDirectoryPath(asset: Asset) {
+    const next = new Set(collapsedDirectories)
+    let changed = false
+    for (const key of directoryAncestorKeysForAsset(asset)) {
+      changed = next.delete(key) || changed
+    }
+    if (changed) collapsedDirectories = next
+  }
+
+  async function scrollSelectedDirectoryIntoView(asset: Asset) {
+    const key = directoryKey({ source_id: asset.source_id, path: asset.directory })
+    await tick()
+    const panel = folderPanelElement
+    if (!panel || selected?.asset.asset_id !== asset.asset_id) return
+    const row = panel.querySelector<HTMLElement>(`[data-directory-key="${directoryDomKeyFromKey(key)}"]`)
+    row?.scrollIntoView({ block: 'nearest' })
+  }
+
+  function directoryAncestorKeysForAsset(asset: Asset) {
+    const keys = [directoryKey({ source_id: asset.source_id, path: '' })]
+    if (!asset.directory) return keys
+    const parts = asset.directory.split('/')
+    for (let index = 1; index <= parts.length; index += 1) {
+      keys.push(directoryKey({ source_id: asset.source_id, path: parts.slice(0, index).join('/') }))
+    }
+    return keys
+  }
+
+  function directoryParentKeys(directoryList: DirectoryNode[]) {
+    const paths = new Set<string>()
+    for (const directory of directoryList) {
+      if (!directory.path) continue
+      const parentPath = directory.path.includes('/')
+        ? directory.path.slice(0, directory.path.lastIndexOf('/'))
+        : ''
+      paths.add(directoryKey({ source_id: directory.source_id, path: parentPath }))
+    }
+    return paths
+  }
+
+  function initiallyCollapsedDirectoryKeys(directoryList: DirectoryNode[]) {
+    const parentKeys = directoryParentKeys(directoryList)
+    return new Set(
+      directoryList
+        .map((directory) => directoryKey(directory))
+        .filter((key) => parentKeys.has(key))
+    )
   }
 
   function appendFilterRules(params: URLSearchParams) {
@@ -737,13 +756,6 @@
 
     <SearchLaneTabs value={searchMode} onSelect={setSearchMode} />
 
-    <select value={sourceId} aria-label="Source" onchange={changeSource}>
-      <option value="">All sources</option>
-      {#each sources as source}
-        <option value={source.id}>{source.display_name}</option>
-      {/each}
-    </select>
-
     <div class="status" class:busy={loading} class:error={error}>
       {#if loading}
         <LoaderCircle size={15} />
@@ -778,9 +790,6 @@
                   <Icon size={28} />
                 {/if}
                 <span class="collection-count">{collection.count}</span>
-                <span class="hover-actions">
-                  <span>Expand</span>
-                </span>
               </span>
               <span class="tile-name">{displayAsset.filename}</span>
               <span class="tile-meta">{displayAsset.directory || displayAsset.source_display_name}</span>
@@ -797,9 +806,6 @@
               <span class="tile-thumb">
                 <Layers2 size={32} />
                 <span class="collection-count">{collection.count}</span>
-                <span class="hover-actions">
-                  <span>Collapse</span>
-                </span>
               </span>
               <span class="tile-name">{displayAsset.stem}</span>
               <span class="tile-meta">{collection.count} variants</span>
@@ -826,9 +832,6 @@
                 {:else}
                   <Icon size={28} />
                 {/if}
-                <span class="hover-actions">
-                  <span>Preview</span>
-                </span>
               </span>
               <span class="tile-name">{asset.filename}</span>
               <span class="tile-meta">{asset.directory || asset.source_display_name}</span>
@@ -916,6 +919,7 @@
           class:direct-highlight={directHoveredDirectoryKey === directoryKey(directory)}
           class:whitelist={ruleState === 'whitelist'}
           class:blacklist={ruleState === 'blacklist'}
+          class:source-root={directory.depth === 0}
           class:collapsed={children && isCollapsed(directory)}
           class:leaf={!children}
           class="folder-row"
@@ -926,13 +930,20 @@
           onmouseenter={() => setQualityHover(directory)}
           onmouseleave={() => clearQualityHover(directory)}
         >
-          <button class="folder-main" type="button" onclick={(event) => handleDirectoryClick(event, directory)}>
+          <button
+            class:source-root={directory.depth === 0}
+            class="folder-main"
+            type="button"
+            onclick={(event) => handleDirectoryClick(event, directory)}
+          >
             {#if children}
               <ChevronRight class="folder-chevron" size={14} />
             {:else}
               <span class="folder-spacer"></span>
             {/if}
-            <Folder size={15} />
+            {#if directory.depth > 0}
+              <Folder size={15} />
+            {/if}
             <span>{directory.name}</span>
           </button>
           <em>

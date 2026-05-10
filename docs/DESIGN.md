@@ -119,6 +119,8 @@ V1 interaction model:
 - secondary actions live in a compact per-result menu or details panel
 - v1 focuses on single-asset actions, not bulk actions
 
+Source narrowing is handled through the folder tree. Each source appears as a top-level folder row, and focusing that row applies the same whitelist filtering model as any other folder. The toolbar should not carry a separate source selector.
+
 ## Indexing Model
 
 Search and browsing read only indexed data. There is no slow search path for v1.

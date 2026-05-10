@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 
 const sampleAsset = {
   asset_id: 'asset-castle',
@@ -45,13 +45,12 @@ function filterRulesFromRequest(request: { url: () => string }) {
   return url.searchParams.getAll('filter_rule').map((rule) => JSON.parse(rule))
 }
 
-test.beforeEach(async ({ page }) => {
-  await page.route('**/api/sources', async (route) => {
-    await route.fulfill({
-      json: { sources: [{ id: 'sample', display_name: 'Sample Assets', priority: 0, root: 'sample-assets' }] },
-    })
-  })
+async function revealSampleFolder(page: Page) {
+  await page.getByRole('button', { name: /castle\.png/i }).click()
+  await expect(page.getByRole('group', { name: 'maps folder' })).toBeVisible()
+}
 
+test.beforeEach(async ({ page }) => {
   await page.route('**/api/directories?*', async (route) => {
     await route.fulfill({
       json: {
@@ -97,6 +96,10 @@ test('searches through the real browser UI', async ({ page }) => {
 
   await expect(page.getByRole('button', { name: /castle\.png/i })).toBeVisible()
   await expect(page.getByRole('searchbox', { name: 'Search assets' })).toBeVisible()
+  await expect(page.getByLabel('Source')).toHaveCount(0)
+  await expect(page.getByRole('group', { name: 'Sample Assets folder' })).toHaveClass(/source-root/)
+  await expect(page.getByRole('group', { name: 'Sample Assets folder' }).locator('.folder-main > svg')).toHaveCount(1)
+  await expect(page.getByText('Preview')).toHaveCount(0)
 
   const searchRequest = page.waitForRequest((request) => {
     const url = new URL(request.url())
@@ -130,23 +133,10 @@ test('searches with the selected lane mode', async ({ page }) => {
   await expect(page.getByRole('tab', { name: 'Domain' })).toHaveAttribute('aria-selected', 'true')
 })
 
-test('filters asset requests by selected source', async ({ page }) => {
-  await page.goto('/')
-
-  await expect(page.getByRole('button', { name: /castle\.png/i })).toBeVisible()
-
-  const filteredAssetsRequest = page.waitForRequest((request) => {
-    const url = new URL(request.url())
-    return url.pathname === '/api/assets' && url.searchParams.get('source_id') === 'sample'
-  })
-
-  await page.getByLabel('Source').selectOption('sample')
-  await filteredAssetsRequest
-})
-
 test('sends sidebar whitelist and blacklist rules with folder shortcuts', async ({ page }) => {
   await page.goto('/')
   await expect(page.getByRole('button', { name: /castle\.png/i })).toBeVisible()
+  await revealSampleFolder(page)
 
   const whitelistedAssetsRequest = page.waitForRequest((request) => {
     const url = new URL(request.url())
@@ -186,6 +176,7 @@ test('sends sidebar whitelist and blacklist rules with folder shortcuts', async 
 test('combines folder filtering and quality in one control popover', async ({ page }) => {
   await page.goto('/')
   await expect(page.getByRole('button', { name: /castle\.png/i })).toBeVisible()
+  await revealSampleFolder(page)
 
   await page.getByRole('button', { name: 'Folder controls for maps, quality 4' }).click()
   await expect(page.getByRole('group', { name: 'Folder controls for maps', exact: true })).toBeVisible()
@@ -207,6 +198,7 @@ test('combines folder filtering and quality in one control popover', async ({ pa
 test('keeps sidebar rules across search text and lane changes', async ({ page }) => {
   await page.goto('/')
   await expect(page.getByRole('button', { name: /castle\.png/i })).toBeVisible()
+  await revealSampleFolder(page)
   await page.getByRole('group', { name: 'maps folder' }).getByRole('button', { name: 'maps', exact: true }).click({
     modifiers: ['Shift'],
   })
@@ -274,6 +266,7 @@ test('moves whitelist focus within the same subtree', async ({ page }) => {
 
   await page.goto('/')
   await expect(page.getByRole('button', { name: /castle\.png/i })).toBeVisible()
+  await revealSampleFolder(page)
 
   await page.getByRole('group', { name: 'maps folder' }).getByRole('button', { name: 'maps', exact: true }).click({
     modifiers: ['Shift'],
@@ -316,6 +309,7 @@ test('moves whitelist focus within the same subtree', async ({ page }) => {
 test('highlights the hovered asset folder path', async ({ page }) => {
   await page.goto('/')
   await expect(page.getByRole('button', { name: /castle\.png/i })).toBeVisible()
+  await revealSampleFolder(page)
 
   await page.getByRole('button', { name: /castle\.png/i }).hover()
 
@@ -323,17 +317,37 @@ test('highlights the hovered asset folder path', async ({ page }) => {
   await expect(page.getByRole('group', { name: 'maps folder' })).toHaveClass(/direct-highlight/)
 })
 
-test('temporarily scrolls the folder tree to the hovered asset directory', async ({ page }) => {
+test('selecting an asset unfolds and scrolls to its folder path without refolding user-opened folders', async ({ page }) => {
   const farAsset = {
     ...sampleAsset,
     asset_id: 'asset-obelisk',
-    relative_path: 'folder-32/obelisk.png',
+    relative_path: 'folder-32/deep/obelisk.png',
     filename: 'obelisk.png',
     stem: 'obelisk',
-    directory: 'folder-32',
+    directory: 'folder-32/deep',
   }
   const directories = [
     sampleRootDirectory(),
+    {
+      source_id: 'sample',
+      path: 'tokens',
+      name: 'tokens',
+      depth: 1,
+      asset_count: 1,
+      matched_asset_count: 1,
+      quality: 5,
+      quality_override: null,
+    },
+    {
+      source_id: 'sample',
+      path: 'tokens/hidden',
+      name: 'hidden',
+      depth: 2,
+      asset_count: 1,
+      matched_asset_count: 1,
+      quality: 5,
+      quality_override: null,
+    },
     ...Array.from({ length: 40 }, (_, index) => ({
       source_id: 'sample',
       path: `folder-${String(index).padStart(2, '0')}`,
@@ -344,6 +358,16 @@ test('temporarily scrolls the folder tree to the hovered asset directory', async
       quality: 5,
       quality_override: null,
     })),
+    {
+      source_id: 'sample',
+      path: 'folder-32/deep',
+      name: 'deep',
+      depth: 2,
+      asset_count: 1,
+      matched_asset_count: 1,
+      quality: 5,
+      quality_override: null,
+    },
   ]
 
   await page.route('**/api/directories?*', async (route) => {
@@ -352,23 +376,52 @@ test('temporarily scrolls the folder tree to the hovered asset directory', async
   await page.route('**/api/assets?*', async (route) => {
     await route.fulfill({ json: { total: 1, cards: [{ kind: 'asset', asset: farAsset }] } })
   })
+  await page.route('**/api/assets/asset-obelisk', async (route) => {
+    await route.fulfill({
+      json: {
+        asset: farAsset,
+        actions: {
+          primary: { id: 'foundry', label: 'FoundryVTT', value: 'worlds/assets/folder-32/deep/obelisk.png' },
+          profiles: [],
+          source_relative: farAsset.relative_path,
+          absolute_path: '/tmp/sample-assets/folder-32/deep/obelisk.png',
+          open_url: '/api/assets/asset-obelisk/file',
+          download_url: '/api/assets/asset-obelisk/download',
+        },
+      },
+    })
+  })
+  await page.route('**/api/assets/asset-obelisk/file', async (route) => {
+    await route.fulfill({
+      contentType: 'image/gif',
+      body: Buffer.from('R0lGODlhAQABAAAAACw=', 'base64'),
+    })
+  })
 
   await page.goto('/')
   await expect(page.getByRole('button', { name: /obelisk\.png/i })).toBeVisible()
+  await expect(page.getByRole('group', { name: 'tokens folder' })).toBeHidden()
+  await expect(page.getByRole('group', { name: 'folder-32 folder' })).toBeHidden()
+
+  await page
+    .getByRole('group', { name: 'Sample Assets folder' })
+    .getByRole('button', { name: 'Sample Assets', exact: true })
+    .click()
+  await page.getByRole('group', { name: 'tokens folder' }).getByRole('button', { name: 'tokens', exact: true }).click()
+  await expect(page.getByRole('group', { name: 'hidden folder' })).toBeVisible()
+
   const folderPanel = page.getByLabel('Folder tree')
   await folderPanel.evaluate((element) => {
     element.scrollTop = 0
   })
   const originalScrollTop = await folderPanel.evaluate((element) => element.scrollTop)
 
-  await page.getByRole('button', { name: /obelisk\.png/i }).hover()
+  await page.getByRole('button', { name: /obelisk\.png/i }).click()
 
   await expect.poll(() => folderPanel.evaluate((element) => element.scrollTop)).toBeGreaterThan(originalScrollTop)
-  await expect(page.getByRole('group', { name: 'folder-32 folder' })).toHaveClass(/direct-highlight/)
-
-  await page.mouse.move(20, 20)
-
-  await expect.poll(() => folderPanel.evaluate((element) => element.scrollTop)).toBe(originalScrollTop)
+  await expect(page.getByRole('group', { name: 'folder-32 folder' })).toBeVisible()
+  await expect(page.getByRole('group', { name: 'deep folder' })).toBeVisible()
+  await expect(page.getByRole('group', { name: 'hidden folder' })).toBeVisible()
 })
 
 test('copies the selected asset primary path', async ({ page }) => {
