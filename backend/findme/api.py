@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from pathlib import Path
 import sqlite3
 import threading
@@ -92,6 +93,10 @@ def create_app(
         [_search_response(result) for result in search_index.all_asset_results()],
         card_metadata_by_asset_id=card_metadata_by_asset_id,
     )
+    card_counts_by_directory = _card_counts_by_directory_subtree(
+        search_index,
+        card_resolver,
+    )
     search_revisions = _SearchRevisionRegistry()
     def needs_scoped_scope(
         *,
@@ -139,15 +144,32 @@ def create_app(
             directory_prefix=directory_prefix,
         ):
             return card_resolver.browse_page(offset=offset, limit=limit)
-        return card_resolver.browse_page(
-            offset=offset,
-            limit=limit,
-            asset_ids=search_index.browse_asset_ids(
+        if (
+            source_id is None
+            and directory is None
+            and directory_prefix is None
+            and preferences.included_asset_index_order is not None
+        ):
+            total = _single_whitelist_card_count(
+                preferences,
+                card_counts_by_directory,
+            )
+            if total is not None:
+                return card_resolver.page_for_asset_indexes(
+                    preferences.included_asset_index_order,
+                    offset=offset,
+                    limit=limit,
+                    total=total,
+                )
+        return card_resolver.page_for_asset_indexes(
+            search_index.browse_asset_indexes(
                 source_id=source_id,
                 directory=directory,
                 directory_prefix=directory_prefix,
                 preferences=preferences,
             ),
+            offset=offset,
+            limit=limit,
         )
 
     app = FastAPI(title="Findme V2")
@@ -622,3 +644,34 @@ def _search_response(result: SearchResult) -> dict[str, object]:
         response["thumbnail_width"] = result.thumbnail_width
         response["thumbnail_height"] = result.thumbnail_height
     return response
+
+
+def _card_counts_by_directory_subtree(
+    search_index: SearchIndex,
+    card_resolver: ResultCardResolver,
+) -> dict[tuple[str, str], int]:
+    card_keys_by_directory: dict[tuple[str, str], set[str]] = defaultdict(set)
+    for asset in search_index.assets:
+        card_key = card_resolver.card_key_for_asset_index(asset.asset_index)
+        for directory_key in search_index.asset_directory_keys[asset.asset_index]:
+            card_keys_by_directory[directory_key].add(card_key)
+    return {
+        directory_key: len(card_keys)
+        for directory_key, card_keys in card_keys_by_directory.items()
+    }
+
+
+def _single_whitelist_card_count(
+    preferences,
+    card_counts_by_directory: dict[tuple[str, str], int],
+) -> int | None:
+    effective_rules = [
+        (source_id, directory, state)
+        for (source_id, directory), state in preferences.effective_selection_states.items()
+    ]
+    if len(effective_rules) != 1:
+        return None
+    source_id, directory, state = effective_rules[0]
+    if state != "whitelist":
+        return None
+    return card_counts_by_directory.get((source_id, directory), 0)

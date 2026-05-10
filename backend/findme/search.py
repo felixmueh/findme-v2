@@ -94,8 +94,9 @@ class DirectoryFilter:
 class SearchPreferences:
     preference_adjustments: tuple[float, ...]
     directory_filter: DirectoryFilter = field(default_factory=DirectoryFilter)
-    included_asset_indexes: frozenset[int] | None = None
+    included_asset_indexes: "AssetSelection | None" = None
     included_asset_index_order: tuple[int, ...] | None = None
+    included_directory_counts: dict[tuple[str, str], int] | None = None
     quality_overrides: dict[tuple[str, str], int] = field(default_factory=dict)
     selection_states: dict[tuple[str, str], DirectoryFilterState] = field(default_factory=dict)
     effective_selection_states: dict[tuple[str, str], DirectoryFilterState] = field(default_factory=dict)
@@ -107,11 +108,13 @@ class SearchPreferences:
     def includes(self, asset: SearchCorpusAsset) -> bool:
         return (
             self.included_asset_indexes is None
-            or asset.asset_index in self.included_asset_indexes
+            or self.included_asset_indexes.includes(asset.asset_index)
         )
 
     def folder_quality(self, source_id: str, directory: str) -> tuple[int, int | None]:
         override = self.quality_overrides.get((source_id, directory))
+        if not self.quality_overrides:
+            return DEFAULT_FOLDER_QUALITY, None
         return (
             _effective_folder_quality(
                 self.quality_overrides,
@@ -129,6 +132,25 @@ class SearchPreferences:
         if state is None:
             return True
         return self.effective_selection_states.get((source_id, directory)) == state
+
+
+@dataclass(frozen=True)
+class AssetSelection:
+    order: tuple[int, ...]
+    _lookup: frozenset[int] | None = field(default=None, compare=False)
+
+    def __len__(self) -> int:
+        return len(self.order)
+
+    def includes(self, asset_index: int) -> bool:
+        return asset_index in self.lookup()
+
+    def lookup(self) -> frozenset[int]:
+        lookup = self._lookup
+        if lookup is None:
+            lookup = frozenset(self.order)
+            object.__setattr__(self, "_lookup", lookup)
+        return lookup
 
 
 class SearchSuperseded(RuntimeError):
@@ -180,6 +202,7 @@ class SearchIndex:
     assets: tuple[SearchCorpusAsset, ...]
     directory_counts: dict[tuple[str, str], int]
     directory_subtree_asset_indexes: dict[tuple[str, str], tuple[int, ...]]
+    asset_directory_keys: tuple[tuple[tuple[str, str], ...], ...]
     source_display_names: dict[str, str]
     source_sort_keys: dict[str, tuple[int, str, str]]
     fuzzy_tokens: tuple[str, ...] = ()
@@ -207,6 +230,7 @@ class SearchIndex:
                 [(asset.source_id, asset.directory) for asset in assets]
             ),
             directory_subtree_asset_indexes=_asset_indexes_by_directory_subtree(assets),
+            asset_directory_keys=_asset_directory_keys(assets),
             source_display_names={
                 asset.source_id: asset.source_display_name for asset in assets
             },
@@ -255,6 +279,7 @@ class SearchIndex:
             directory_subtree_asset_indexes=_asset_indexes_by_directory_subtree(
                 snapshot.assets
             ),
+            asset_directory_keys=_asset_directory_keys(snapshot.assets),
             source_display_names=snapshot.source_display_names,
             source_sort_keys=snapshot.source_sort_keys,
             fuzzy_tokens=snapshot.fuzzy_tokens,
@@ -345,6 +370,25 @@ class SearchIndex:
         ):
             yield asset.asset_id
 
+    def browse_asset_indexes(
+        self,
+        *,
+        source_id: str | None = None,
+        directory: str | None = None,
+        directory_prefix: str | None = None,
+        preferences: SearchPreferences | None = None,
+        control: SearchControl | None = None,
+    ) -> Iterable[int]:
+        preferences = preferences or empty_search_preferences(self.assets)
+        for asset in self._browse_assets(
+            source_id=source_id,
+            directory=directory,
+            directory_prefix=directory_prefix,
+            preferences=preferences,
+            control=control,
+        ):
+            yield asset.asset_index
+
     def all_asset_results(self) -> list[SearchResult]:
         return [_record_to_result(asset, 0) for asset in self.assets]
 
@@ -357,15 +401,21 @@ class SearchIndex:
         directory_filter = directory_filter or DirectoryFilter()
         quality_overrides = quality_overrides or {}
         effective_directory_filter = _bottommost_whitelist_filter(directory_filter)
-        included_asset_indexes = self._included_asset_indexes(effective_directory_filter)
+        included_asset_index_order = self._included_asset_index_order(
+            effective_directory_filter
+        )
+        included_asset_indexes = (
+            None
+            if included_asset_index_order is None
+            else AssetSelection(included_asset_index_order)
+        )
         return SearchPreferences(
             preference_adjustments=self._preference_adjustments(quality_overrides),
             directory_filter=directory_filter,
             included_asset_indexes=included_asset_indexes,
-            included_asset_index_order=(
-                None
-                if included_asset_indexes is None
-                else tuple(sorted(included_asset_indexes))
+            included_asset_index_order=included_asset_index_order,
+            included_directory_counts=self._included_directory_counts(
+                effective_directory_filter
             ),
             quality_overrides=quality_overrides,
             selection_states={
@@ -406,17 +456,26 @@ class SearchIndex:
                 adjustments[asset_index] = adjustment
         return tuple(adjustments)
 
-    def _included_asset_indexes(
+    def _included_asset_index_order(
         self,
         directory_filter: DirectoryFilter,
-    ) -> frozenset[int] | None:
+    ) -> tuple[int, ...] | None:
         if not directory_filter.rules:
             return None
+        if (
+            len(directory_filter.rules) == 1
+            and directory_filter.rules[0].state == "whitelist"
+        ):
+            rule = directory_filter.rules[0]
+            return self.directory_subtree_asset_indexes.get(
+                (rule.source_id, rule.path),
+                (),
+            )
 
         included: set[int] = (
             set()
             if directory_filter.has_whitelist
-            else {asset.asset_index for asset in self.assets}
+            else set(range(len(self.assets)))
         )
         for rule in sorted(
             directory_filter.rules,
@@ -434,7 +493,62 @@ class SearchIndex:
                 included.update(indexes)
             else:
                 included.difference_update(indexes)
-        return frozenset(included)
+        return tuple(sorted(included))
+
+    def _included_directory_counts(
+        self,
+        directory_filter: DirectoryFilter,
+    ) -> dict[tuple[str, str], int] | None:
+        if not directory_filter.rules:
+            return None
+
+        included_counts = (
+            {}
+            if directory_filter.has_whitelist
+            else dict(self.directory_counts)
+        )
+        for rule in sorted(
+            directory_filter.rules,
+            key=lambda item: (
+                0 if item.path == "" else len(item.path.split("/")),
+                item.source_id,
+                item.path,
+            ),
+        ):
+            delta = 1 if rule.state == "whitelist" else -1
+            self._apply_directory_subtree_count_delta(
+                included_counts,
+                source_id=rule.source_id,
+                directory=rule.path,
+                delta=delta,
+            )
+        return {key: count for key, count in included_counts.items() if count > 0}
+
+    def _apply_directory_subtree_count_delta(
+        self,
+        counts: dict[tuple[str, str], int],
+        *,
+        source_id: str,
+        directory: str,
+        delta: int,
+    ) -> None:
+        subtree_total = self.directory_counts.get((source_id, directory), 0)
+        if subtree_total == 0:
+            return
+
+        for ancestor in _directory_ancestors(directory):
+            if ancestor == directory:
+                continue
+            key = (source_id, ancestor)
+            counts[key] = counts.get(key, 0) + (delta * subtree_total)
+
+        for (candidate_source, candidate_path), count in self.directory_counts.items():
+            if candidate_source != source_id:
+                continue
+            if not _directory_is_within(candidate_path, directory):
+                continue
+            key = (candidate_source, candidate_path)
+            counts[key] = counts.get(key, 0) + (delta * count)
 
     def directories_for_matches(
         self,
@@ -476,6 +590,9 @@ class SearchIndex:
         total_counts = _filter_directory_counts(self.directory_counts, source_id)
         if directory is None and directory_prefix is None:
             match_counts = total_counts
+            included_counts = preferences.included_directory_counts or match_counts
+            if source_id is not None:
+                included_counts = _filter_directory_counts(included_counts, source_id)
         else:
             match_counts = self._directory_counts_for_scope(
                 source_id=source_id,
@@ -484,17 +601,17 @@ class SearchIndex:
                 preferences=empty_search_preferences(self.assets),
                 control=control,
             )
-        included_counts = (
-            match_counts
-            if preferences.included_asset_indexes is None
-            else self._directory_counts_for_scope(
-                source_id=source_id,
-                directory=directory,
-                directory_prefix=directory_prefix,
-                preferences=preferences,
-                control=control,
+            included_counts = (
+                match_counts
+                if preferences.included_asset_indexes is None
+                else self._directory_counts_for_scope(
+                    source_id=source_id,
+                    directory=directory,
+                    directory_prefix=directory_prefix,
+                    preferences=preferences,
+                    control=control,
+                )
             )
-        )
         return self._directory_matches_from_counts(
             total_counts,
             match_counts,
@@ -526,18 +643,9 @@ class SearchIndex:
             control=control,
         )
         total_counts = _filter_directory_counts(self.directory_counts, source_id)
-        match_counts = count_asset_directories(
-            (candidate.asset.source_id, candidate.asset.directory)
-            for candidate in ranked
-        )
-        included_counts = (
-            match_counts
-            if preferences.included_asset_indexes is None
-            else count_asset_directories(
-                (candidate.asset.source_id, candidate.asset.directory)
-                for candidate in ranked
-                if preferences.includes(candidate.asset)
-            )
+        match_counts, included_counts = self._directory_counts_for_ranked_candidates(
+            ranked,
+            preferences=preferences,
         )
         return self._directory_matches_from_counts(
             total_counts,
@@ -593,6 +701,36 @@ class SearchIndex:
                 preferences=preferences,
                 control=control,
             )
+        )
+
+    def _directory_counts_for_ranked_candidates(
+        self,
+        ranked: tuple[_RankedCandidate, ...],
+        *,
+        preferences: SearchPreferences,
+    ) -> tuple[dict[tuple[str, str], int], dict[tuple[str, str], int]]:
+        exact_match_counts: dict[tuple[str, str], int] = defaultdict(int)
+        exact_included_counts: dict[tuple[str, str], int] = defaultdict(int)
+        selection = preferences.included_asset_indexes
+        if selection is None:
+            for candidate in ranked:
+                exact_match_counts[
+                    (candidate.asset.source_id, candidate.asset.directory)
+                ] += 1
+            match_counts = _expand_exact_directory_counts(exact_match_counts)
+            return match_counts, match_counts
+
+        lookup = selection.lookup()
+        for candidate in ranked:
+            asset_index = candidate.asset.asset_index
+            exact_key = (candidate.asset.source_id, candidate.asset.directory)
+            exact_match_counts[exact_key] += 1
+            if asset_index not in lookup:
+                continue
+            exact_included_counts[exact_key] += 1
+        return (
+            _expand_exact_directory_counts(exact_match_counts),
+            _expand_exact_directory_counts(exact_included_counts),
         )
 
     def _directory_matches_from_counts(
@@ -802,6 +940,7 @@ def empty_search_preferences(assets: tuple[SearchCorpusAsset, ...]) -> SearchPre
         directory_filter=DirectoryFilter(),
         included_asset_indexes=None,
         included_asset_index_order=None,
+        included_directory_counts=None,
         quality_overrides={},
         selection_states={},
         effective_selection_states={},
@@ -1171,10 +1310,12 @@ def _filter_ranked_candidates(
     ranked: tuple[_RankedCandidate, ...],
     preferences: SearchPreferences,
 ) -> tuple[_RankedCandidate, ...]:
-    if preferences.included_asset_indexes is None:
+    selection = preferences.included_asset_indexes
+    if selection is None:
         return ranked
+    lookup = selection.lookup()
     return tuple(
-        candidate for candidate in ranked if preferences.includes(candidate.asset)
+        candidate for candidate in ranked if candidate.asset.asset_index in lookup
     )
 
 
@@ -1277,6 +1418,28 @@ def _asset_indexes_by_directory_subtree(
         for ancestor in _directory_ancestors(asset.directory):
             indexes.setdefault((asset.source_id, ancestor), []).append(asset.asset_index)
     return {key: tuple(value) for key, value in indexes.items()}
+
+
+def _asset_directory_keys(
+    assets: tuple[SearchCorpusAsset, ...],
+) -> tuple[tuple[tuple[str, str], ...], ...]:
+    keys_by_asset_index: list[tuple[tuple[str, str], ...]] = [()] * len(assets)
+    for asset in assets:
+        keys_by_asset_index[asset.asset_index] = tuple(
+            (asset.source_id, ancestor)
+            for ancestor in _directory_ancestors(asset.directory)
+        )
+    return tuple(keys_by_asset_index)
+
+
+def _expand_exact_directory_counts(
+    exact_counts: dict[tuple[str, str], int],
+) -> dict[tuple[str, str], int]:
+    counts: dict[tuple[str, str], int] = defaultdict(int)
+    for (source_id, directory), count in exact_counts.items():
+        for ancestor in _directory_ancestors(directory):
+            counts[(source_id, ancestor)] += count
+    return dict(counts)
 
 
 def preference_adjustments(
