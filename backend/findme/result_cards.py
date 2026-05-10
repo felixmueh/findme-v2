@@ -26,24 +26,6 @@ class CardMetadata:
     has_variant: bool
 
 
-def result_cards_for_assets(
-    assets: list[AssetResponse],
-    *,
-    collection_assets: list[AssetResponse] | None = None,
-    card_metadata_by_asset_id: dict[str, CardMetadata],
-) -> list[ResultCard]:
-    resolver = ResultCardResolver.from_assets(
-        collection_assets or assets,
-        card_metadata_by_asset_id=card_metadata_by_asset_id,
-    )
-    cards, _total = resolver.page_for(
-        assets,
-        offset=0,
-        limit=len(assets),
-    )
-    return cards
-
-
 @dataclass(frozen=True)
 class ResultCardResolver:
     by_collection: dict[str, tuple[_GroupedAsset, ...]]
@@ -105,10 +87,6 @@ class ResultCardResolver:
             browse_cards=tuple(browse_cards),
         )
 
-    def cards_for(self, assets: Iterable[AssetResponse]) -> list[ResultCard]:
-        cards, _total = self.page_for(assets, offset=0, limit=None)
-        return cards
-
     def page_for(
         self,
         assets: Iterable[AssetResponse],
@@ -156,29 +134,9 @@ class ResultCardResolver:
         *,
         offset: int,
         limit: int | None,
-        asset_ids: Iterable[str] | None = None,
     ) -> tuple[list[ResultCard], int]:
-        if asset_ids is not None:
-            return self.page_for_asset_ids(
-                asset_ids,
-                offset=offset,
-                limit=limit,
-            )
         end = None if limit is None else offset + limit
         return list(self.browse_cards[offset:end]), len(self.browse_cards)
-
-    def page_for_asset_ids(
-        self,
-        asset_ids: Iterable[str],
-        *,
-        offset: int,
-        limit: int | None,
-    ) -> tuple[list[ResultCard], int]:
-        return self.page_for(
-            (self.by_asset_id[asset_id].asset for asset_id in asset_ids),
-            offset=offset,
-            limit=limit,
-        )
 
     def page_for_asset_indexes(
         self,

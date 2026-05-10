@@ -14,13 +14,12 @@ from findme.search import (
     SearchSuperseded,
     folder_settings_fingerprint,
     includes_asset,
-    search_assets,
 )
 
 from helpers import write_image
 
 
-def test_search_assets_matches_filename_and_path_tokens(tmp_path: Path) -> None:
+def test_search_index_matches_filename_and_path_tokens(tmp_path: Path) -> None:
     source_root = tmp_path / "assets"
     (source_root / "Tokens" / "Goblins").mkdir(parents=True)
     (source_root / "Maps").mkdir()
@@ -32,7 +31,7 @@ def test_search_assets_matches_filename_and_path_tokens(tmp_path: Path) -> None:
     with connect(tmp_path / "findme.sqlite3") as db:
         initialize_database(db)
         index_sources(db, config)
-        results = search_assets(db, "goblin")
+        results = SearchIndex.load(db).search("goblin").assets
 
     assert [result.relative_path for result in results] == [
         "Tokens/Goblins/Goblin Warrior.png",
@@ -41,7 +40,7 @@ def test_search_assets_matches_filename_and_path_tokens(tmp_path: Path) -> None:
     assert all(result.score > 0 for result in results)
 
 
-def test_search_assets_applies_source_and_directory_filters(tmp_path: Path) -> None:
+def test_search_index_applies_source_and_directory_filters(tmp_path: Path) -> None:
     source_root = tmp_path / "assets"
     (source_root / "Tokens").mkdir(parents=True)
     (source_root / "Maps").mkdir()
@@ -52,7 +51,11 @@ def test_search_assets_applies_source_and_directory_filters(tmp_path: Path) -> N
     with connect(tmp_path / "findme.sqlite3") as db:
         initialize_database(db)
         index_sources(db, config)
-        results = search_assets(db, "goblin", source_id="dnd", directory="Tokens")
+        results = SearchIndex.load(db).search(
+            "goblin",
+            source_id="dnd",
+            directory="Tokens",
+        ).assets
 
     assert [result.relative_path for result in results] == ["Tokens/Goblin.png"]
 
@@ -93,7 +96,7 @@ def test_directory_filter_rules_apply_deepest_specified_ancestor() -> None:
     assert includes_asset("other", "Maps/Unused", blacklist_overrides_parent_whitelist) is False
 
 
-def test_search_assets_hides_stale_assets(tmp_path: Path) -> None:
+def test_search_index_hides_stale_assets(tmp_path: Path) -> None:
     source_root = tmp_path / "assets"
     source_root.mkdir()
     stale_path = source_root / "Goblin.png"
@@ -105,7 +108,7 @@ def test_search_assets_hides_stale_assets(tmp_path: Path) -> None:
         index_sources(db, config)
         stale_path.unlink()
         index_sources(db, config)
-        results = search_assets(db, "goblin")
+        results = SearchIndex.load(db).search("goblin").assets
 
     assert results == []
 
@@ -119,8 +122,9 @@ def test_fuzzy_search_finds_assets_with_typo_in_query(tmp_path: Path) -> None:
     with connect(tmp_path / "findme.sqlite3") as db:
         initialize_database(db)
         index_sources(db, config)
-        fuzzy_results = search_assets(db, "goblin warror", mode="fuzzy")
-        strict_results = search_assets(db, "goblin warror", mode="strict")
+        search_index = SearchIndex.load(db)
+        fuzzy_results = search_index.search("goblin warror", mode="fuzzy").assets
+        strict_results = search_index.search("goblin warror", mode="strict").assets
 
     assert [result.relative_path for result in fuzzy_results] == ["Goblin Warrior.png"]
     assert strict_results == []
@@ -137,8 +141,9 @@ def test_domain_search_expands_broad_character_concepts(tmp_path: Path) -> None:
     with connect(tmp_path / "findme.sqlite3") as db:
         initialize_database(db)
         index_sources(db, config)
-        domain_results = search_assets(db, "adventurer", mode="domain")
-        strict_results = search_assets(db, "adventurer", mode="strict")
+        search_index = SearchIndex.load(db)
+        domain_results = search_index.search("adventurer", mode="domain").assets
+        strict_results = search_index.search("adventurer", mode="strict").assets
 
     assert [result.relative_path for result in domain_results] == [
         "Halfling Rogue.png",
@@ -156,13 +161,13 @@ def test_domain_vocabulary_is_applied_at_query_time(tmp_path: Path) -> None:
     with connect(tmp_path / "findme.sqlite3") as db:
         initialize_database(db)
         index_sources(db, config)
-        before = search_assets(db, "hero", mode="domain")
-        after = search_assets(
-            db,
+        search_index = SearchIndex.load(db)
+        before = search_index.search("hero", mode="domain").assets
+        after = search_index.search(
             "hero",
             mode="domain",
             domain_vocabulary=DomainVocabulary(expansions={"hero": ("mage",)}),
-        )
+        ).assets
 
     assert before == []
     assert [result.relative_path for result in after] == ["Human Mage.png"]
@@ -188,7 +193,7 @@ def test_strict_search_uses_source_name_as_indexed_evidence(tmp_path: Path) -> N
     with connect(tmp_path / "findme.sqlite3") as db:
         initialize_database(db)
         index_sources(db, config)
-        results = search_assets(db, "combat music", mode="strict")
+        results = SearchIndex.load(db).search("combat music", mode="strict").assets
 
     assert [result.relative_path for result in results] == ["combat_standard/Training.mp3"]
 
@@ -225,8 +230,9 @@ def test_search_ranking_does_not_apply_media_intent_penalty(
     with connect(tmp_path / "findme.sqlite3") as db:
         initialize_database(db)
         index_sources(db, config)
-        visual_result = search_assets(db, "door", source_id="mapmaking")[0]
-        audio_result = search_assets(db, "door", source_id="sounds")[0]
+        search_index = SearchIndex.load(db)
+        visual_result = search_index.search("door", source_id="mapmaking").assets[0]
+        audio_result = search_index.search("door", source_id="sounds").assets[0]
 
     assert audio_result.score > 0
     assert visual_result.score > 0
@@ -333,7 +339,7 @@ def test_search_index_compiled_selection_uses_nearest_folder_rule(
     ] == ["Maps/Keep.png"]
 
 
-def test_directories_for_matches_keep_each_source_subtree_together(tmp_path: Path) -> None:
+def test_directory_responses_keep_each_source_subtree_together(tmp_path: Path) -> None:
     dnd_root = tmp_path / "dnd"
     maps_root = tmp_path / "maps"
     write_image(dnd_root / "Tokens" / "Goblin.png")
@@ -364,10 +370,8 @@ def test_directories_for_matches_keep_each_source_subtree_together(tmp_path: Pat
         search_index = SearchIndex.load(db)
 
     assert [
-        (directory.source_id, directory.path)
-        for directory in search_index.directories_for_matches(
-            search_index.browse(limit=len(search_index.assets)).assets
-        )
+        (directory["source_id"], directory["path"])
+        for directory in search_index.directory_responses_for_scope()
     ] == [
         ("dnd", ""),
         ("dnd", "Tokens"),
@@ -398,7 +402,7 @@ def test_search_index_stops_when_control_is_cancelled(tmp_path: Path) -> None:
         raise AssertionError("search did not stop after cancellation")
 
 
-def test_search_index_builds_directories_from_existing_ranked_results(
+def test_search_with_directory_responses_reuses_search_matches(
     tmp_path: Path, monkeypatch
 ) -> None:
     source_root = tmp_path / "assets"
@@ -426,11 +430,13 @@ def test_search_index_builds_directories_from_existing_ranked_results(
         count_search_calls,
     )
 
-    page = search_index.search("goblin")
-    directories = search_index.directories_for_matches(page.assets)
+    response = search_index.search_with_directory_responses("goblin")
 
     assert calls == 1
-    assert [(directory.path, directory.matched_asset_count) for directory in directories] == [
+    assert [
+        (directory["path"], directory["matched_asset_count"])
+        for directory in response.directories
+    ] == [
         ("", 1),
         ("Creatures", 1),
     ]

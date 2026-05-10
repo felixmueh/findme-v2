@@ -97,16 +97,11 @@ Avoid carrying both old and new hot-path shapes long-term.
 Good simplifications:
 
 - API should ask for directory response dicts directly.
-- `DirectoryMatch` can remain only if non-API tests/callers still need it.
+- the old `DirectoryMatch` object conversion layer is gone.
 - search should not build full ranked candidate objects for normal API
-  responses.
+  responses; the old `_RankedCandidate`/`_Candidate` path is gone.
 - directory counts should use numeric directory ids and parent rollup.
 - profile state should compile to arrays: inclusion mask, adjustment array, and
   included directory counts.
 - `/search-with-directory-counts` should use one numeric call that shares
   the query match arrays between page ranking and directory counts.
-
-Possible next cleanup:
-
-- remove or narrow old object-based directory APIs once tests are moved to
-  public API behavior.
