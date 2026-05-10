@@ -195,6 +195,81 @@ test('combines folder filtering and quality in one control popover', async ({ pa
   ])
 })
 
+test('marks folders that contain custom descendant folder settings', async ({ page }) => {
+  await page.route('**/api/directories?*', async (route) => {
+    await route.fulfill({
+      json: {
+        directories: [
+          sampleRootDirectory(),
+          sampleDirectory(),
+          {
+            source_id: 'sample',
+            path: 'maps/sub',
+            name: 'sub',
+            depth: 2,
+            asset_count: 1,
+            matched_asset_count: 1,
+            quality: 8,
+            quality_override: 8,
+          },
+        ],
+      },
+    })
+  })
+
+  await page.goto('/')
+  await expect(page.getByRole('button', { name: /castle\.png/i })).toBeVisible()
+
+  await expect(
+    page.getByRole('group', { name: 'Sample Assets folder' }).getByRole('button', { name: /quality 5/ })
+  ).toHaveAttribute('title', 'Contains custom folder settings')
+
+  await revealSampleFolder(page)
+
+  await expect(
+    page.getByRole('group', { name: 'maps folder' }).getByRole('button', { name: /quality 4/ })
+  ).toHaveAttribute('title', 'Contains custom folder settings')
+  await expect(
+    page.getByRole('group', { name: 'sub folder' }).getByRole('button', { name: /quality 8/ })
+  ).not.toHaveAttribute('title', 'Contains custom folder settings')
+})
+
+test('folder quality button shortcuts toggle folder rules without opening the menu', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.getByRole('button', { name: /castle\.png/i })).toBeVisible()
+  await revealSampleFolder(page)
+
+  const focusedAssetsRequest = page.waitForRequest((request) => {
+    const url = new URL(request.url())
+    return (
+      url.pathname === '/api/assets' &&
+      url.searchParams.getAll('filter_rule').some((rule) => rule.includes('"state":"whitelist"'))
+    )
+  })
+  await page.getByRole('button', { name: 'Folder controls for maps, quality 4' }).click({ modifiers: ['Shift'] })
+
+  expect(filterRulesFromRequest(await focusedAssetsRequest)).toEqual([
+    { source_id: 'sample', path: 'maps', state: 'whitelist' },
+  ])
+  await expect(page.getByRole('group', { name: 'Folder controls for maps', exact: true })).toHaveCount(0)
+
+  const blockedAssetsRequest = page.waitForRequest((request) => {
+    const url = new URL(request.url())
+    return (
+      url.pathname === '/api/assets' &&
+      url.searchParams.getAll('filter_rule').some((rule) => rule.includes('"state":"blacklist"'))
+    )
+  })
+  await page.getByRole('button', { name: 'Folder controls for maps, focused, quality 4' }).click({
+    modifiers: ['Alt'],
+  })
+
+  expect(filterRulesFromRequest(await blockedAssetsRequest)).toEqual([
+    { source_id: 'sample', path: 'maps', state: 'blacklist' },
+  ])
+  await expect(page.getByRole('group', { name: 'Folder controls for maps', exact: true })).toHaveCount(0)
+})
+
 test('keeps sidebar rules across search text and lane changes', async ({ page }) => {
   await page.goto('/')
   await expect(page.getByRole('button', { name: /castle\.png/i })).toBeVisible()
@@ -288,6 +363,12 @@ test('moves whitelist focus within the same subtree', async ({ page }) => {
   expect(filterRulesFromRequest(await childWhitelistRequest)).toEqual([
     { source_id: 'sample', path: 'maps/sub', state: 'whitelist' },
   ])
+  await expect(
+    page.getByRole('group', { name: 'maps folder' }).getByRole('button', { name: /quality 4/ })
+  ).toHaveAttribute('title', 'Contains custom folder settings')
+  await expect(
+    page.getByRole('group', { name: 'sub folder' }).getByRole('button', { name: /quality 5/ })
+  ).not.toHaveAttribute('title', 'Contains custom folder settings')
 
   const siblingWhitelistRequest = page.waitForRequest((request) => {
     const url = new URL(request.url())

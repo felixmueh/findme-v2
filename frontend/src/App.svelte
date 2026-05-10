@@ -142,6 +142,9 @@
       ) ?? null
   )
   const directoryPathsWithChildren = $derived.by(() => directoryParentKeys(directories))
+  const directoriesWithDescendantFolderSettings = $derived.by(() =>
+    descendantFolderSettingKeys(directories, filterRules)
+  )
 
   $effect(() => {
     void loadDirectories()
@@ -513,6 +516,33 @@
     )
   }
 
+  function descendantFolderSettingKeys(directoryList: DirectoryNode[], rules: Map<string, FilterRuleState>) {
+    const keys = new Set<string>()
+    for (const directory of directoryList) {
+      if (directory.quality_override === null) continue
+      for (const key of directoryAncestorKeys(directory)) {
+        keys.add(key)
+      }
+    }
+    for (const key of rules.keys()) {
+      const directory = nodeKeyParts(key)
+      for (const ancestorKey of directoryAncestorKeys({ source_id: directory.sourceId, path: directory.path })) {
+        keys.add(ancestorKey)
+      }
+    }
+    return keys
+  }
+
+  function directoryAncestorKeys(directory: Pick<DirectoryNode, 'source_id' | 'path'>) {
+    if (!directory.path) return []
+    const keys = [directoryKey({ source_id: directory.source_id, path: '' })]
+    const parts = directory.path.split('/')
+    for (let index = 1; index < parts.length; index += 1) {
+      keys.push(directoryKey({ source_id: directory.source_id, path: parts.slice(0, index).join('/') }))
+    }
+    return keys
+  }
+
   function appendFilterRules(params: URLSearchParams) {
     for (const rule of serializedFilterRules) {
       params.append('filter_rule', JSON.stringify(rule))
@@ -671,6 +701,12 @@
 
   function toggleQualityPicker(event: MouseEvent, directory: DirectoryNode) {
     event.stopPropagation()
+    if (event.shiftKey || event.altKey) {
+      event.preventDefault()
+      toggleDirectoryRule(directory, event.shiftKey ? 'whitelist' : 'blacklist')
+      qualityTargetKey = ''
+      return
+    }
     const key = directoryKey(directory)
     qualityTargetKey = qualityTargetKey === key ? '' : key
   }
@@ -967,9 +1003,13 @@
               class:blocked={ruleState === 'blacklist'}
               class:focused={ruleState === 'whitelist'}
               class:override={directory.quality_override !== null}
+              class:has-descendant-settings={directoriesWithDescendantFolderSettings.has(directoryKey(directory))}
               type="button"
               aria-label={folderControlLabel(directory, ruleState)}
               aria-expanded={qualityTargetKey === directoryKey(directory)}
+              title={directoriesWithDescendantFolderSettings.has(directoryKey(directory))
+                ? 'Contains custom folder settings'
+                : undefined}
               onfocus={() => setQualityHover(directory)}
               onclick={(event) => toggleQualityPicker(event, directory)}
             >

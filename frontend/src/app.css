@@ -623,6 +623,7 @@ button.folder-row.retained {
 }
 
 .folder-control > button {
+  position: relative;
   min-width: 28px;
   height: 22px;
   display: inline-flex;
@@ -642,6 +643,11 @@ button.folder-row.retained {
 .folder-control > button:focus-visible {
   color: var(--text);
   background: var(--surface-alt);
+}
+
+.folder-control > button.has-descendant-settings {
+  border-right-width: 3px;
+  border-right-color: #7fa8b2;
 }
 
 .folder-control > button.override {
