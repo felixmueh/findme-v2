@@ -212,10 +212,10 @@ a:focus-visible {
   padding: 10px;
 }
 
-.asset-tile {
+.asset-tile,
+.asset-card {
   min-width: 0;
   display: grid;
-  grid-template-rows: 126px auto auto;
   gap: 6px;
   padding: 7px;
   border: 1px solid var(--border);
@@ -226,13 +226,37 @@ a:focus-visible {
   box-shadow: 0 0 0 rgba(28, 25, 23, 0);
 }
 
+.asset-tile {
+  grid-template-rows: 126px auto auto;
+}
+
+.asset-card {
+  position: relative;
+  grid-template-rows: auto;
+}
+
+.asset-card-main {
+  min-width: 0;
+  display: grid;
+  grid-template-rows: 126px auto auto;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
 .asset-tile:hover,
-.asset-tile.selected {
+.asset-tile.selected,
+.asset-card:hover,
+.asset-card.selected {
   border-color: var(--border-strong);
 }
 
 .asset-tile:hover,
-.asset-tile:focus-visible {
+.asset-tile:focus-visible,
+.asset-card:hover {
   outline: 1px solid #a99f94;
   outline-offset: -1px;
   box-shadow: 0 2px 10px rgba(28, 25, 23, 0.14);
@@ -240,7 +264,8 @@ a:focus-visible {
 
 .asset-tile.collection-tile,
 .asset-tile.collection-header,
-.asset-tile.collection-member {
+.asset-tile.collection-member,
+.asset-card.collection-member {
   background:
     linear-gradient(
       0deg,
@@ -265,6 +290,11 @@ a:focus-visible {
   box-shadow: 0 0 0 5px color-mix(in srgb, var(--collection-color), transparent 88%);
 }
 
+.asset-card.collection-member {
+  border-color: var(--border);
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--collection-color), transparent 88%);
+}
+
 .asset-tile.collection-tile:hover,
 .asset-tile.collection-tile:focus-visible {
   box-shadow:
@@ -275,15 +305,84 @@ a:focus-visible {
 .asset-tile.collection-header:hover,
 .asset-tile.collection-header:focus-visible,
 .asset-tile.collection-member:hover,
-.asset-tile.collection-member:focus-visible {
+.asset-tile.collection-member:focus-visible,
+.asset-card.collection-member:hover {
   box-shadow:
     0 0 0 5px color-mix(in srgb, var(--collection-color), transparent 88%),
     0 2px 10px rgba(28, 25, 23, 0.14);
 }
 
-.asset-tile.selected {
+.asset-tile.selected,
+.asset-card.selected {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
+}
+
+.card-audio-controls {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 2;
+  display: grid;
+  justify-items: end;
+  gap: 0;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.audio-asset-card:hover .card-audio-controls {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.preview-mute-button {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--surface), transparent 8%);
+  color: var(--text);
+}
+
+.preview-mute-button:hover {
+  background: var(--surface);
+}
+
+.preview-volume-control {
+  position: relative;
+  width: 32px;
+  height: 104px;
+  display: block;
+  padding-top: 5px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.preview-mute-button:hover + .preview-volume-control,
+.preview-mute-button:focus-visible + .preview-volume-control,
+.preview-volume-control:hover,
+.preview-volume-control:focus-within {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.preview-volume-control input {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 84px;
+  accent-color: var(--accent);
+  transform: translate(-50%, -50%) rotate(-90deg);
+  transform-origin: center;
 }
 
 .tile-thumb {
@@ -359,6 +458,7 @@ a:focus-visible {
   bottom: 14px;
   z-index: 3;
   width: 300px;
+  pointer-events: none;
   display: grid;
   gap: 7px;
   padding: 8px;
@@ -385,7 +485,12 @@ a:focus-visible {
   background-size: 16px 16px;
 }
 
-.hover-preview span {
+.hover-preview .file-preview {
+  width: 100%;
+  height: 128px;
+}
+
+.hover-preview-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -394,7 +499,7 @@ a:focus-visible {
 }
 
 .preview {
-  height: 230px;
+  min-height: 230px;
   display: grid;
   place-items: center;
   background-color: var(--preview);
@@ -413,11 +518,45 @@ a:focus-visible {
   overflow: hidden;
 }
 
+.preview.media-preview {
+  aspect-ratio: var(--selected-preview-aspect, 4 / 3);
+  height: auto;
+  max-height: calc(100vh - 52px - 350px);
+}
+
+.preview.audio-preview-shell {
+  height: 230px;
+  background: var(--surface-alt);
+}
+
 .preview img,
 .preview video {
   width: 100%;
   height: 100%;
   object-fit: contain;
+}
+
+.audio-preview {
+  height: 100%;
+  width: 100%;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 0;
+  place-items: center;
+  padding: 0;
+}
+
+.audio-preview audio {
+  width: 100%;
+  max-width: 260px;
+  margin: 10px;
+}
+
+.audio-preview .file-preview {
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+  background: transparent;
 }
 
 .file-preview {

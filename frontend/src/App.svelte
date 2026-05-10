@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from 'svelte'
+  import { tick, untrack } from 'svelte'
   import {
     Copy,
     Ban,
@@ -18,6 +18,8 @@
     RotateCcw,
     Save,
     Trash2,
+    Volume2,
+    VolumeX,
   } from 'lucide-svelte'
   import {
     type Asset,
@@ -121,6 +123,10 @@
   let searchRevision = 0
   let collectionCycleTimer: number | undefined
   let assetRequestController: AbortController | undefined
+  let hoverAudioElement = $state<HTMLAudioElement>()
+  let hoverPreviewMuted = $state(true)
+  let hoverPreviewVolume = $state(0.5)
+  let hoverClearTimer: number | undefined
   let searchInput: HTMLInputElement
   let tileGridElement = $state<HTMLDivElement>()
   let folderPanelElement = $state<HTMLElement>()
@@ -144,6 +150,11 @@
   )
   const hoverPreviewAsset = $derived(
     hoveredCollection ? collectionDisplayAsset(hoveredCollection) : hoveredAsset
+  )
+  const hoverAudioUrl = $derived(
+    hoverPreviewAsset?.media_type === 'audio' && hoverPreviewAsset.asset_id !== selectedAssetId
+      ? assetFileUrl(hoverPreviewAsset)
+      : ''
   )
   const resultLabel = $derived(`${resultTotal} ${resultTotal === 1 ? 'card' : 'cards'}`)
   const visibleDirectories = $derived(directories.filter((directory) => isDirectoryVisible(directory)))
@@ -222,6 +233,33 @@
       return
     }
     void scrollHoveredDirectoryIntoView(key)
+  })
+
+  $effect(() => {
+    const audio = hoverAudioElement
+    const url = hoverAudioUrl
+    if (!audio || !url) return
+
+    audio.muted = untrack(() => hoverPreviewMuted)
+    audio.volume = untrack(() => hoverPreviewVolume)
+    audio.src = url
+    audio.load()
+    const playback = audio.play()
+    if (playback !== undefined) {
+      playback.catch(() => {
+        // Browsers can block audible hover playback until the page has user activation.
+      })
+    }
+    return () => stopAudioPreview(audio)
+  })
+
+  $effect(() => {
+    const audio = hoverAudioElement
+    const muted = hoverPreviewMuted
+    const volume = hoverPreviewVolume
+    if (!audio) return
+    audio.muted = muted
+    audio.volume = volume
   })
 
   function setSearchMode(mode: SearchMode) {
@@ -499,7 +537,75 @@
   function assetIcon(asset: Asset) {
     if (asset.media_type === 'image') return ImageIcon
     if (asset.media_type === 'video') return Film
+    if (asset.media_type === 'audio') return Volume2
     return FileQuestion
+  }
+
+  function setHoveredAsset(asset: Asset) {
+    window.clearTimeout(hoverClearTimer)
+    hoverClearTimer = undefined
+    hoveredAsset = asset
+  }
+
+  function scheduleClearHoveredAsset(asset: Asset) {
+    window.clearTimeout(hoverClearTimer)
+    hoverClearTimer = window.setTimeout(() => {
+      if (hoveredAsset?.asset_id === asset.asset_id) hoveredAsset = null
+      hoverClearTimer = undefined
+    }, 120)
+  }
+
+  function keepHoverPreviewOpen() {
+    window.clearTimeout(hoverClearTimer)
+    hoverClearTimer = undefined
+  }
+
+  function clearHoverPreview() {
+    window.clearTimeout(hoverClearTimer)
+    hoverClearTimer = undefined
+    hoveredAsset = null
+  }
+
+  function clearHoveredAssetOnCardFocusOut(event: FocusEvent, asset: Asset) {
+    const nextTarget = event.relatedTarget
+    if (nextTarget instanceof Node && event.currentTarget instanceof HTMLElement) {
+      if (event.currentTarget.contains(nextTarget)) return
+    }
+    if (hoveredAsset?.asset_id === asset.asset_id) clearHoverPreview()
+  }
+
+  function setHoverPreviewVolume(event: Event) {
+    const input = event.currentTarget as HTMLInputElement
+    const nextVolume = Number(input.value) / 100
+    hoverPreviewVolume = Math.max(0, Math.min(1, nextVolume))
+  }
+
+  function toggleHoverPreviewMuted() {
+    hoverPreviewMuted = !hoverPreviewMuted
+  }
+
+  function selectedPreviewStyle(asset: Pick<Asset, 'media_type' | 'thumbnail_width' | 'thumbnail_height'>) {
+    if (
+      (asset.media_type === 'image' || asset.media_type === 'video') &&
+      asset.thumbnail_width &&
+      asset.thumbnail_height
+    ) {
+      return `--selected-preview-aspect: ${asset.thumbnail_width} / ${asset.thumbnail_height}`
+    }
+    return ''
+  }
+
+  function assetFileUrl(asset: Pick<Asset, 'asset_id'>) {
+    return `/api/assets/${asset.asset_id}/file`
+  }
+
+  function stopAudioPreview(audio: HTMLAudioElement) {
+    audio.pause()
+    try {
+      audio.currentTime = 0
+    } catch {
+      // Some browsers reject seeking before metadata is available.
+    }
   }
 
   function formatBytes(bytes: number) {
@@ -763,7 +869,7 @@
   }
 
   function openAsset(asset: Asset) {
-    window.open(`/api/assets/${asset.asset_id}/file`, '_blank', 'noopener')
+    window.open(assetFileUrl(asset), '_blank', 'noopener')
   }
 
   function handleAssetAuxClick(event: MouseEvent, asset: Asset) {
@@ -948,6 +1054,11 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
+{#if hoverAudioUrl}
+  <!-- svelte-ignore a11y_media_has_caption -->
+  <audio bind:this={hoverAudioElement} preload="none"></audio>
+{/if}
+
 <main class="app-shell">
   <header class="toolbar">
     <div class="brand">Findme</div>
@@ -1051,29 +1162,89 @@
           {:else}
             {@const asset = entry.asset}
             {@const Icon = assetIcon(asset)}
-            <button
-              class:selected={asset.asset_id === selectedAssetId}
-              class:collection-member={Boolean(entry.collection_key)}
-              class="asset-tile"
-              style={entry.collection_key ? `--collection-color: ${collectionColor(entry.collection_key)}` : ''}
-              type="button"
-              onmouseenter={() => (hoveredAsset = asset)}
-              onmouseleave={() => (hoveredAsset = hoveredAsset?.asset_id === asset.asset_id ? null : hoveredAsset)}
-              onfocus={() => (hoveredAsset = asset)}
-              onblur={() => (hoveredAsset = hoveredAsset?.asset_id === asset.asset_id ? null : hoveredAsset)}
-              onclick={() => selectAsset(asset)}
-              onauxclick={(event) => handleAssetAuxClick(event, asset)}
-            >
-              <span class="tile-thumb">
-                {#if asset.thumbnail_url}
-                  <img src={asset.thumbnail_url} alt="" loading="lazy" />
-                {:else}
-                  <Icon size={28} />
-                {/if}
-              </span>
-              <span class="tile-name">{asset.filename}</span>
-              <span class="tile-meta">{asset.directory || asset.source_display_name}</span>
-            </button>
+            {#if asset.media_type === 'audio'}
+              <div
+                class:selected={asset.asset_id === selectedAssetId}
+                class:collection-member={Boolean(entry.collection_key)}
+                class="asset-card audio-asset-card"
+                style={entry.collection_key ? `--collection-color: ${collectionColor(entry.collection_key)}` : ''}
+                role="group"
+                aria-label={`Audio asset card for ${asset.filename}`}
+                onmouseenter={() => setHoveredAsset(asset)}
+                onmouseleave={() => scheduleClearHoveredAsset(asset)}
+                onfocusin={() => setHoveredAsset(asset)}
+                onfocusout={(event) => clearHoveredAssetOnCardFocusOut(event, asset)}
+              >
+                <button
+                  class="asset-card-main"
+                  type="button"
+                  onclick={() => selectAsset(asset)}
+                  onauxclick={(event) => handleAssetAuxClick(event, asset)}
+                >
+                  <span class="tile-thumb">
+                    {#if asset.thumbnail_url}
+                      <img src={asset.thumbnail_url} alt="" loading="lazy" />
+                    {:else}
+                      <Icon size={28} />
+                    {/if}
+                  </span>
+                  <span class="tile-name">{asset.filename}</span>
+                  <span class="tile-meta">{asset.directory || asset.source_display_name}</span>
+                </button>
+                <div class="card-audio-controls" role="group" aria-label="Audio preview controls">
+                  <button
+                    type="button"
+                    class="preview-mute-button"
+                    onclick={toggleHoverPreviewMuted}
+                    aria-label={hoverPreviewMuted ? 'Unmute preview' : 'Mute preview'}
+                    title={hoverPreviewMuted ? 'Unmute preview' : 'Mute preview'}
+                  >
+                    {#if hoverPreviewMuted}
+                      <VolumeX size={16} />
+                    {:else}
+                      <Volume2 size={16} />
+                    {/if}
+                  </button>
+                  <label class="preview-volume-control">
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      step="1"
+                      value={Math.round(hoverPreviewVolume * 100)}
+                      oninput={setHoverPreviewVolume}
+                      aria-label="Preview volume"
+                    />
+                  </label>
+                </div>
+              </div>
+            {:else}
+              <button
+                class:selected={asset.asset_id === selectedAssetId}
+                class:collection-member={Boolean(entry.collection_key)}
+                class="asset-tile"
+                style={entry.collection_key ? `--collection-color: ${collectionColor(entry.collection_key)}` : ''}
+                type="button"
+                onmouseenter={() => setHoveredAsset(asset)}
+                onmouseleave={() => scheduleClearHoveredAsset(asset)}
+                onfocus={() => setHoveredAsset(asset)}
+                onblur={() => {
+                  if (hoveredAsset?.asset_id === asset.asset_id) clearHoverPreview()
+                }}
+                onclick={() => selectAsset(asset)}
+                onauxclick={(event) => handleAssetAuxClick(event, asset)}
+              >
+                <span class="tile-thumb">
+                  {#if asset.thumbnail_url}
+                    <img src={asset.thumbnail_url} alt="" loading="lazy" />
+                  {:else}
+                    <Icon size={28} />
+                  {/if}
+                </span>
+                <span class="tile-name">{asset.filename}</span>
+                <span class="tile-meta">{asset.directory || asset.source_display_name}</span>
+              </button>
+            {/if}
           {/if}
         {:else}
           <div class="empty">No assets found</div>
@@ -1091,10 +1262,23 @@
         {/if}
       </div>
 
-      {#if hoverPreviewAsset?.thumbnail_url}
-        <aside class="hover-preview" aria-label="Hovered asset preview">
-          <img src={hoverPreviewAsset.thumbnail_url} alt="" />
-          <span>{hoverPreviewAsset.filename}</span>
+      {#if hoverPreviewAsset}
+        {@const HoverIcon = assetIcon(hoverPreviewAsset)}
+        <aside
+          class="hover-preview"
+          aria-label="Hovered asset preview"
+          onmouseenter={keepHoverPreviewOpen}
+          onmouseleave={clearHoverPreview}
+        >
+          {#if hoverPreviewAsset.thumbnail_url}
+            <img src={hoverPreviewAsset.thumbnail_url} alt="" />
+          {:else}
+            <div class="file-preview">
+              <HoverIcon size={30} />
+              <span>{hoverPreviewAsset.extension.slice(1).toUpperCase()}</span>
+            </div>
+          {/if}
+          <span class="hover-preview-name">{hoverPreviewAsset.filename}</span>
         </aside>
       {/if}
 
@@ -1102,12 +1286,26 @@
         {@const SelectedIcon = assetIcon(selected.asset)}
         {@const actions = selected.actions}
         <aside class="asset-panel" aria-label="Selected asset">
-          <div class="preview">
+          <div
+            class="preview"
+            class:media-preview={selected.asset.media_type === 'image' || selected.asset.media_type === 'video'}
+            class:audio-preview-shell={selected.asset.media_type === 'audio'}
+            style={selectedPreviewStyle(selected.asset)}
+          >
             {#if selected.asset.media_type === 'image'}
               <img src={actions.open.url} alt={selected.asset.filename} />
             {:else if selected.asset.media_type === 'video'}
               <!-- svelte-ignore a11y_media_has_caption -->
               <video src={actions.open.url} controls preload="metadata" autoplay muted loop playsinline></video>
+            {:else if selected.asset.media_type === 'audio'}
+              <div class="audio-preview">
+                <div class="file-preview">
+                  <SelectedIcon size={30} />
+                  <span>{selected.asset.extension.slice(1).toUpperCase()}</span>
+                </div>
+                <!-- svelte-ignore a11y_media_has_caption -->
+                <audio src={actions.open.url} controls preload="metadata"></audio>
+              </div>
             {:else}
               <div class="file-preview">
                 <SelectedIcon size={30} />

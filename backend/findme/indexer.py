@@ -20,6 +20,7 @@ from findme.thumbnails import (
 
 IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif"})
 VIDEO_EXTENSIONS = frozenset({".webm", ".mp4"})
+AUDIO_EXTENSIONS = frozenset({".mp3", ".ogg", ".wav", ".aif", ".aiff", ".m4a", ".flac"})
 IGNORED_DIRS = frozenset({".findme"})
 
 
@@ -78,6 +79,7 @@ class PreparedAsset:
 
 @dataclass(frozen=True)
 class CurrentAsset:
+    media_type: str
     thumbnail: ThumbnailResult | None
 
 
@@ -184,7 +186,8 @@ def _prepare_assets(
             pending = _pending_asset(source, file_path)
             current = _current_asset(db, pending)
             if current is not None and (
-                current.thumbnail is not None or not _needs_thumbnail(pending)
+                current.media_type == pending.media_type
+                and (current.thumbnail is not None or not _needs_thumbnail(pending))
             ):
                 yield PreparedAsset(
                     pending=pending,
@@ -257,7 +260,7 @@ def _current_asset(
 ) -> CurrentAsset | None:
     row = db.execute(
         """
-        SELECT thumbnail_path, thumbnail_width, thumbnail_height
+        SELECT media_type, thumbnail_path, thumbnail_width, thumbnail_height
         FROM assets
         WHERE source_id = ?
           AND relative_path = ?
@@ -284,7 +287,7 @@ def _current_asset(
                 row["thumbnail_height"],
                 generated=False,
             )
-    return CurrentAsset(thumbnail=thumbnail)
+    return CurrentAsset(media_type=row["media_type"], thumbnail=thumbnail)
 
 
 def _needs_thumbnail(pending: PendingAsset) -> bool:
@@ -391,6 +394,8 @@ def _media_type(extension: str) -> str:
         return "image"
     if extension in VIDEO_EXTENSIONS:
         return "video"
+    if extension in AUDIO_EXTENSIONS:
+        return "audio"
     return "other"
 
 
