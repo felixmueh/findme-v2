@@ -42,7 +42,9 @@ function sampleDirectory(
   qualityOverride: number | null = null,
   selectionState: FilterRuleState | null = null,
   selectionEffective = true,
-  profileDirty = false
+  profileDirty = false,
+  hasDescendantWhitelist = false,
+  hasDescendantBlacklist = false
 ) {
   return {
     source_id: 'sample',
@@ -57,6 +59,8 @@ function sampleDirectory(
     selection_state: selectionState,
     selection_effective: selectionEffective,
     profile_dirty: profileDirty,
+    has_descendant_whitelist: hasDescendantWhitelist,
+    has_descendant_blacklist: hasDescendantBlacklist,
   }
 }
 
@@ -74,6 +78,8 @@ function sampleRootDirectory() {
     selection_state: null,
     selection_effective: true,
     profile_dirty: false,
+    has_descendant_whitelist: false,
+    has_descendant_blacklist: false,
   }
 }
 
@@ -385,6 +391,105 @@ test('marks folders that contain unsaved profile changes', async ({ page }) => {
   await expect(
     page.getByRole('group', { name: 'saved folder' }).getByRole('button', { name: /quality 7/ })
   ).not.toHaveAttribute('title', 'Unsaved profile change in this folder subtree')
+})
+
+test('summarizes dirty and descendant selection signals in the folder control', async ({ page }) => {
+  await page.route('**/api/search-with-directory-counts?*', async (route) => {
+    await route.fulfill({
+      json: {
+        total: 1,
+        cards: [{ kind: 'asset', asset: sampleAsset }],
+        directories: [
+          {
+            ...sampleRootDirectory(),
+            profile_dirty: true,
+            has_descendant_whitelist: true,
+            has_descendant_blacklist: true,
+          },
+          sampleDirectory(4, null, null, true, true, true, true),
+          {
+            source_id: 'sample',
+            path: 'maps/focused',
+            name: 'focused',
+            depth: 2,
+            asset_count: 1,
+            matched_asset_count: 1,
+            included_asset_count: 1,
+            quality: 5,
+            quality_override: null,
+            selection_state: 'whitelist',
+            selection_effective: true,
+            profile_dirty: false,
+            has_descendant_whitelist: false,
+            has_descendant_blacklist: false,
+          },
+          {
+            source_id: 'sample',
+            path: 'maps/blocked',
+            name: 'blocked',
+            depth: 2,
+            asset_count: 1,
+            matched_asset_count: 1,
+            included_asset_count: 1,
+            quality: 5,
+            quality_override: null,
+            selection_state: 'blacklist',
+            selection_effective: true,
+            profile_dirty: false,
+            has_descendant_whitelist: false,
+            has_descendant_blacklist: false,
+          },
+        ],
+      },
+    })
+  })
+
+  await page.goto('/')
+  await expect(page.getByRole('button', { name: /castle\.png/i })).toBeVisible()
+
+  await expect(
+    page.getByRole('group', { name: 'Sample Assets folder' }).getByRole('button', { name: /quality 5/ })
+  ).toHaveAttribute('title', 'Unsaved profile change; descendant focus rule; descendant block rule')
+  await expect(
+    page.getByRole('group', { name: 'Sample Assets folder' }).locator('.folder-subtree-signals .dirty-signal')
+  ).toBeVisible()
+  await expect(
+    page.getByRole('group', { name: 'Sample Assets folder' }).locator('.folder-subtree-signals .whitelist-signal')
+  ).toBeVisible()
+  await expect(
+    page.getByRole('group', { name: 'Sample Assets folder' }).locator('.folder-subtree-signals .blacklist-signal')
+  ).toBeVisible()
+  const sourceControl = page
+    .getByRole('group', { name: 'Sample Assets folder' })
+    .getByRole('button', { name: /quality 5/ })
+  const dirtySignal = page.getByRole('group', { name: 'Sample Assets folder' }).locator('.dirty-signal')
+  const whitelistSignal = page.getByRole('group', { name: 'Sample Assets folder' }).locator('.whitelist-signal')
+  const blacklistSignal = page.getByRole('group', { name: 'Sample Assets folder' }).locator('.blacklist-signal')
+  const controlBox = await sourceControl.boundingBox()
+  const dirtyBox = await dirtySignal.boundingBox()
+  const whitelistBox = await whitelistSignal.boundingBox()
+  const blacklistBox = await blacklistSignal.boundingBox()
+  if (!controlBox || !dirtyBox || !whitelistBox || !blacklistBox) throw new Error('folder signal geometry is missing')
+
+  expect(dirtyBox.height).toBeGreaterThanOrEqual(3)
+  expect(dirtyBox.height).toBeLessThanOrEqual(5)
+  expect(whitelistBox.height).toBeGreaterThanOrEqual(3)
+  expect(whitelistBox.height).toBeLessThanOrEqual(5)
+  expect(blacklistBox.height).toBeGreaterThanOrEqual(3)
+  expect(blacklistBox.height).toBeLessThanOrEqual(5)
+  expect(Math.abs(dirtyBox.y - whitelistBox.y)).toBeLessThanOrEqual(1)
+  expect(Math.abs(dirtyBox.y - blacklistBox.y)).toBeLessThanOrEqual(1)
+  expect(Math.abs(dirtyBox.x - controlBox.x)).toBeLessThanOrEqual(1)
+  expect(Math.abs(dirtyBox.x + dirtyBox.width - whitelistBox.x)).toBeLessThanOrEqual(1)
+  expect(Math.abs(whitelistBox.x + whitelistBox.width - blacklistBox.x)).toBeLessThanOrEqual(1)
+  expect(Math.abs(blacklistBox.x + blacklistBox.width - (controlBox.x + controlBox.width))).toBeLessThanOrEqual(1)
+  expect(controlBox.y + controlBox.height - (dirtyBox.y + dirtyBox.height)).toBeLessThanOrEqual(1)
+
+  await revealSampleFolder(page)
+
+  await expect(
+    page.getByRole('group', { name: 'maps folder' }).getByRole('button', { name: /quality 4/ })
+  ).toHaveAttribute('title', 'Unsaved profile change; descendant focus rule; descendant block rule')
 })
 
 test('folder quality button shortcuts toggle folder rules without opening the menu', async ({ page }) => {

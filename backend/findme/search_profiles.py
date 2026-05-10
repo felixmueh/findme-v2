@@ -538,6 +538,14 @@ class SearchProfileSessionManager:
     ) -> frozenset[tuple[str, str]]:
         return _folder_subtree_keys(session.dirty_folder_keys)
 
+    def selection_descendant_rule_keys(
+        self, session: SearchProfileSession
+    ) -> tuple[frozenset[tuple[str, str]], frozenset[tuple[str, str]]]:
+        return (
+            _selection_descendant_rule_keys(session.working_settings, "whitelist"),
+            _selection_descendant_rule_keys(session.working_settings, "blacklist"),
+        )
+
     def _new_session_from_profile(
         self,
         db: sqlite3.Connection,
@@ -689,6 +697,28 @@ def _folder_subtree_keys(
         for index in range(1, len(parts) + 1):
             subtree_keys.add((source_id, "/".join(parts[:index])))
     return frozenset(subtree_keys)
+
+
+def _selection_descendant_rule_keys(
+    settings: dict[tuple[str, str], FolderSetting],
+    state: DirectoryFilterState,
+) -> frozenset[tuple[str, str]]:
+    ancestor_keys: set[tuple[str, str]] = set()
+    for setting in _normalize_settings(settings).values():
+        if setting.selection_state != state:
+            continue
+        ancestor_keys.update(_folder_ancestor_keys(setting.source_id, setting.directory))
+    return frozenset(ancestor_keys)
+
+
+def _folder_ancestor_keys(source_id: str, directory: str) -> frozenset[tuple[str, str]]:
+    if not directory:
+        return frozenset()
+    keys = {(source_id, "")}
+    parts = directory.split("/")
+    for index in range(1, len(parts)):
+        keys.add((source_id, "/".join(parts[:index])))
+    return frozenset(keys)
 
 
 def _validate_selection_rules(

@@ -76,6 +76,8 @@ The session runtime tracks:
 - `dirty_scoring`
 - `dirty_selection`
 - folder subtrees containing unsaved changes, for sidebar dirty indicators
+- folder subtrees containing descendant whitelist or blacklist rules, for
+  compact sidebar selection indicators
 
 The aggregate dirty state is:
 

@@ -824,6 +824,7 @@ button.folder-row.retained {
   padding: 0 5px;
   font-size: 11px;
   text-align: center;
+  overflow: hidden;
 }
 
 .folder-control > button:hover,
@@ -832,15 +833,46 @@ button.folder-row.retained {
   background: var(--surface-alt);
 }
 
-.folder-control > button.has-dirty-profile-change {
-  border-right-width: 3px;
-  border-right-color: #7fa8b2;
-}
-
 .folder-control > button.override {
   color: var(--accent-hover);
   border-color: var(--accent);
   font-weight: 650;
+}
+
+.folder-subtree-signals {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 4px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  overflow: hidden;
+  border-radius: 0 0 4px 4px;
+  pointer-events: none;
+}
+
+.folder-subtree-signals span {
+  min-width: 0;
+}
+
+.folder-subtree-signals .dirty-signal {
+  grid-column: 1;
+  grid-row: 1;
+  background: #8b9a9d;
+}
+
+.folder-subtree-signals .whitelist-signal {
+  grid-column: 2;
+  grid-row: 1;
+  background: #6f8a72;
+}
+
+.folder-subtree-signals .blacklist-signal {
+  grid-column: 3;
+  grid-row: 1;
+  background: #a76f68;
 }
 
 .folder-control > button.focused {

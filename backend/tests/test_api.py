@@ -333,6 +333,78 @@ def test_api_marks_directory_subtrees_with_unsaved_profile_changes(
     }
 
 
+def test_api_marks_directory_subtrees_with_descendant_selection_rules(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "assets"
+    write_image(source_root / "Maps" / "Nested" / "Castle.png")
+    write_image(source_root / "Maps" / "Other" / "Cave.png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+    rebuild_search_corpus(config, db_path)
+    client = TestClient(create_app(config, db_path))
+
+    whitelist_response = client.patch(
+        "/api/search-profile/settings",
+        json={
+            "search_session": "tab-1",
+            "source_id": "dnd",
+            "directory": "Maps/Nested",
+            "selection_state": "whitelist",
+        },
+    )
+    blacklist_response = client.patch(
+        "/api/search-profile/settings",
+        json={
+            "search_session": "tab-1",
+            "source_id": "dnd",
+            "directory": "Maps/Other",
+            "selection_state": "blacklist",
+        },
+    )
+    save_response = client.post(
+        "/api/search-profile/save",
+        json={"search_session": "tab-1"},
+    )
+
+    assert whitelist_response.status_code == 200
+    assert blacklist_response.status_code == 200
+    assert save_response.status_code == 200
+
+    body = client.get(
+        "/api/search-with-directory-counts",
+        params={"source_id": "dnd", "search_session": "tab-1"},
+    ).json()
+
+    assert {
+        directory["path"]: (
+            directory["has_descendant_whitelist"],
+            directory["has_descendant_blacklist"],
+            directory["profile_dirty"],
+        )
+        for directory in body["directories"]
+    } == {
+        "": (True, True, False),
+        "Maps": (True, True, False),
+        "Maps/Nested": (False, False, False),
+        "Maps/Other": (False, False, False),
+    }
+
+
 def test_api_groups_numbered_variants_with_accidental_embedded_image_extension(
     tmp_path: Path,
 ) -> None:

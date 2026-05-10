@@ -21,6 +21,8 @@ def _stable_directory(directory: dict[str, object]) -> dict[str, object]:
             "selection_state",
             "selection_effective",
             "profile_dirty",
+            "has_descendant_whitelist",
+            "has_descendant_blacklist",
         }
     }
 

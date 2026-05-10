@@ -338,7 +338,8 @@ replaces a single selected-directory hard filter.
 The compact folder control should indicate when that folder's subtree contains
 an unsaved difference from the currently saved active profile. This is a dirty
 working-state cue, not a cue for persisted settings that already match the
-profile.
+profile. The same compact control also indicates when explicit focus or block
+rules exist below the folder, separate from the folder's own direct rule state.
 
 A row selection can still focus, expand, or provide preview context, but final hard filtering should come from the explicit include/exclude subtree rules. Global empty-query behavior can be conservative, such as showing nothing, recent assets, or preferred assets.
 

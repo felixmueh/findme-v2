@@ -377,6 +377,10 @@ def create_app(
             dirty_folder_subtree_keys = profile_sessions.dirty_folder_subtree_keys(
                 profile_session
             )
+            (
+                descendant_whitelist_keys,
+                descendant_blacklist_keys,
+            ) = profile_sessions.selection_descendant_rule_keys(profile_session)
         control = search_revisions.control(search_session, search_revision)
         if control and control.is_cancelled():
             return Response(status_code=204)
@@ -407,6 +411,8 @@ def create_app(
                         _directory_response(
                             directory,
                             dirty_folder_subtree_keys=dirty_folder_subtree_keys,
+                            descendant_whitelist_keys=descendant_whitelist_keys,
+                            descendant_blacklist_keys=descendant_blacklist_keys,
                         )
                         for directory in directories
                     ],
@@ -453,6 +459,8 @@ def create_app(
                     _directory_response(
                         directory,
                         dirty_folder_subtree_keys=dirty_folder_subtree_keys,
+                        descendant_whitelist_keys=descendant_whitelist_keys,
+                        descendant_blacklist_keys=descendant_blacklist_keys,
                     )
                     for directory in directories
                 ],
@@ -581,7 +589,10 @@ def _directory_response(
     directory: DirectoryMatch,
     *,
     dirty_folder_subtree_keys: frozenset[tuple[str, str]] = frozenset(),
+    descendant_whitelist_keys: frozenset[tuple[str, str]] = frozenset(),
+    descendant_blacklist_keys: frozenset[tuple[str, str]] = frozenset(),
 ) -> dict[str, object]:
+    directory_key = (directory.source_id, directory.path)
     return {
         "source_id": directory.source_id,
         "path": directory.path,
@@ -594,8 +605,9 @@ def _directory_response(
         "quality_override": directory.quality_override,
         "selection_state": directory.selection_state,
         "selection_effective": directory.selection_effective,
-        "profile_dirty": (directory.source_id, directory.path)
-        in dirty_folder_subtree_keys,
+        "profile_dirty": directory_key in dirty_folder_subtree_keys,
+        "has_descendant_whitelist": directory_key in descendant_whitelist_keys,
+        "has_descendant_blacklist": directory_key in descendant_blacklist_keys,
     }
 
 

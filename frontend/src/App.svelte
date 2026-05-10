@@ -45,6 +45,8 @@
     selection_state: FilterRuleState | null
     selection_effective: boolean
     profile_dirty: boolean
+    has_descendant_whitelist: boolean
+    has_descendant_blacklist: boolean
   }
 
   type FilterRuleState = 'whitelist' | 'blacklist'
@@ -697,6 +699,20 @@
         ? 'blocked, '
         : ''
     return `Folder controls for ${directory.name}, ${state}quality ${directory.quality}`
+  }
+
+  function folderControlTitle(directory: DirectoryNode) {
+    const signals: string[] = []
+    if (directory.profile_dirty) {
+      signals.push(
+        directory.has_descendant_whitelist || directory.has_descendant_blacklist
+          ? 'Unsaved profile change'
+          : 'Unsaved profile change in this folder subtree'
+      )
+    }
+    if (directory.has_descendant_whitelist) signals.push('descendant focus rule')
+    if (directory.has_descendant_blacklist) signals.push('descendant block rule')
+    return signals.length > 0 ? signals.join('; ') : undefined
   }
 
   async function toggleDirectoryRule(directory: DirectoryNode, state: FilterRuleState) {
@@ -1396,13 +1412,11 @@
               class:focused={ruleState === 'whitelist' && directory.selection_effective}
               class:superseded={ruleState === 'whitelist' && !directory.selection_effective}
               class:override={directory.quality_override !== null}
-              class:has-dirty-profile-change={directory.profile_dirty}
+              class:has-subtree-signals={directory.profile_dirty || directory.has_descendant_whitelist || directory.has_descendant_blacklist}
               type="button"
               aria-label={folderControlLabel(directory, ruleState)}
               aria-expanded={qualityTargetKey === directoryKey(directory)}
-              title={directory.profile_dirty
-                ? 'Unsaved profile change in this folder subtree'
-                : undefined}
+              title={folderControlTitle(directory)}
               onfocus={() => setQualityHover(directory)}
               onclick={(event) => toggleQualityPicker(event, directory)}
             >
@@ -1412,6 +1426,19 @@
                 <Ban size={13} />
               {/if}
               <span>{directory.quality}</span>
+              {#if directory.profile_dirty || directory.has_descendant_whitelist || directory.has_descendant_blacklist}
+                <span class="folder-subtree-signals" aria-hidden="true">
+                  {#if directory.profile_dirty}
+                    <span class="dirty-signal"></span>
+                  {/if}
+                  {#if directory.has_descendant_whitelist}
+                    <span class="whitelist-signal"></span>
+                  {/if}
+                  {#if directory.has_descendant_blacklist}
+                    <span class="blacklist-signal"></span>
+                  {/if}
+                </span>
+              {/if}
             </button>
             {#if qualityTargetKey === directoryKey(directory)}
               <span class="folder-control-popover" role="group" aria-label={`Folder controls for ${directory.name}`}>
