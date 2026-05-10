@@ -177,10 +177,10 @@ a:focus-visible {
   padding: 10px;
 }
 
-.asset-tile {
+.asset-tile,
+.asset-card {
   min-width: 0;
   display: grid;
-  grid-template-rows: 126px auto auto;
   gap: 6px;
   padding: 7px;
   border: 1px solid var(--border);
@@ -191,13 +191,38 @@ a:focus-visible {
   box-shadow: 0 0 0 rgba(28, 25, 23, 0);
 }
 
+.asset-tile {
+  grid-template-rows: 126px auto auto;
+}
+
+.asset-card {
+  grid-template-rows: auto 30px;
+}
+
+.asset-card-main {
+  min-width: 0;
+  display: grid;
+  grid-template-rows: 126px auto auto;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
 .asset-tile:hover,
-.asset-tile.selected {
+.asset-tile.selected,
+.asset-card:hover,
+.asset-card.selected,
+.asset-card:focus-within {
   border-color: var(--border-strong);
 }
 
 .asset-tile:hover,
-.asset-tile:focus-visible {
+.asset-tile:focus-visible,
+.asset-card:hover,
+.asset-card:focus-within {
   outline: 1px solid #a99f94;
   outline-offset: -1px;
   box-shadow: 0 2px 10px rgba(28, 25, 23, 0.14);
@@ -205,7 +230,8 @@ a:focus-visible {
 
 .asset-tile.collection-tile,
 .asset-tile.collection-header,
-.asset-tile.collection-member {
+.asset-tile.collection-member,
+.asset-card.collection-member {
   background:
     linear-gradient(
       0deg,
@@ -230,6 +256,11 @@ a:focus-visible {
   box-shadow: 0 0 0 5px color-mix(in srgb, var(--collection-color), transparent 88%);
 }
 
+.asset-card.collection-member {
+  border-color: var(--border);
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--collection-color), transparent 88%);
+}
+
 .asset-tile.collection-tile:hover,
 .asset-tile.collection-tile:focus-visible {
   box-shadow:
@@ -240,15 +271,68 @@ a:focus-visible {
 .asset-tile.collection-header:hover,
 .asset-tile.collection-header:focus-visible,
 .asset-tile.collection-member:hover,
-.asset-tile.collection-member:focus-visible {
+.asset-tile.collection-member:focus-visible,
+.asset-card.collection-member:hover,
+.asset-card.collection-member:focus-within {
   box-shadow:
     0 0 0 5px color-mix(in srgb, var(--collection-color), transparent 88%),
     0 2px 10px rgba(28, 25, 23, 0.14);
 }
 
-.asset-tile.selected {
+.asset-tile.selected,
+.asset-card.selected {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
+}
+
+.card-audio-controls {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 7px;
+  align-items: center;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.audio-asset-card:hover .card-audio-controls,
+.audio-asset-card:focus-within .card-audio-controls {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.preview-mute-button {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface-alt);
+  color: var(--text);
+}
+
+.preview-mute-button:hover {
+  background: var(--surface);
+}
+
+.preview-volume-control {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 34px;
+  gap: 6px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.preview-volume-control input {
+  min-width: 0;
+  accent-color: var(--accent);
+}
+
+.preview-volume-control span:last-child {
+  text-align: right;
 }
 
 .tile-thumb {
@@ -361,47 +445,6 @@ a:focus-visible {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 12px;
-}
-
-.hover-audio-controls {
-  display: grid;
-  grid-template-columns: 34px minmax(0, 1fr);
-  gap: 8px;
-  align-items: center;
-}
-
-.hover-mute-button {
-  width: 34px;
-  height: 30px;
-  display: grid;
-  place-items: center;
-  border: 1px solid var(--border-strong);
-  border-radius: 6px;
-  background: var(--surface-alt);
-  color: var(--text);
-}
-
-.hover-mute-button:hover {
-  background: var(--surface);
-}
-
-.hover-volume-control {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) 34px;
-  gap: 7px;
-  align-items: center;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.hover-volume-control input {
-  min-width: 0;
-  accent-color: var(--accent);
-}
-
-.hover-volume-control span:last-child {
-  text-align: right;
 }
 
 .preview {

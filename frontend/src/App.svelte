@@ -539,6 +539,14 @@
     hoveredAsset = null
   }
 
+  function clearHoveredAssetOnCardFocusOut(event: FocusEvent, asset: Asset) {
+    const nextTarget = event.relatedTarget
+    if (nextTarget instanceof Node && event.currentTarget instanceof HTMLElement) {
+      if (event.currentTarget.contains(nextTarget)) return
+    }
+    if (hoveredAsset?.asset_id === asset.asset_id) clearHoverPreview()
+  }
+
   function setHoverPreviewVolume(event: Event) {
     const input = event.currentTarget as HTMLInputElement
     const nextVolume = Number(input.value) / 100
@@ -990,31 +998,91 @@
           {:else}
             {@const asset = entry.asset}
             {@const Icon = assetIcon(asset)}
-            <button
-              class:selected={asset.asset_id === selectedAssetId}
-              class:collection-member={Boolean(entry.collection_key)}
-              class="asset-tile"
-              style={entry.collection_key ? `--collection-color: ${collectionColor(entry.collection_key)}` : ''}
-              type="button"
-              onmouseenter={() => setHoveredAsset(asset)}
-              onmouseleave={() => scheduleClearHoveredAsset(asset)}
-              onfocus={() => setHoveredAsset(asset)}
-              onblur={() => {
-                if (hoveredAsset?.asset_id === asset.asset_id) clearHoverPreview()
-              }}
-              onclick={() => selectAsset(asset)}
-              onauxclick={(event) => handleAssetAuxClick(event, asset)}
-            >
-              <span class="tile-thumb">
-                {#if asset.thumbnail_url}
-                  <img src={asset.thumbnail_url} alt="" loading="lazy" />
-                {:else}
-                  <Icon size={28} />
-                {/if}
-              </span>
-              <span class="tile-name">{asset.filename}</span>
-              <span class="tile-meta">{asset.directory || asset.source_display_name}</span>
-            </button>
+            {#if asset.media_type === 'audio'}
+              <div
+                class:selected={asset.asset_id === selectedAssetId}
+                class:collection-member={Boolean(entry.collection_key)}
+                class="asset-card audio-asset-card"
+                style={entry.collection_key ? `--collection-color: ${collectionColor(entry.collection_key)}` : ''}
+                role="group"
+                aria-label={`Audio asset card for ${asset.filename}`}
+                onmouseenter={() => setHoveredAsset(asset)}
+                onmouseleave={() => scheduleClearHoveredAsset(asset)}
+                onfocusin={() => setHoveredAsset(asset)}
+                onfocusout={(event) => clearHoveredAssetOnCardFocusOut(event, asset)}
+              >
+                <button
+                  class="asset-card-main"
+                  type="button"
+                  onclick={() => selectAsset(asset)}
+                  onauxclick={(event) => handleAssetAuxClick(event, asset)}
+                >
+                  <span class="tile-thumb">
+                    {#if asset.thumbnail_url}
+                      <img src={asset.thumbnail_url} alt="" loading="lazy" />
+                    {:else}
+                      <Icon size={28} />
+                    {/if}
+                  </span>
+                  <span class="tile-name">{asset.filename}</span>
+                  <span class="tile-meta">{asset.directory || asset.source_display_name}</span>
+                </button>
+                <div class="card-audio-controls" role="group" aria-label="Audio preview controls">
+                  <button
+                    type="button"
+                    class="preview-mute-button"
+                    onclick={toggleHoverPreviewMuted}
+                    aria-label={hoverPreviewMuted ? 'Unmute preview' : 'Mute preview'}
+                    title={hoverPreviewMuted ? 'Unmute preview' : 'Mute preview'}
+                  >
+                    {#if hoverPreviewMuted}
+                      <VolumeX size={16} />
+                    {:else}
+                      <Volume2 size={16} />
+                    {/if}
+                  </button>
+                  <label class="preview-volume-control">
+                    <span>Volume</span>
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      step="1"
+                      value={Math.round(hoverPreviewVolume * 100)}
+                      oninput={setHoverPreviewVolume}
+                      aria-label="Preview volume"
+                    />
+                    <span>{Math.round(hoverPreviewVolume * 100)}%</span>
+                  </label>
+                </div>
+              </div>
+            {:else}
+              <button
+                class:selected={asset.asset_id === selectedAssetId}
+                class:collection-member={Boolean(entry.collection_key)}
+                class="asset-tile"
+                style={entry.collection_key ? `--collection-color: ${collectionColor(entry.collection_key)}` : ''}
+                type="button"
+                onmouseenter={() => setHoveredAsset(asset)}
+                onmouseleave={() => scheduleClearHoveredAsset(asset)}
+                onfocus={() => setHoveredAsset(asset)}
+                onblur={() => {
+                  if (hoveredAsset?.asset_id === asset.asset_id) clearHoverPreview()
+                }}
+                onclick={() => selectAsset(asset)}
+                onauxclick={(event) => handleAssetAuxClick(event, asset)}
+              >
+                <span class="tile-thumb">
+                  {#if asset.thumbnail_url}
+                    <img src={asset.thumbnail_url} alt="" loading="lazy" />
+                  {:else}
+                    <Icon size={28} />
+                  {/if}
+                </span>
+                <span class="tile-name">{asset.filename}</span>
+                <span class="tile-meta">{asset.directory || asset.source_display_name}</span>
+              </button>
+            {/if}
           {/if}
         {:else}
           <div class="empty">No assets found</div>
@@ -1049,36 +1117,6 @@
             </div>
           {/if}
           <span class="hover-preview-name">{hoverPreviewAsset.filename}</span>
-          {#if hoverPreviewAsset.media_type === 'audio'}
-            <div class="hover-audio-controls" role="group" aria-label="Audio preview controls">
-              <button
-                type="button"
-                class="hover-mute-button"
-                onclick={toggleHoverPreviewMuted}
-                aria-label={hoverPreviewMuted ? 'Unmute preview' : 'Mute preview'}
-                title={hoverPreviewMuted ? 'Unmute preview' : 'Mute preview'}
-              >
-                {#if hoverPreviewMuted}
-                  <VolumeX size={16} />
-                {:else}
-                  <Volume2 size={16} />
-                {/if}
-              </button>
-              <label class="hover-volume-control">
-                <span>Volume</span>
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  step="1"
-                  value={Math.round(hoverPreviewVolume * 100)}
-                  oninput={setHoverPreviewVolume}
-                  aria-label="Preview volume"
-                />
-                <span>{Math.round(hoverPreviewVolume * 100)}%</span>
-              </label>
-            </div>
-          {/if}
         </aside>
       {/if}
 
