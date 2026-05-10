@@ -6,8 +6,9 @@ from findme.api import create_app
 from findme.config import AppConfig, SourceConfig
 from findme.db import connect, initialize_database
 from findme.indexer import index_sources
+from findme.result_cards import ResultCardResolver
 from findme.search import SearchIndex, SearchSuperseded
-from findme.search_corpus import rebuild_search_corpus
+from findme.search_corpus import SearchCorpus, rebuild_search_corpus
 
 from helpers import write_image
 
@@ -740,6 +741,118 @@ def test_api_applies_profile_selection_before_pagination(tmp_path: Path) -> None
     assert [_card_asset(card)["relative_path"] for card in body["cards"]] == [
         "Maps/Keep.png"
     ]
+
+
+def test_api_profile_selection_browse_does_not_rebuild_search_corpus(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source_root = tmp_path / "assets"
+    write_image(source_root / "Maps" / "Keep.png")
+    write_image(source_root / "Tokens" / "Skip.png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+    rebuild_search_corpus(config, db_path)
+
+    client = TestClient(create_app(config, db_path))
+    assert client.patch(
+        "/api/search-profile/settings",
+        json={
+            "search_session": "tab-1",
+            "source_id": "dnd",
+            "directory": "Maps",
+            "selection_state": "whitelist",
+        },
+    ).status_code == 200
+
+    def fail_from_assets(*_args, **_kwargs):
+        raise AssertionError("profile-scoped browse rebuilt a SearchCorpus")
+
+    monkeypatch.setattr(SearchCorpus, "from_assets", fail_from_assets)
+
+    body = client.get(
+        "/api/assets",
+        params={"search_session": "tab-1"},
+    ).json()
+
+    assert body["total"] == 1
+    assert [_card_asset(card)["relative_path"] for card in body["cards"]] == [
+        "Maps/Keep.png"
+    ]
+
+
+def test_api_profile_selection_reuses_startup_card_resolver(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source_root = tmp_path / "assets"
+    write_image(source_root / "Maps" / "Human Mage.png")
+    write_image(source_root / "Maps" / "Human Mage2.png")
+    write_image(source_root / "Tokens" / "Skip.png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+    rebuild_search_corpus(config, db_path)
+
+    client = TestClient(create_app(config, db_path))
+    assert client.patch(
+        "/api/search-profile/settings",
+        json={
+            "search_session": "tab-1",
+            "source_id": "dnd",
+            "directory": "Maps",
+            "selection_state": "whitelist",
+        },
+    ).status_code == 200
+
+    def fail_from_assets(*_args, **_kwargs):
+        raise AssertionError("profile-scoped cards rebuilt ResultCardResolver")
+
+    monkeypatch.setattr(ResultCardResolver, "from_assets", fail_from_assets)
+
+    browse_body = client.get(
+        "/api/assets",
+        params={"search_session": "tab-1"},
+    ).json()
+    search_body = client.get(
+        "/api/search",
+        params={"q": "mage2", "mode": "strict", "search_session": "tab-1"},
+    ).json()
+
+    assert browse_body["total"] == 1
+    assert browse_body["cards"][0]["kind"] == "collection"
+    assert search_body["total"] == 1
+    assert search_body["cards"][0]["kind"] == "collection"
+    assert search_body["cards"][0]["representative"]["relative_path"] == (
+        "Maps/Human Mage2.png"
+    )
 
 
 def test_api_rejects_malformed_profile_selection_rules(tmp_path: Path) -> None:

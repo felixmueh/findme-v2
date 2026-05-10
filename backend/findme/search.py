@@ -93,11 +93,20 @@ class DirectoryFilter:
 class SearchPreferences:
     preference_adjustments: tuple[float, ...]
     directory_filter: DirectoryFilter = field(default_factory=DirectoryFilter)
+    included_asset_indexes: frozenset[int] | None = None
+    included_asset_index_order: tuple[int, ...] | None = None
     quality_overrides: dict[tuple[str, str], int] = field(default_factory=dict)
+    selection_states: dict[tuple[str, str], DirectoryFilterState] = field(default_factory=dict)
     settings_fingerprint: str = "empty"
 
     def preference_adjustment(self, asset: SearchCorpusAsset) -> float:
         return self.preference_adjustments[asset.asset_index]
+
+    def includes(self, asset: SearchCorpusAsset) -> bool:
+        return (
+            self.included_asset_indexes is None
+            or asset.asset_index in self.included_asset_indexes
+        )
 
     def folder_quality(self, source_id: str, directory: str) -> tuple[int, int | None]:
         override = self.quality_overrides.get((source_id, directory))
@@ -111,10 +120,7 @@ class SearchPreferences:
         )
 
     def selection_state(self, source_id: str, directory: str) -> DirectoryFilterState | None:
-        rules_by_node = {
-            (rule.source_id, rule.path): rule.state for rule in self.directory_filter.rules
-        }
-        return rules_by_node.get((source_id, directory))
+        return self.selection_states.get((source_id, directory))
 
 
 class SearchSuperseded(RuntimeError):
@@ -165,7 +171,7 @@ class _InFlightSearch:
 class SearchIndex:
     assets: tuple[SearchCorpusAsset, ...]
     directory_counts: dict[tuple[str, str], int]
-    directory_asset_indexes: dict[tuple[str, str], tuple[int, ...]]
+    directory_subtree_asset_indexes: dict[tuple[str, str], tuple[int, ...]]
     source_display_names: dict[str, str]
     source_sort_keys: dict[str, tuple[int, str, str]]
     fuzzy_tokens: tuple[str, ...] = ()
@@ -192,7 +198,7 @@ class SearchIndex:
             directory_counts=count_asset_directories(
                 [(asset.source_id, asset.directory) for asset in assets]
             ),
-            directory_asset_indexes=_asset_indexes_by_directory(assets),
+            directory_subtree_asset_indexes=_asset_indexes_by_directory_subtree(assets),
             source_display_names={
                 asset.source_id: asset.source_display_name for asset in assets
             },
@@ -238,7 +244,9 @@ class SearchIndex:
         return cls(
             assets=snapshot.assets,
             directory_counts=snapshot.directory_counts,
-            directory_asset_indexes=_asset_indexes_by_directory(snapshot.assets),
+            directory_subtree_asset_indexes=_asset_indexes_by_directory_subtree(
+                snapshot.assets
+            ),
             source_display_names=snapshot.source_display_names,
             source_sort_keys=snapshot.source_sort_keys,
             fuzzy_tokens=snapshot.fuzzy_tokens,
@@ -282,30 +290,129 @@ class SearchIndex:
             total=len(ranked),
         )
 
-    def scoped_assets(
+    def browse(
         self,
         *,
         source_id: str | None = None,
         directory: str | None = None,
         directory_prefix: str | None = None,
         preferences: SearchPreferences | None = None,
+        limit: int = 100,
+        offset: int = 0,
         control: SearchControl | None = None,
-    ) -> list[SearchResult]:
+    ) -> SearchResultsPage:
         preferences = preferences or empty_search_preferences(self.assets)
-        corpus = _filter_corpus(
-            SearchCorpus(
-                self.assets,
-                self.fuzzy_tokens,
-                self.fuzzy_token_asset_indexes,
-                self.lexical_index,
-            ),
-            source_id=source_id,
-            directory=directory,
-            directory_prefix=directory_prefix,
-            directory_filter=preferences.directory_filter,
-            control=control,
+        results = []
+        total = 0
+        end = offset + limit
+        asset_indexes = preferences.included_asset_index_order
+        assets = (
+            self.assets
+            if asset_indexes is None
+            else (self.assets[asset_index] for asset_index in asset_indexes)
         )
-        return [_record_to_result(asset, 0) for asset in corpus.assets]
+        scope_preferences = None if asset_indexes is not None else preferences
+        for index, asset in enumerate(assets, start=1):
+            if control:
+                control.check(index)
+            if not _asset_in_scope(
+                asset,
+                source_id=source_id,
+                directory=directory,
+                directory_prefix=directory_prefix,
+                preferences=scope_preferences,
+            ):
+                continue
+            if offset <= total < end:
+                results.append(_record_to_result(asset, 0))
+            total += 1
+        return SearchResultsPage(assets=results, total=total)
+
+    def all_asset_results(self) -> list[SearchResult]:
+        return [_record_to_result(asset, 0) for asset in self.assets]
+
+    def compile_preferences(
+        self,
+        *,
+        directory_filter: DirectoryFilter | None = None,
+        quality_overrides: dict[tuple[str, str], int] | None = None,
+    ) -> SearchPreferences:
+        directory_filter = directory_filter or DirectoryFilter()
+        quality_overrides = quality_overrides or {}
+        included_asset_indexes = self._included_asset_indexes(directory_filter)
+        return SearchPreferences(
+            preference_adjustments=self._preference_adjustments(quality_overrides),
+            directory_filter=directory_filter,
+            included_asset_indexes=included_asset_indexes,
+            included_asset_index_order=(
+                None
+                if included_asset_indexes is None
+                else tuple(sorted(included_asset_indexes))
+            ),
+            quality_overrides=quality_overrides,
+            selection_states={
+                (rule.source_id, rule.path): rule.state
+                for rule in directory_filter.rules
+            },
+            settings_fingerprint=folder_settings_fingerprint(
+                directory_filter,
+                quality_overrides,
+            ),
+        )
+
+    def _preference_adjustments(
+        self,
+        quality_overrides: dict[tuple[str, str], int],
+    ) -> tuple[float, ...]:
+        if not quality_overrides:
+            return (0.0,) * len(self.assets)
+
+        adjustments = [0.0] * len(self.assets)
+        for (source_id, directory), quality in sorted(
+            quality_overrides.items(),
+            key=lambda item: (
+                0 if item[0][1] == "" else len(item[0][1].split("/")),
+                item[0][0],
+                item[0][1],
+            ),
+        ):
+            adjustment = _folder_quality_adjustment(quality)
+            for asset_index in self.directory_subtree_asset_indexes.get(
+                (source_id, directory),
+                (),
+            ):
+                adjustments[asset_index] = adjustment
+        return tuple(adjustments)
+
+    def _included_asset_indexes(
+        self,
+        directory_filter: DirectoryFilter,
+    ) -> frozenset[int] | None:
+        if not directory_filter.rules:
+            return None
+
+        included: set[int] = (
+            set()
+            if directory_filter.has_whitelist
+            else {asset.asset_index for asset in self.assets}
+        )
+        for rule in sorted(
+            directory_filter.rules,
+            key=lambda item: (
+                0 if item.path == "" else len(item.path.split("/")),
+                item.source_id,
+                item.path,
+            ),
+        ):
+            indexes = self.directory_subtree_asset_indexes.get(
+                (rule.source_id, rule.path),
+                (),
+            )
+            if rule.state == "whitelist":
+                included.update(indexes)
+            else:
+                included.difference_update(indexes)
+        return frozenset(included)
 
     def directories_for_matches(
         self,
@@ -331,6 +438,43 @@ class SearchIndex:
             total_counts,
             match_counts,
             included_counts,
+            preferences=preferences,
+        )
+
+    def directories_for_scope(
+        self,
+        *,
+        source_id: str | None = None,
+        directory: str | None = None,
+        directory_prefix: str | None = None,
+        preferences: SearchPreferences | None = None,
+        control: SearchControl | None = None,
+    ) -> list[DirectoryMatch]:
+        preferences = preferences or empty_search_preferences(self.assets)
+        if (
+            directory is None
+            and directory_prefix is None
+            and preferences.included_asset_indexes is None
+        ):
+            total_counts = _filter_directory_counts(self.directory_counts, source_id)
+            return self._directory_matches_from_counts(
+                total_counts,
+                total_counts,
+                total_counts,
+                preferences=preferences,
+            )
+
+        page = self.browse(
+            source_id=source_id,
+            directory=directory,
+            directory_prefix=directory_prefix,
+            preferences=preferences,
+            limit=len(self.assets),
+            control=control,
+        )
+        return self.directories_for_matches(
+            page.assets,
+            source_id=source_id,
             preferences=preferences,
         )
 
@@ -449,7 +593,7 @@ class SearchIndex:
                         source_id=source_id,
                         directory=directory,
                         directory_prefix=directory_prefix,
-                        directory_filter=preferences.directory_filter,
+                        preferences=preferences,
                     ),
                     control=control,
                 )
@@ -535,7 +679,10 @@ def empty_search_preferences(assets: tuple[SearchCorpusAsset, ...]) -> SearchPre
     return SearchPreferences(
         preference_adjustments=tuple(0.0 for _asset in assets),
         directory_filter=DirectoryFilter(),
+        included_asset_indexes=None,
+        included_asset_index_order=None,
         quality_overrides={},
+        selection_states={},
         settings_fingerprint="empty",
     )
 
@@ -916,53 +1063,13 @@ def _domain_candidate_indexes(
     return tuple(candidate_indexes)
 
 
-def _filter_corpus(
-    corpus: SearchCorpus,
-    *,
-    source_id: str | None,
-    directory: str | None,
-    directory_prefix: str | None,
-    directory_filter: DirectoryFilter | None,
-    control: SearchControl | None = None,
-) -> SearchCorpus:
-    if (
-        source_id is None
-        and directory is None
-        and directory_prefix is None
-        and not (directory_filter and directory_filter.rules)
-    ):
-        return corpus
-
-    filtered_assets = []
-    for index, asset in enumerate(corpus.assets, start=1):
-        if control:
-            control.check(index)
-        if source_id and asset.source_id != source_id:
-            continue
-        if directory is not None and asset.directory != directory:
-            continue
-        if directory_prefix and not (
-            asset.directory == directory_prefix
-            or asset.directory.startswith(f"{directory_prefix}/")
-        ):
-            continue
-        if directory_filter and not includes_asset(
-            asset.source_id,
-            asset.directory,
-            directory_filter,
-        ):
-            continue
-        filtered_assets.append(asset)
-    return SearchCorpus.from_assets(filtered_assets)
-
-
 def _asset_in_scope(
     asset: SearchCorpusAsset,
     *,
     source_id: str | None,
     directory: str | None,
     directory_prefix: str | None,
-    directory_filter: DirectoryFilter | None,
+    preferences: SearchPreferences | None,
 ) -> bool:
     if source_id and asset.source_id != source_id:
         return False
@@ -973,11 +1080,7 @@ def _asset_in_scope(
         or asset.directory.startswith(f"{directory_prefix}/")
     ):
         return False
-    if directory_filter and not includes_asset(
-        asset.source_id,
-        asset.directory,
-        directory_filter,
-    ):
+    if preferences and not preferences.includes(asset):
         return False
     return True
 
@@ -1017,12 +1120,13 @@ def _filter_directory_counts(
     }
 
 
-def _asset_indexes_by_directory(
+def _asset_indexes_by_directory_subtree(
     assets: tuple[SearchCorpusAsset, ...],
 ) -> dict[tuple[str, str], tuple[int, ...]]:
     indexes: dict[tuple[str, str], list[int]] = {}
-    for index, asset in enumerate(assets):
-        indexes.setdefault((asset.source_id, asset.directory), []).append(index)
+    for asset in assets:
+        for ancestor in _directory_ancestors(asset.directory):
+            indexes.setdefault((asset.source_id, ancestor), []).append(asset.asset_index)
     return {key: tuple(value) for key, value in indexes.items()}
 
 

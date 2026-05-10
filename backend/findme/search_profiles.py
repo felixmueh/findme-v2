@@ -13,8 +13,6 @@ from findme.search import (
     DirectoryFilterState,
     SearchIndex,
     SearchPreferences,
-    folder_settings_fingerprint,
-    preference_adjustments,
 )
 
 
@@ -59,6 +57,7 @@ class SearchProfileSession:
     base_profile_version: int | None
     working_settings: dict[tuple[str, str], FolderSetting]
     persisted_settings: dict[tuple[str, str], FolderSetting]
+    preferences: SearchPreferences
 
     @property
     def dirty_scoring(self) -> bool:
@@ -285,7 +284,7 @@ class SearchProfileSessionManager:
         db: sqlite3.Connection,
         search_session: str | None,
     ) -> SearchPreferences:
-        return self._preferences_for_session(self.session(db, search_session))
+        return self.session(db, search_session).preferences
 
     def select_profile(
         self,
@@ -357,6 +356,7 @@ class SearchProfileSessionManager:
                 next_settings[(source_id, directory)] = next_setting
             _validate_selection_rules(next_settings)
             session.working_settings = _normalize_settings(next_settings)
+            session.preferences = self._compile_preferences(session.working_settings)
             return session
 
     def reset_scoring(
@@ -394,6 +394,7 @@ class SearchProfileSessionManager:
                     selection_state=setting.selection_state,
                 )
             session.working_settings = _normalize_settings(next_settings)
+            session.preferences = self._compile_preferences(session.working_settings)
             return session
 
     def reset_selection(
@@ -432,6 +433,7 @@ class SearchProfileSessionManager:
                 )
             _validate_selection_rules(next_settings)
             session.working_settings = _normalize_settings(next_settings)
+            session.preferences = self._compile_preferences(session.working_settings)
             return session
 
     def save(
@@ -465,6 +467,7 @@ class SearchProfileSessionManager:
             session.base_profile_version = profile.version
             session.persisted_settings = persisted
             session.working_settings = dict(persisted)
+            session.preferences = self._compile_preferences(session.working_settings)
             return session
 
     def create_profile(
@@ -488,6 +491,7 @@ class SearchProfileSessionManager:
             session.base_profile_version = profile.version
             session.persisted_settings = persisted
             session.working_settings = dict(persisted)
+            session.preferences = self._compile_preferences(session.working_settings)
             return session
 
     def delete_profile(
@@ -522,10 +526,7 @@ class SearchProfileSessionManager:
             "dirty_scoring": session.dirty_scoring,
             "dirty_selection": session.dirty_selection,
             "dirty": session.dirty,
-            "settings_fingerprint": folder_settings_fingerprint(
-                _settings_to_filter(session.working_settings),
-                _quality_overrides(session.working_settings),
-            ),
+            "settings_fingerprint": session.preferences.settings_fingerprint,
         }
 
     def _new_session_from_profile(
@@ -544,23 +545,17 @@ class SearchProfileSessionManager:
             base_profile_version=profile.version,
             working_settings=dict(settings),
             persisted_settings=dict(settings),
+            preferences=self._compile_preferences(settings),
         )
 
-    def _preferences_for_session(self, session: SearchProfileSession) -> SearchPreferences:
-        settings = _normalize_settings(session.working_settings)
-        quality_overrides = _quality_overrides(settings)
-        directory_filter = _settings_to_filter(settings)
-        return SearchPreferences(
-            preference_adjustments=preference_adjustments(
-                self._search_index.assets,
-                quality_overrides,
-            ),
-            directory_filter=directory_filter,
-            quality_overrides=quality_overrides,
-            settings_fingerprint=folder_settings_fingerprint(
-                directory_filter,
-                quality_overrides,
-            ),
+    def _compile_preferences(
+        self,
+        settings: dict[tuple[str, str], FolderSetting],
+    ) -> SearchPreferences:
+        normalized = _normalize_settings(settings)
+        return self._search_index.compile_preferences(
+            directory_filter=_settings_to_filter(normalized),
+            quality_overrides=_quality_overrides(normalized),
         )
 
     def _validate_directory(self, source_id: str, directory: str) -> None:

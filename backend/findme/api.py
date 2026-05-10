@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from pathlib import Path
 import sqlite3
 import threading
@@ -89,10 +90,151 @@ def create_app(
     card_metadata_by_asset_id = snapshot.card_metadata_by_asset_id()
     profile_sessions = SearchProfileSessionManager(search_index)
     card_resolver = ResultCardResolver.from_assets(
-        [_search_response(result) for result in search_index.scoped_assets()],
+        [_search_response(result) for result in search_index.all_asset_results()],
         card_metadata_by_asset_id=card_metadata_by_asset_id,
     )
     search_revisions = _SearchRevisionRegistry()
+    scoped_browse_results = _ScopedValueCache[tuple[SearchResult, ...]](max_size=8)
+    scoped_browse_cards = _ScopedValueCache[tuple[dict[str, object], ...]](max_size=16)
+    browse_directory_matches = _ScopedValueCache[list[DirectoryMatch]](max_size=16)
+
+    def needs_scoped_scope(
+        *,
+        preferences,
+        source_id: str | None,
+        directory: str | None,
+        directory_prefix: str | None,
+    ) -> bool:
+        return (
+            preferences.included_asset_indexes is not None
+            or source_id is not None
+            or directory is not None
+            or directory_prefix is not None
+        )
+
+    def asset_ids_for_scope(
+        *,
+        preferences,
+        source_id: str | None,
+        directory: str | None,
+        directory_prefix: str | None,
+    ) -> tuple[str, ...] | None:
+        if not needs_scoped_scope(
+            preferences=preferences,
+            source_id=source_id,
+            directory=directory,
+            directory_prefix=directory_prefix,
+        ):
+            return None
+        return tuple(
+            result.asset_id
+            for result in browse_results_for_scope(
+                preferences=preferences,
+                source_id=source_id,
+                directory=directory,
+                directory_prefix=directory_prefix,
+            )
+        )
+
+    def browse_results_for_scope(
+        *,
+        preferences,
+        source_id: str | None,
+        directory: str | None,
+        directory_prefix: str | None,
+    ) -> tuple[SearchResult, ...]:
+        return scoped_browse_results.get_or_build(
+            _scope_cache_key(
+                preferences=preferences,
+                source_id=source_id,
+                directory=directory,
+                directory_prefix=directory_prefix,
+            ),
+            lambda: tuple(
+                search_index.browse(
+                    source_id=source_id,
+                    directory=directory,
+                    directory_prefix=directory_prefix,
+                    preferences=preferences,
+                    limit=len(search_index.assets),
+                ).assets
+            ),
+        )
+
+    def directories_for_browse_scope(
+        *,
+        preferences,
+        source_id: str | None,
+        directory: str | None,
+        directory_prefix: str | None,
+        control: SearchControl | None = None,
+    ) -> list[DirectoryMatch]:
+        return browse_directory_matches.get_or_build(
+            _scope_cache_key(
+                preferences=preferences,
+                source_id=source_id,
+                directory=directory,
+                directory_prefix=directory_prefix,
+            ),
+            lambda: (
+                search_index.directories_for_scope(
+                    source_id=source_id,
+                    directory=directory,
+                    directory_prefix=directory_prefix,
+                    preferences=preferences,
+                    control=control,
+                )
+                if (
+                    preferences.included_asset_indexes is None
+                    and directory is None
+                    and directory_prefix is None
+                )
+                else search_index.directories_for_matches(
+                    browse_results_for_scope(
+                        preferences=preferences,
+                        source_id=source_id,
+                        directory=directory,
+                        directory_prefix=directory_prefix,
+                    ),
+                    source_id=source_id,
+                    preferences=preferences,
+                )
+            ),
+        )
+
+    def card_page_for_browse_scope(
+        *,
+        preferences,
+        source_id: str | None,
+        directory: str | None,
+        directory_prefix: str | None,
+        offset: int,
+        limit: int,
+    ) -> tuple[list[dict[str, object]], int]:
+        asset_ids = asset_ids_for_scope(
+            preferences=preferences,
+            source_id=source_id,
+            directory=directory,
+            directory_prefix=directory_prefix,
+        )
+        if asset_ids is None:
+            return card_resolver.browse_page(offset=offset, limit=limit)
+        cards = scoped_browse_cards.get_or_build(
+            _scope_cache_key(
+                preferences=preferences,
+                source_id=source_id,
+                directory=directory,
+                directory_prefix=directory_prefix,
+            ),
+            lambda: tuple(
+                card_resolver.browse_page(
+                    offset=0,
+                    limit=None,
+                    asset_ids=asset_ids,
+                )[0]
+            ),
+        )
+        return list(cards[offset : offset + limit]), len(cards)
 
     app = FastAPI(title="Findme V2")
 
@@ -124,22 +266,11 @@ def create_app(
     ) -> dict[str, object]:
         with connect(database_path) as db:
             preferences = profile_sessions.preferences(db, search_session)
-        scoped_assets = search_index.scoped_assets(
+        cards, total = card_page_for_browse_scope(
+            preferences=preferences,
             source_id=source_id,
             directory=directory,
             directory_prefix=directory_prefix,
-            preferences=preferences,
-        )
-        scoped_card_resolver = (
-            ResultCardResolver.from_assets(
-                [_search_response(result) for result in scoped_assets],
-                card_metadata_by_asset_id=card_metadata_by_asset_id,
-            )
-            if preferences.directory_filter.rules or source_id or directory is not None or directory_prefix
-            else card_resolver
-        )
-        cards, total = scoped_card_resolver.page_for(
-            [_search_response(result) for result in scoped_assets],
             offset=offset,
             limit=limit,
         )
@@ -282,6 +413,16 @@ def create_app(
         control = search_revisions.control(search_session, search_revision)
         if control and control.is_cancelled():
             return Response(status_code=204)
+        if not _trimmed_query(q):
+            cards, total = card_page_for_browse_scope(
+                preferences=preferences,
+                source_id=source_id,
+                directory=directory,
+                directory_prefix=directory_prefix,
+                offset=offset,
+                limit=limit,
+            )
+            return JSONResponse({"cards": cards, "total": total})
         domain_vocabulary = _load_domain_vocabulary(config)
         try:
             matched_assets = _matched_assets(
@@ -297,23 +438,7 @@ def create_app(
             )
         except SearchSuperseded:
             return Response(status_code=204)
-        scoped_card_resolver = (
-            ResultCardResolver.from_assets(
-                [
-                    _search_response(result)
-                    for result in search_index.scoped_assets(
-                        source_id=source_id,
-                        directory=directory,
-                        directory_prefix=directory_prefix,
-                        preferences=preferences,
-                    )
-                ],
-                card_metadata_by_asset_id=card_metadata_by_asset_id,
-            )
-            if preferences.directory_filter.rules or source_id or directory is not None or directory_prefix
-            else card_resolver
-        )
-        cards, total = scoped_card_resolver.page_for(
+        cards, total = card_resolver.page_for(
             [_search_response(result) for result in matched_assets],
             offset=offset,
             limit=limit,
@@ -337,6 +462,34 @@ def create_app(
         control = search_revisions.control(search_session, search_revision)
         if control and control.is_cancelled():
             return Response(status_code=204)
+        if not _trimmed_query(q):
+            cards, total = card_page_for_browse_scope(
+                preferences=preferences,
+                source_id=source_id,
+                directory=directory,
+                directory_prefix=directory_prefix,
+                offset=offset,
+                limit=limit,
+            )
+            try:
+                directories = directories_for_browse_scope(
+                    preferences=preferences,
+                    source_id=source_id,
+                    directory=directory,
+                    directory_prefix=directory_prefix,
+                    control=control,
+                )
+            except SearchSuperseded:
+                return Response(status_code=204)
+            return JSONResponse(
+                {
+                    "cards": cards,
+                    "total": total,
+                    "directories": [
+                        _directory_response(directory) for directory in directories
+                    ],
+                }
+            )
         domain_vocabulary = _load_domain_vocabulary(config)
         try:
             matched_assets = _matched_assets(
@@ -352,23 +505,7 @@ def create_app(
             )
         except SearchSuperseded:
             return Response(status_code=204)
-        scoped_card_resolver = (
-            ResultCardResolver.from_assets(
-                [
-                    _search_response(result)
-                    for result in search_index.scoped_assets(
-                        source_id=source_id,
-                        directory=directory,
-                        directory_prefix=directory_prefix,
-                        preferences=preferences,
-                    )
-                ],
-                card_metadata_by_asset_id=card_metadata_by_asset_id,
-            )
-            if preferences.directory_filter.rules or source_id or directory is not None or directory_prefix
-            else card_resolver
-        )
-        cards, total = scoped_card_resolver.page_for(
+        cards, total = card_resolver.page_for(
             [_search_response(result) for result in matched_assets],
             offset=offset,
             limit=limit,
@@ -454,10 +591,50 @@ class _SearchRevisionRegistry:
             return current is not None and current[0] == revision
 
 
+class _ScopedValueCache[T]:
+    def __init__(self, max_size: int = 64) -> None:
+        self._max_size = max_size
+        self._lock = threading.Lock()
+        self._values: OrderedDict[tuple[object, ...], T] = OrderedDict()
+
+    def get_or_build(self, key: tuple[object, ...], build) -> T:
+        with self._lock:
+            cached = self._values.get(key)
+            if cached is not None:
+                self._values.move_to_end(key)
+                return cached
+        value = build()
+        with self._lock:
+            self._values[key] = value
+            self._values.move_to_end(key)
+            while len(self._values) > self._max_size:
+                self._values.popitem(last=False)
+        return value
+
+
+def _scope_cache_key(
+    *,
+    preferences,
+    source_id: str | None,
+    directory: str | None,
+    directory_prefix: str | None,
+) -> tuple[object, ...]:
+    return (
+        preferences.settings_fingerprint,
+        source_id,
+        directory,
+        directory_prefix,
+    )
+
+
 def _load_domain_vocabulary(config: AppConfig):
     if config.domain_vocabulary_path is None:
         return None
     return load_domain_vocabulary(config.domain_vocabulary_path)
+
+
+def _trimmed_query(query: str | None) -> str:
+    return query.strip() if query is not None else ""
 
 
 def _matched_assets(
@@ -472,15 +649,16 @@ def _matched_assets(
     mode: SearchMode,
     control: SearchControl | None,
 ) -> list[SearchResult]:
-    trimmed = query.strip() if query is not None else ""
+    trimmed = _trimmed_query(query)
     if not trimmed:
-        return search_index.scoped_assets(
+        return search_index.browse(
             source_id=source_id,
             directory=directory,
             directory_prefix=directory_prefix,
             preferences=preferences,
+            limit=len(search_index.assets),
             control=control,
-        )
+        ).assets
     return search_index.search(
         trimmed,
         source_id=source_id,

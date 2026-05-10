@@ -216,7 +216,9 @@ SearchProfileRuntime
 - base profile version
 - normalized folder settings
 - preference_adjustments: tuple[float, ...]
-- selection rules / inclusion structure
+- included_asset_indexes: profile selection compiled to asset indexes, or `None`
+  when all assets are included
+- selection rules for UI display/fingerprinting
 - settings fingerprint
 - dirty flags
 ```
@@ -237,7 +239,8 @@ search calls so ranking receives the session runtime's preference adjustment
 data instead.
 
 Selection also belongs in the profile runtime. It remains a hard filter before
-pagination.
+pagination, but search and browse should test `asset.asset_index` against the
+compiled runtime inclusion set rather than rebuilding a filtered search corpus.
 
 ## Ranking Simplification
 

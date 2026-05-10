@@ -12,11 +12,9 @@ from findme.search import (
     DomainVocabulary,
     SearchControl,
     SearchIndex,
-    SearchPreferences,
     SearchSuperseded,
     folder_settings_fingerprint,
     includes_asset,
-    preference_adjustments,
     search_assets,
 )
 
@@ -253,16 +251,8 @@ def test_search_index_applies_profile_quality_to_strict_ranking(
             "Good/Goblin.png",
         ]
 
-        preferences = SearchPreferences(
-            preference_adjustments=preference_adjustments(
-                search_index.assets,
-                {("dnd", "Good"): 10},
-            ),
+        preferences = search_index.compile_preferences(
             quality_overrides={("dnd", "Good"): 10},
-            settings_fingerprint=folder_settings_fingerprint(
-                DirectoryFilter(),
-                {("dnd", "Good"): 10},
-            ),
         )
 
         strict = search_index.search("goblin", mode="strict", preferences=preferences).assets
@@ -294,18 +284,54 @@ def test_search_index_applies_profile_selection_as_hard_filter(
         index_sources(db, config)
         search_index = SearchIndex.load(db)
 
-    preferences = SearchPreferences(
-        preference_adjustments=preference_adjustments(search_index.assets, {}),
+    preferences = search_index.compile_preferences(
         directory_filter=DirectoryFilter(
             (DirectoryFilterRule("dnd", "Maps", "whitelist"),)
         ),
-        settings_fingerprint="maps-only",
     )
 
     assert [
         result.relative_path
         for result in search_index.search("goblin", preferences=preferences).assets
     ] == ["Maps/Goblin.png"]
+    assert [
+        result.relative_path
+        for result in search_index.browse(
+            preferences=preferences,
+            limit=len(search_index.assets),
+        ).assets
+    ] == ["Maps/Goblin.png"]
+
+
+def test_search_index_compiled_selection_uses_nearest_folder_rule(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "assets"
+    write_image(source_root / "Maps" / "Keep.png")
+    write_image(source_root / "Tokens" / "Skip.png")
+    config = _config(tmp_path, source_root)
+
+    with connect(tmp_path / "findme.sqlite3") as db:
+        initialize_database(db)
+        index_sources(db, config)
+        search_index = SearchIndex.load(db)
+
+    preferences = search_index.compile_preferences(
+        directory_filter=DirectoryFilter(
+            (
+                DirectoryFilterRule("dnd", "", "blacklist"),
+                DirectoryFilterRule("dnd", "Maps", "whitelist"),
+            )
+        ),
+    )
+
+    assert [
+        result.relative_path
+        for result in search_index.browse(
+            preferences=preferences,
+            limit=len(search_index.assets),
+        ).assets
+    ] == ["Maps/Keep.png"]
 
 
 def test_directories_for_matches_keep_each_source_subtree_together(tmp_path: Path) -> None:
@@ -341,7 +367,7 @@ def test_directories_for_matches_keep_each_source_subtree_together(tmp_path: Pat
     assert [
         (directory.source_id, directory.path)
         for directory in search_index.directories_for_matches(
-            search_index.scoped_assets()
+            search_index.browse(limit=len(search_index.assets)).assets
         )
     ] == [
         ("dnd", ""),
