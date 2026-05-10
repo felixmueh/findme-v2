@@ -5,6 +5,7 @@ sandbox_name="${CODEX_SBX_NAME:-codex-findme-v2}"
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 env_profile="${CODEX_SBX_ENV_PROFILE:-$repo_root/docs/environments/server-sbx.md}"
 host_ip="${CODEX_SBX_HOST_IP:-0.0.0.0}"
+main_sandbox_app_port="8001"
 
 branch=""
 
@@ -141,20 +142,6 @@ ensure_sandbox_exists() {
   fi
 }
 
-read_port_from_env_profile() {
-  local profile="$1"
-  local port
-
-  port="$(sed -n 's/.*--port \([0-9][0-9]*\).*/\1/p' "$profile" | head -n 1)"
-
-  if [[ -z "$port" ]]; then
-    echo "could not find a serve --port value in $profile" >&2
-    exit 1
-  fi
-
-  printf '%s\n' "$port"
-}
-
 read_or_create_worktree_port() {
   local worktree_dir="$1"
   local port_file="$worktree_dir/.port"
@@ -200,7 +187,7 @@ if [[ -n "$branch" ]]; then
 
   exec sbx run "$sandbox_name" --branch "$branch" -- "$@"
 else
-  app_port="$(read_port_from_env_profile "$env_profile")"
+  app_port="$main_sandbox_app_port"
   publish_port "$app_port"
 
   exec sbx run "$sandbox_name" -- "$@"
