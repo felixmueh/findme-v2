@@ -61,6 +61,8 @@ Committed environment descriptions live in `docs/environments/`. Each profile de
 
 Each worktree has its own app port recorded in the repository-root `.port` file. When launching the app, use the port from `.port` for that worktree, including Docker sandbox port publishing, except on the server host environment. The server host must always serve on port 8000 regardless of `.port`.
 
+When reporting a user-facing app URL, use the LAN address form `http://<server-address>:<port>` with the active app port, rather than `localhost`.
+
 Use `config/findme.dev.toml` on laptop and laptop-sbx. This indexes only `sample-assets` and may share `.findme-data` between the laptop host and laptop sandbox.
 
 Use `config/findme.server.toml` on server and server-sbx. Both server environments may assume `/media/NAS/main/Documents/DND` is mounted and may share `/var/lib/findme-v2`.

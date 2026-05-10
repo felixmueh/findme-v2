@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import sqlite3
 
-from findme.config import AppConfig, SourceConfig
+from findme.config import AppConfig, OutputProfile, SourceConfig
 
 
 class AssetNotFoundError(LookupError):
@@ -85,22 +85,41 @@ def get_asset(db: sqlite3.Connection, config: AppConfig, asset_id: str) -> Asset
 
 def asset_actions(config: AppConfig, asset: AssetRecord) -> dict[str, object]:
     source = _source_for(config, asset.source_id)
-    profiles = [
-        {
-            "id": profile.id,
-            "label": profile.label,
-            "value": _join_url_path(profile.prefix, asset.relative_path),
-        }
-        for profile in source.output_profiles
-    ]
-    primary = _primary_action(source, asset, profiles)
+    file_url = f"/api/assets/{asset.asset_id}/file"
+    thumb_url = (
+        thumbnail_url(
+            asset.asset_id,
+            size_bytes=asset.size_bytes,
+            mtime_ns=asset.mtime_ns,
+        )
+        if asset.thumbnail_path is not None
+        else None
+    )
     return {
-        "primary": primary,
-        "profiles": profiles,
-        "source_relative": asset.relative_path,
-        "absolute_path": str(asset.absolute_path),
-        "open_url": f"/api/assets/{asset.asset_id}/file",
-        "download_url": f"/api/assets/{asset.asset_id}/file?download=1",
+        "open": {"id": "open", "label": "Open", "url": file_url},
+        "copy": {
+            "id": "copy",
+            "label": "Copy",
+            "url": file_url,
+            "enabled": asset.media_type == "image",
+        },
+        "copy_thumbnail": {
+            "id": "copy_thumbnail",
+            "label": "Copy Thumbnail",
+            "url": thumb_url,
+            "enabled": thumb_url is not None,
+        },
+        "download": {"id": "download", "label": "Download", "url": f"{file_url}?download=1"},
+        "copy_path": {
+            "id": "copy_path",
+            "label": "Copy path",
+            "value": str(asset.absolute_path),
+        },
+        "copy_foundryvtt_path": {
+            "id": "copy_foundryvtt_path",
+            "label": "Copy FoundryVTT path",
+            "value": _foundryvtt_path(source, asset),
+        },
     }
 
 
@@ -132,16 +151,21 @@ def thumbnail_url(asset_id: str, *, size_bytes: int, mtime_ns: int) -> str:
     return f"/api/assets/{asset_id}/thumb?v={size_bytes}-{mtime_ns}"
 
 
-def _primary_action(
-    source: SourceConfig, asset: AssetRecord, profiles: list[dict[str, str]]
-) -> dict[str, str]:
+def _foundryvtt_path(source: SourceConfig, asset: AssetRecord) -> str:
+    profile = _primary_output_profile(source)
+    if profile is None:
+        return asset.relative_path
+    return _join_url_path(profile.prefix, asset.relative_path)
+
+
+def _primary_output_profile(source: SourceConfig) -> OutputProfile | None:
     if source.primary_output is not None:
-        for profile in profiles:
-            if profile["id"] == source.primary_output:
+        for profile in source.output_profiles:
+            if profile.id == source.primary_output:
                 return profile
-    if profiles:
-        return profiles[0]
-    return {"id": "source_relative", "label": "Source Relative", "value": asset.relative_path}
+    if source.output_profiles:
+        return source.output_profiles[0]
+    return None
 
 
 def _source_for(config: AppConfig, source_id: str) -> SourceConfig:

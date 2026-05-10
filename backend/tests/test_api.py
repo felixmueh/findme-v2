@@ -676,6 +676,95 @@ def test_api_result_totals_ignore_limit_and_offset(tmp_path: Path) -> None:
     assert len(search_body["cards"]) == 1
 
 
+def test_api_applies_sidebar_filter_rules_before_pagination(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    write_image(source_root / "Maps" / "Keep.png")
+    write_image(source_root / "Maps" / "Unused" / "Skip.png")
+    write_image(source_root / "Tokens" / "Goblin.png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+    rebuild_search_corpus(config, db_path)
+
+    client = TestClient(create_app(config, db_path))
+
+    body = client.get(
+        "/api/assets",
+        params=[
+            ("limit", "1"),
+            ("filter_rule", '{"source_id":"dnd","path":"Maps","state":"whitelist"}'),
+            (
+                "filter_rule",
+                '{"source_id":"dnd","path":"Maps/Unused","state":"blacklist"}',
+            ),
+        ],
+    ).json()
+
+    assert body["total"] == 1
+    assert [_card_asset(card)["relative_path"] for card in body["cards"]] == [
+        "Maps/Keep.png"
+    ]
+
+
+def test_api_rejects_malformed_sidebar_filter_rules(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    write_image(source_root / "Maps" / "Keep.png")
+    write_image(source_root / "Maps" / "Nested" / "Keep.png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+    rebuild_search_corpus(config, db_path)
+
+    client = TestClient(create_app(config, db_path))
+
+    invalid_requests = [
+        {"filter_rule": "not-json"},
+        {"filter_rule": '{"source_id":"missing","path":"Maps","state":"whitelist"}'},
+        {"filter_rule": '{"source_id":"dnd","path":"../Maps","state":"whitelist"}'},
+        {"filter_rule": '{"source_id":"dnd","path":"Maps","state":"include"}'},
+        [
+            ("filter_rule", '{"source_id":"dnd","path":"Maps","state":"whitelist"}'),
+            ("filter_rule", '{"source_id":"dnd","path":"Maps","state":"blacklist"}'),
+        ],
+        [
+            ("filter_rule", '{"source_id":"dnd","path":"Maps","state":"whitelist"}'),
+            ("filter_rule", '{"source_id":"dnd","path":"Maps/Nested","state":"whitelist"}'),
+        ],
+    ]
+
+    for params in invalid_requests:
+        response = client.get("/api/assets", params=params)
+
+        assert response.status_code == 400
+        assert response.json()["detail"]
+
+
 def test_api_search_uses_startup_search_index_until_app_restart(tmp_path: Path) -> None:
     source_root = tmp_path / "assets"
     source_root.mkdir()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import sqlite3
 import threading
@@ -22,6 +23,8 @@ from findme.config import AppConfig
 from findme.db import connect
 from findme.result_cards import ResultCardResolver
 from findme.search import (
+    DirectoryFilter,
+    DirectoryFilterRule,
     DirectoryMatch,
     DomainVocabulary,
     SearchIndex,
@@ -34,7 +37,6 @@ from findme.search import (
 )
 from findme.search_corpus import (
     SEARCH_CORPUS_VERSION,
-    SearchCorpusError,
     load_search_corpus_snapshot,
     search_corpus_lexical_path,
     search_corpus_snapshot_path,
@@ -61,9 +63,10 @@ def create_app(
             expected_version=SEARCH_CORPUS_VERSION,
             lexical_index_path=lexical_path,
         )
+    card_metadata_by_asset_id = snapshot.card_metadata_by_asset_id()
     card_resolver = ResultCardResolver.from_assets(
         [_search_response(result) for result in search_index.scoped_assets()],
-        card_metadata_by_asset_id=snapshot.card_metadata_by_asset_id(),
+        card_metadata_by_asset_id=card_metadata_by_asset_id,
     )
     search_revisions = _SearchRevisionRegistry()
 
@@ -85,6 +88,64 @@ def create_app(
             for source in sorted(config.sources, key=lambda item: item.priority, reverse=True)
         ]
         return {"sources": sources}
+
+    @app.get("/api/assets")
+    def list_assets(
+        source_id: str | None = None,
+        directory: str | None = None,
+        directory_prefix: str | None = None,
+        filter_rule: list[str] = Query(default_factory=list),
+        limit: int = Query(default=100, ge=1, le=500),
+        offset: int = Query(default=0, ge=0),
+    ) -> dict[str, object]:
+        directory_filter = _parse_directory_filter(filter_rule, config, search_index)
+        scoped_assets = search_index.scoped_assets(
+            source_id=source_id,
+            directory=directory,
+            directory_prefix=directory_prefix,
+            directory_filter=directory_filter,
+        )
+        scoped_card_resolver = (
+            ResultCardResolver.from_assets(
+                [_search_response(result) for result in scoped_assets],
+                card_metadata_by_asset_id=card_metadata_by_asset_id,
+            )
+            if directory_filter or source_id or directory is not None or directory_prefix
+            else card_resolver
+        )
+        cards, total = scoped_card_resolver.page_for(
+            [_search_response(result) for result in scoped_assets],
+            offset=offset,
+            limit=limit,
+        )
+        return JSONResponse({"cards": cards, "total": total})
+
+    @app.get("/api/directories")
+    def list_directories(
+        source_id: str | None = None,
+        q: str | None = None,
+        mode: SearchMode = "combined",
+        filter_rule: list[str] = Query(default_factory=list),
+        search_session: str | None = None,
+        search_revision: int | None = None,
+    ) -> object:
+        directory_filter = _parse_directory_filter(filter_rule, config, search_index)
+        control = search_revisions.control(search_session, search_revision)
+        if control and control.is_cancelled():
+            return Response(status_code=204)
+        domain_vocabulary = _load_domain_vocabulary(config)
+        try:
+            directories = search_index.directory_matches(
+                q,
+                source_id=source_id,
+                directory_filter=directory_filter,
+                domain_vocabulary=domain_vocabulary,
+                mode=mode,
+                control=control,
+            )
+        except SearchSuperseded:
+            return Response(status_code=204)
+        return {"directories": [_directory_response(directory) for directory in directories]}
 
     @app.put("/api/folder-quality")
     def set_folder_quality(request: FolderQualityRequest) -> dict[str, object]:
@@ -120,11 +181,13 @@ def create_app(
         source_id: str | None = None,
         directory: str | None = None,
         directory_prefix: str | None = None,
+        filter_rule: list[str] = Query(default_factory=list),
         limit: int = Query(default=100, ge=1, le=500),
         offset: int = Query(default=0, ge=0),
         search_session: str | None = None,
         search_revision: int | None = None,
     ) -> object:
+        directory_filter = _parse_directory_filter(filter_rule, config, search_index)
         control = search_revisions.control(search_session, search_revision)
         if control and control.is_cancelled():
             return Response(status_code=204)
@@ -134,19 +197,33 @@ def create_app(
                 search_index,
                 q,
                 source_id=source_id,
+                directory=directory,
+                directory_prefix=directory_prefix,
+                directory_filter=directory_filter,
                 domain_vocabulary=domain_vocabulary,
                 mode=mode,
                 control=control,
             )
-            result_assets = _filter_results(
-                matched_assets,
-                directory=directory,
-                directory_prefix=directory_prefix,
-            )
         except SearchSuperseded:
             return Response(status_code=204)
-        cards, total = card_resolver.page_for(
-            [_search_response(result) for result in result_assets],
+        scoped_card_resolver = (
+            ResultCardResolver.from_assets(
+                [
+                    _search_response(result)
+                    for result in search_index.scoped_assets(
+                        source_id=source_id,
+                        directory=directory,
+                        directory_prefix=directory_prefix,
+                        directory_filter=directory_filter,
+                    )
+                ],
+                card_metadata_by_asset_id=card_metadata_by_asset_id,
+            )
+            if directory_filter or source_id or directory is not None or directory_prefix
+            else card_resolver
+        )
+        cards, total = scoped_card_resolver.page_for(
+            [_search_response(result) for result in matched_assets],
             offset=offset,
             limit=limit,
         )
@@ -159,11 +236,13 @@ def create_app(
         source_id: str | None = None,
         directory: str | None = None,
         directory_prefix: str | None = None,
+        filter_rule: list[str] = Query(default_factory=list),
         limit: int = Query(default=100, ge=1, le=500),
         offset: int = Query(default=0, ge=0),
         search_session: str | None = None,
         search_revision: int | None = None,
     ) -> object:
+        directory_filter = _parse_directory_filter(filter_rule, config, search_index)
         control = search_revisions.control(search_session, search_revision)
         if control and control.is_cancelled():
             return Response(status_code=204)
@@ -173,25 +252,43 @@ def create_app(
                 search_index,
                 q,
                 source_id=source_id,
+                directory=directory,
+                directory_prefix=directory_prefix,
+                directory_filter=directory_filter,
                 domain_vocabulary=domain_vocabulary,
                 mode=mode,
                 control=control,
             )
-            result_assets = _filter_results(
-                matched_assets,
-                directory=directory,
-                directory_prefix=directory_prefix,
-            )
         except SearchSuperseded:
             return Response(status_code=204)
-        cards, total = card_resolver.page_for(
-            [_search_response(result) for result in result_assets],
+        scoped_card_resolver = (
+            ResultCardResolver.from_assets(
+                [
+                    _search_response(result)
+                    for result in search_index.scoped_assets(
+                        source_id=source_id,
+                        directory=directory,
+                        directory_prefix=directory_prefix,
+                        directory_filter=directory_filter,
+                    )
+                ],
+                card_metadata_by_asset_id=card_metadata_by_asset_id,
+            )
+            if directory_filter or source_id or directory is not None or directory_prefix
+            else card_resolver
+        )
+        cards, total = scoped_card_resolver.page_for(
+            [_search_response(result) for result in matched_assets],
             offset=offset,
             limit=limit,
         )
-        directories = search_index.directories_for_matches(
-            matched_assets,
+        directories = search_index.directory_matches(
+            q,
             source_id=source_id,
+            directory_filter=directory_filter,
+            domain_vocabulary=domain_vocabulary,
+            mode=mode,
+            control=control,
         )
         return JSONResponse(
             {
@@ -277,16 +374,28 @@ def _matched_assets(
     query: str | None,
     *,
     source_id: str | None,
+    directory: str | None,
+    directory_prefix: str | None,
+    directory_filter: DirectoryFilter | None,
     domain_vocabulary: DomainVocabulary | None,
     mode: SearchMode,
     control: SearchControl | None,
 ) -> list[SearchResult]:
     trimmed = query.strip() if query is not None else ""
     if not trimmed:
-        return search_index.scoped_assets(source_id=source_id, control=control)
+        return search_index.scoped_assets(
+            source_id=source_id,
+            directory=directory,
+            directory_prefix=directory_prefix,
+            directory_filter=directory_filter,
+            control=control,
+        )
     return search_index.search(
         trimmed,
         source_id=source_id,
+        directory=directory,
+        directory_prefix=directory_prefix,
+        directory_filter=directory_filter,
         domain_vocabulary=domain_vocabulary,
         mode=mode,
         limit=len(search_index.assets),
@@ -295,25 +404,84 @@ def _matched_assets(
     ).assets
 
 
-def _filter_results(
-    results: list[SearchResult],
-    *,
-    directory: str | None,
-    directory_prefix: str | None,
-) -> list[SearchResult]:
-    if directory is None and not directory_prefix:
-        return results
-    filtered = []
-    for result in results:
-        if directory is not None and result.directory != directory:
-            continue
-        if directory_prefix and not (
-            result.directory == directory_prefix
-            or result.directory.startswith(f"{directory_prefix}/")
-        ):
-            continue
-        filtered.append(result)
-    return filtered
+def _parse_directory_filter(
+    raw_rules: list[str],
+    config: AppConfig,
+    search_index: SearchIndex,
+) -> DirectoryFilter | None:
+    if not raw_rules:
+        return None
+    source_ids = {source.id for source in config.sources}
+    rules = []
+    seen_nodes: set[tuple[str, str]] = set()
+    whitelist_nodes: set[tuple[str, str]] = set()
+    for raw_rule in raw_rules:
+        try:
+            payload = json.loads(raw_rule)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail="filter_rule must be a JSON object",
+            ) from exc
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="filter_rule must be a JSON object")
+        source_id = payload.get("source_id")
+        path = payload.get("path")
+        state = payload.get("state")
+        if not isinstance(source_id, str) or not source_id:
+            raise HTTPException(
+                status_code=400,
+                detail="filter_rule.source_id must be a non-empty string",
+            )
+        if source_id not in source_ids:
+            raise HTTPException(status_code=400, detail=f"unknown filter_rule source: {source_id}")
+        if not isinstance(path, str):
+            raise HTTPException(status_code=400, detail="filter_rule.path must be a string")
+        if not _is_normalized_directory_path(path):
+            raise HTTPException(
+                status_code=400,
+                detail="filter_rule.path must be a normalized source-relative directory path",
+            )
+        if state not in {"whitelist", "blacklist"}:
+            raise HTTPException(
+                status_code=400,
+                detail="filter_rule.state must be whitelist or blacklist",
+            )
+        node = (source_id, path)
+        if node in seen_nodes:
+            raise HTTPException(status_code=400, detail="duplicate filter_rule node")
+        seen_nodes.add(node)
+        if node not in search_index.directory_counts:
+            raise HTTPException(status_code=400, detail="filter_rule directory was not found")
+        if state == "whitelist":
+            for whitelist_source_id, whitelist_path in whitelist_nodes:
+                if source_id == whitelist_source_id and _paths_share_subtree(
+                    whitelist_path,
+                    path,
+                ):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="whitelist filter_rules must not overlap in the same subtree",
+                    )
+            whitelist_nodes.add(node)
+        rules.append(DirectoryFilterRule(source_id=source_id, path=path, state=state))
+    return DirectoryFilter(tuple(rules))
+
+
+def _paths_share_subtree(first: str, second: str) -> bool:
+    return first == second or _is_path_ancestor(first, second) or _is_path_ancestor(second, first)
+
+
+def _is_path_ancestor(ancestor: str, path: str) -> bool:
+    return path != "" if ancestor == "" else path.startswith(f"{ancestor}/")
+
+
+def _is_normalized_directory_path(path: str) -> bool:
+    if path == "":
+        return True
+    if path.startswith("/") or path.endswith("/") or "\\" in path or "//" in path:
+        return False
+    return all(part not in {"", ".", ".."} for part in path.split("/"))
 
 
 def _load_asset_or_404(db: sqlite3.Connection, config: AppConfig, asset_id: str):

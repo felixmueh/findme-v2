@@ -47,7 +47,7 @@ primary_output = "foundry"
 [[sources.output_profiles]]
 id = "foundry"
 label = "Foundry"
-prefix = "assets/dnd"
+prefix = "library/DND"
 """,
         encoding="utf-8",
     )
@@ -58,7 +58,7 @@ prefix = "assets/dnd"
     assert config.thumbnail_workers == 2
     assert config.sources[0].root == source_root.resolve()
     assert config.sources[0].media_extensions == frozenset({".png", ".jpg"})
-    assert config.sources[0].output_profiles[0].prefix == "assets/dnd"
+    assert config.sources[0].output_profiles[0].prefix == "library/DND"
 
 
 def test_load_config_reads_thumbnail_worker_count(tmp_path: Path) -> None:

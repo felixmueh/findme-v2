@@ -56,7 +56,9 @@ UI language:
 - `blacklist`: red, excludes the subtree unless a nearer whitelist overrides it.
 - `unspecified`: no explicit rule on that node.
 
-The UI should expose visible green and red controls per row. A fast cycle interaction can exist, but explicit controls are required so the current rule state is legible.
+The UI should expose focus and block actions alongside the folder ranking control so filtering and ranking feel like one folder-preference surface. The current rule state must remain legible on the row. Shift-clicking a folder row should toggle whitelist/focus for that row; Alt-clicking a folder row should toggle blacklist/block for that row.
+
+Whitelists act as focus points. There must never be two whitelist rules in the same source subtree. A whitelist on one branch and another whitelist on a sibling branch are valid, and whitelist rules in different sources are valid. If the user whitelists a child of an already-whitelisted node, the whitelist moves from the parent to the child. If the user whitelists a parent of an already-whitelisted descendant, the whitelist moves to the parent.
 
 ## Effective Filter Algorithm
 
@@ -203,6 +205,7 @@ Notes:
 - The server must validate source IDs, state values, and normalized directory paths.
 - Unknown sources or malformed rules should produce a clear 400 error.
 - Duplicate rules for the same node should be rejected or last-write-wins consistently; rejecting is preferred because it surfaces client bugs.
+- Multiple whitelist rules in the same source subtree should be rejected because the client is responsible for normalizing whitelist focus before sending rules.
 
 The same parameter should be accepted by:
 
