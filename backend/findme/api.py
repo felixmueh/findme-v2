@@ -23,7 +23,6 @@ from findme.config import AppConfig
 from findme.db import connect
 from findme.result_cards import ResultCardResolver
 from findme.search import (
-    DomainVocabulary,
     SearchIndex,
     SearchMode,
     SearchResult,
@@ -343,33 +342,9 @@ def create_app(
                 limit=limit,
             )
             return JSONResponse({"cards": cards, "total": total})
-        if _uses_numeric_search_path(
-            mode=mode,
-            source_id=source_id,
-            directory=directory,
-            directory_prefix=directory_prefix,
-        ):
-            try:
-                page = search_index.search(
-                    trimmed_query,
-                    preferences=preferences,
-                    mode=mode,
-                    limit=limit,
-                    offset=offset,
-                    control=control,
-                )
-            except SearchSuperseded:
-                return Response(status_code=204)
-            cards, _card_total = card_resolver.page_for(
-                [_search_response(result) for result in page.assets],
-                offset=0,
-                limit=limit,
-            )
-            return JSONResponse({"cards": cards, "total": page.total})
         domain_vocabulary = _load_domain_vocabulary(config)
         try:
-            matched_assets = _matched_assets(
-                search_index,
+            page = search_index.search(
                 trimmed_query,
                 source_id=source_id,
                 directory=directory,
@@ -377,16 +352,18 @@ def create_app(
                 preferences=preferences,
                 domain_vocabulary=domain_vocabulary,
                 mode=mode,
+                limit=limit,
+                offset=offset,
                 control=control,
             )
         except SearchSuperseded:
             return Response(status_code=204)
-        cards, total = card_resolver.page_for(
-            [_search_response(result) for result in matched_assets],
-            offset=offset,
+        cards, _card_total = card_resolver.page_for(
+            [_search_response(result) for result in page.assets],
+            offset=0,
             limit=limit,
         )
-        return JSONResponse({"cards": cards, "total": total})
+        return JSONResponse({"cards": cards, "total": page.total})
 
     @app.get("/api/search-with-directory-counts")
     def search_with_directory_counts(
@@ -437,39 +414,9 @@ def create_app(
                     "directories": directories,
                 }
             )
-        if _uses_numeric_search_path(
-            mode=mode,
-            source_id=source_id,
-            directory=directory,
-            directory_prefix=directory_prefix,
-        ):
-            try:
-                search_response = search_index.search_with_directory_responses(
-                    trimmed_query,
-                    preferences=preferences,
-                    limit=limit,
-                    offset=offset,
-                    dirty_folder_subtree_keys=dirty_folder_subtree_keys,
-                    control=control,
-                )
-            except SearchSuperseded:
-                return Response(status_code=204)
-            cards, _card_total = card_resolver.page_for(
-                [_search_response(result) for result in search_response.page.assets],
-                offset=0,
-                limit=limit,
-            )
-            return JSONResponse(
-                {
-                    "cards": cards,
-                    "total": search_response.page.total,
-                    "directories": search_response.directories,
-                }
-            )
         domain_vocabulary = _load_domain_vocabulary(config)
         try:
-            matched_assets = _matched_assets(
-                search_index,
+            search_response = search_index.search_with_directory_responses(
                 trimmed_query,
                 source_id=source_id,
                 directory=directory,
@@ -477,34 +424,23 @@ def create_app(
                 preferences=preferences,
                 domain_vocabulary=domain_vocabulary,
                 mode=mode,
-                control=control,
-            )
-        except SearchSuperseded:
-            return Response(status_code=204)
-        cards, total = card_resolver.page_for(
-            [_search_response(result) for result in matched_assets],
-            offset=offset,
-            limit=limit,
-        )
-        try:
-            directories = search_index.directory_responses_for_search(
-                _trimmed_query(q),
-                source_id=source_id,
-                directory=directory,
-                directory_prefix=directory_prefix,
-                preferences=preferences,
-                domain_vocabulary=domain_vocabulary,
-                mode=mode,
+                limit=limit,
+                offset=offset,
                 dirty_folder_subtree_keys=dirty_folder_subtree_keys,
                 control=control,
             )
         except SearchSuperseded:
             return Response(status_code=204)
+        cards, _card_total = card_resolver.page_for(
+            [_search_response(result) for result in search_response.page.assets],
+            offset=0,
+            limit=limit,
+        )
         return JSONResponse(
             {
                 "cards": cards,
-                "total": total,
-                "directories": directories,
+                "total": search_response.page.total,
+                "directories": search_response.directories,
             }
         )
 
@@ -579,57 +515,6 @@ def _load_domain_vocabulary(config: AppConfig):
 
 def _trimmed_query(query: str | None) -> str:
     return query.strip() if query is not None else ""
-
-
-def _uses_numeric_search_path(
-    *,
-    mode: SearchMode,
-    source_id: str | None,
-    directory: str | None,
-    directory_prefix: str | None,
-) -> bool:
-    return (
-        mode == "strict"
-        and source_id is None
-        and directory is None
-        and directory_prefix is None
-    )
-
-
-def _matched_assets(
-    search_index: SearchIndex,
-    query: str | None,
-    *,
-    source_id: str | None,
-    directory: str | None,
-    directory_prefix: str | None,
-    preferences,
-    domain_vocabulary: DomainVocabulary | None,
-    mode: SearchMode,
-    control: SearchControl | None,
-) -> list[SearchResult]:
-    trimmed = _trimmed_query(query)
-    if not trimmed:
-        return search_index.browse(
-            source_id=source_id,
-            directory=directory,
-            directory_prefix=directory_prefix,
-            preferences=preferences,
-            limit=len(search_index.assets),
-            control=control,
-        ).assets
-    return search_index.search(
-        trimmed,
-        source_id=source_id,
-        directory=directory,
-        directory_prefix=directory_prefix,
-        preferences=preferences,
-        domain_vocabulary=domain_vocabulary,
-        mode=mode,
-        limit=len(search_index.assets),
-        offset=0,
-        control=control,
-    ).assets
 
 
 def _load_asset_or_404(db: sqlite3.Connection, config: AppConfig, asset_id: str):
