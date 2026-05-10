@@ -80,7 +80,7 @@ class DirectoryFilter:
 class SearchPreferences:
     preference_adjustment_array: np.ndarray
     directory_filter: DirectoryFilter = field(default_factory=DirectoryFilter)
-    included_asset_indexes: "AssetSelection | None" = None
+    included_asset_mask: np.ndarray | None = None
     included_asset_index_order: tuple[int, ...] | None = None
     included_directory_counts: dict[tuple[str, str], int] | None = None
     included_directory_count_array: np.ndarray | None = None
@@ -94,8 +94,8 @@ class SearchPreferences:
 
     def includes(self, asset: SearchCorpusAsset) -> bool:
         return (
-            self.included_asset_indexes is None
-            or self.included_asset_indexes.includes(asset.asset_index)
+            self.included_asset_mask is None
+            or bool(self.included_asset_mask[asset.asset_index])
         )
 
     def folder_quality(self, source_id: str, directory: str) -> tuple[int, int | None]:
@@ -119,26 +119,6 @@ class SearchPreferences:
         if state is None:
             return True
         return self.effective_selection_states.get((source_id, directory)) == state
-
-
-@dataclass(frozen=True)
-class AssetSelection:
-    order: tuple[int, ...]
-    mask: np.ndarray
-    _lookup: frozenset[int] | None = field(default=None, compare=False)
-
-    def __len__(self) -> int:
-        return len(self.order)
-
-    def includes(self, asset_index: int) -> bool:
-        return asset_index in self.lookup()
-
-    def lookup(self) -> frozenset[int]:
-        lookup = self._lookup
-        if lookup is None:
-            lookup = frozenset(self.order)
-            object.__setattr__(self, "_lookup", lookup)
-        return lookup
 
 
 class SearchSuperseded(RuntimeError):
@@ -396,13 +376,10 @@ class SearchIndex:
         included_asset_index_order = self._included_asset_index_order(
             effective_directory_filter
         )
-        included_asset_indexes = (
+        included_asset_mask = (
             None
             if included_asset_index_order is None
-            else AssetSelection(
-                included_asset_index_order,
-                _asset_selection_mask(len(self.assets), included_asset_index_order),
-            )
+            else _asset_selection_mask(len(self.assets), included_asset_index_order)
         )
         preference_adjustment_values = self._preference_adjustments(quality_overrides)
         included_directory_counts = self._included_directory_counts(
@@ -411,7 +388,7 @@ class SearchIndex:
         return SearchPreferences(
             preference_adjustment_array=preference_adjustment_values,
             directory_filter=directory_filter,
-            included_asset_indexes=included_asset_indexes,
+            included_asset_mask=included_asset_mask,
             included_asset_index_order=included_asset_index_order,
             included_directory_counts=included_directory_counts,
             included_directory_count_array=self._directory_count_array(
@@ -617,7 +594,7 @@ class SearchIndex:
         )
         included_counts = (
             match_counts
-            if preferences.included_asset_indexes is None
+            if preferences.included_asset_mask is None
             else self._directory_counts_for_scope(
                 source_id=source_id,
                 directory=directory,
@@ -704,7 +681,7 @@ class SearchIndex:
         match_counts = self._directory_count_array_for_asset_indexes(
             matches.asset_indexes
         )
-        selection = preferences.included_asset_indexes
+        selection = preferences.included_asset_mask
         included_counts = (
             match_counts
             if selection is None
@@ -841,11 +818,11 @@ class SearchIndex:
         match_counts = self._directory_count_array_for_asset_indexes(
             matches.asset_indexes
         )
-        selection = preferences.included_asset_indexes
+        selection = preferences.included_asset_mask
         included_indexes = (
             matches.asset_indexes
             if selection is None
-            else matches.asset_indexes[selection.mask[matches.asset_indexes]]
+            else matches.asset_indexes[selection[matches.asset_indexes]]
         )
         included_counts = (
             match_counts
@@ -1136,9 +1113,9 @@ class SearchIndex:
         *,
         preferences: SearchPreferences,
     ) -> tuple[np.ndarray, np.ndarray]:
-        selection = preferences.included_asset_indexes
+        selection = preferences.included_asset_mask
         if selection is not None:
-            included = selection.mask[asset_indexes]
+            included = selection[asset_indexes]
             asset_indexes = asset_indexes[included]
             scores = scores[included]
         if preferences.quality_overrides:
@@ -1296,7 +1273,7 @@ def empty_search_preferences(assets: tuple[SearchCorpusAsset, ...]) -> SearchPre
     return SearchPreferences(
         preference_adjustment_array=np.zeros(len(assets), dtype=np.float64),
         directory_filter=DirectoryFilter(),
-        included_asset_indexes=None,
+        included_asset_mask=None,
         included_asset_index_order=None,
         included_directory_counts=None,
         included_directory_count_array=None,

@@ -79,9 +79,7 @@ class ResultCardResolver:
         return cls(
             by_collection=resolver.by_collection,
             by_asset_id=resolver.by_asset_id,
-            by_asset_index=tuple(
-                resolver.by_asset_id[str(asset["asset_id"])] for asset in ordered_assets
-            ),
+            by_asset_index=resolver.by_asset_index,
             collection_counts=resolver.collection_counts,
             has_variant_asset=resolver.has_variant_asset,
             browse_cards=tuple(browse_cards),
@@ -94,40 +92,11 @@ class ResultCardResolver:
         offset: int,
         limit: int | None,
     ) -> tuple[list[ResultCard], int]:
-        emitted_collections: set[str] = set()
-        cards: list[ResultCard] = []
-        total = 0
-
-        for asset in assets:
-            grouped = self._grouped_for_asset(asset)
-            if (
-                self.collection_counts[grouped.collection_key] < 2
-                or not self.has_variant_asset[grouped.collection_key]
-            ):
-                total += 1
-                if total > offset and (limit is None or len(cards) < limit):
-                    cards.append({"kind": "asset", "asset": grouped.asset})
-                continue
-            if grouped.collection_key in emitted_collections:
-                continue
-            emitted_collections.add(grouped.collection_key)
-            total += 1
-            if total <= offset or (limit is not None and len(cards) >= limit):
-                continue
-            variants = self.by_collection[grouped.collection_key]
-            representative = grouped
-            if float(grouped.asset.get("score", 0)) == 0:
-                representative = variants[0]
-            cards.append(
-                {
-                    "kind": "collection",
-                    "collection_key": _public_collection_key(grouped.collection_key),
-                    "representative": representative.asset,
-                    "variants": [item.asset for item in variants],
-                    "count": len(variants),
-                }
-            )
-        return cards, total
+        return self._page_for_grouped_assets(
+            (self._grouped_for_asset(asset) for asset in assets),
+            offset=offset,
+            limit=limit,
+        )
 
     def browse_page(
         self,

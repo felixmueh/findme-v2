@@ -96,6 +96,7 @@ def create_app(
         card_resolver,
     )
     search_revisions = _SearchRevisionRegistry()
+
     def needs_scoped_scope(
         *,
         preferences,
@@ -104,7 +105,7 @@ def create_app(
         directory_prefix: str | None,
     ) -> bool:
         return (
-            preferences.included_asset_indexes is not None
+            preferences.included_asset_mask is not None
             or source_id is not None
             or directory is not None
             or directory_prefix is not None
