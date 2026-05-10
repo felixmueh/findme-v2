@@ -67,6 +67,7 @@ class DirectoryMatch:
     quality: int
     quality_override: int | None
     selection_state: DirectoryFilterState | None = None
+    selection_effective: bool = True
 
 
 @dataclass(frozen=True)
@@ -97,6 +98,7 @@ class SearchPreferences:
     included_asset_index_order: tuple[int, ...] | None = None
     quality_overrides: dict[tuple[str, str], int] = field(default_factory=dict)
     selection_states: dict[tuple[str, str], DirectoryFilterState] = field(default_factory=dict)
+    effective_selection_states: dict[tuple[str, str], DirectoryFilterState] = field(default_factory=dict)
     settings_fingerprint: str = "empty"
 
     def preference_adjustment(self, asset: SearchCorpusAsset) -> float:
@@ -121,6 +123,12 @@ class SearchPreferences:
 
     def selection_state(self, source_id: str, directory: str) -> DirectoryFilterState | None:
         return self.selection_states.get((source_id, directory))
+
+    def selection_effective(self, source_id: str, directory: str) -> bool:
+        state = self.selection_states.get((source_id, directory))
+        if state is None:
+            return True
+        return self.effective_selection_states.get((source_id, directory)) == state
 
 
 class SearchSuperseded(RuntimeError):
@@ -348,7 +356,8 @@ class SearchIndex:
     ) -> SearchPreferences:
         directory_filter = directory_filter or DirectoryFilter()
         quality_overrides = quality_overrides or {}
-        included_asset_indexes = self._included_asset_indexes(directory_filter)
+        effective_directory_filter = _bottommost_whitelist_filter(directory_filter)
+        included_asset_indexes = self._included_asset_indexes(effective_directory_filter)
         return SearchPreferences(
             preference_adjustments=self._preference_adjustments(quality_overrides),
             directory_filter=directory_filter,
@@ -362,6 +371,10 @@ class SearchIndex:
             selection_states={
                 (rule.source_id, rule.path): rule.state
                 for rule in directory_filter.rules
+            },
+            effective_selection_states={
+                (rule.source_id, rule.path): rule.state
+                for rule in effective_directory_filter.rules
             },
             settings_fingerprint=folder_settings_fingerprint(
                 directory_filter,
@@ -612,6 +625,7 @@ class SearchIndex:
                     quality=quality,
                     quality_override=quality_override,
                     selection_state=preferences.selection_state(source, path),
+                    selection_effective=preferences.selection_effective(source, path),
                 )
             )
         return sorted(
@@ -790,6 +804,7 @@ def empty_search_preferences(assets: tuple[SearchCorpusAsset, ...]) -> SearchPre
         included_asset_index_order=None,
         quality_overrides={},
         selection_states={},
+        effective_selection_states={},
         settings_fingerprint="empty",
     )
 
@@ -1217,6 +1232,28 @@ def includes_asset(
     if nearest == "blacklist":
         return False
     return not directory_filter.has_whitelist
+
+
+def _bottommost_whitelist_filter(directory_filter: DirectoryFilter) -> DirectoryFilter:
+    if not directory_filter.has_whitelist:
+        return directory_filter
+    rules = []
+    whitelist_rules = [
+        rule for rule in directory_filter.rules if rule.state == "whitelist"
+    ]
+    for rule in directory_filter.rules:
+        if rule.state != "whitelist":
+            rules.append(rule)
+            continue
+        has_descendant_whitelist = any(
+            other.source_id == rule.source_id
+            and other.path != rule.path
+            and _directory_is_within(other.path, rule.path)
+            for other in whitelist_rules
+        )
+        if not has_descendant_whitelist:
+            rules.append(rule)
+    return DirectoryFilter(tuple(rules))
 
 
 def _filter_directory_counts(

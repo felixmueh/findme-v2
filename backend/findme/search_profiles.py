@@ -659,28 +659,7 @@ def _selection_settings(
 def _validate_selection_rules(
     settings: dict[tuple[str, str], FolderSetting],
 ) -> None:
-    whitelist_nodes: set[tuple[str, str]] = set()
-    for setting in _normalize_settings(settings).values():
-        if setting.selection_state != "whitelist":
-            continue
-        node = (setting.source_id, setting.directory)
-        for existing_source_id, existing_path in whitelist_nodes:
-            if setting.source_id == existing_source_id and _paths_share_subtree(
-                existing_path,
-                setting.directory,
-            ):
-                raise SearchProfileValidationError(
-                    "whitelist selection rules must not overlap in the same subtree"
-                )
-        whitelist_nodes.add(node)
-
-
-def _paths_share_subtree(first: str, second: str) -> bool:
-    return first == second or _is_path_ancestor(first, second) or _is_path_ancestor(second, first)
-
-
-def _is_path_ancestor(ancestor: str, path: str) -> bool:
-    return path != "" if ancestor == "" else path.startswith(f"{ancestor}/")
+    _normalize_settings(settings)
 
 
 def _is_normalized_directory_path(path: str) -> bool:

@@ -43,6 +43,7 @@
     quality: number
     quality_override: number | null
     selection_state: FilterRuleState | null
+    selection_effective: boolean
   }
 
   type FilterRuleState = 'whitelist' | 'blacklist'
@@ -728,7 +729,11 @@
   }
 
   function folderControlLabel(directory: DirectoryNode, ruleState: FilterRuleState | null) {
-    const state = ruleState === 'whitelist' ? 'focused, ' : ruleState === 'blacklist' ? 'blocked, ' : ''
+    const state = ruleState === 'whitelist'
+      ? directory.selection_effective ? 'focused, ' : 'superseded focus, '
+      : ruleState === 'blacklist'
+        ? 'blocked, '
+        : ''
     return `Folder controls for ${directory.name}, ${state}quality ${directory.quality}`
   }
 
@@ -1388,7 +1393,8 @@
         <div
           class:path-highlight={hoveredAssetAncestorKeys.has(directoryKey(directory))}
           class:direct-highlight={directHoveredDirectoryKey === directoryKey(directory)}
-          class:whitelist={ruleState === 'whitelist'}
+          class:whitelist={ruleState === 'whitelist' && directory.selection_effective}
+          class:whitelist-superseded={ruleState === 'whitelist' && !directory.selection_effective}
           class:blacklist={ruleState === 'blacklist'}
           class:source-root={directory.depth === 0}
           class:selected-folder={selectedDirectoryKey === directoryKey(directory)}
@@ -1433,7 +1439,8 @@
           >
             <button
               class:blocked={ruleState === 'blacklist'}
-              class:focused={ruleState === 'whitelist'}
+              class:focused={ruleState === 'whitelist' && directory.selection_effective}
+              class:superseded={ruleState === 'whitelist' && !directory.selection_effective}
               class:override={directory.quality_override !== null}
               class:has-descendant-settings={directoriesWithDescendantFolderSettings.has(directoryKey(directory))}
               type="button"
@@ -1457,6 +1464,7 @@
                 <span class="scope-actions">
                   <button
                     class:active={ruleState === 'whitelist'}
+                    class:superseded={ruleState === 'whitelist' && !directory.selection_effective}
                     type="button"
                     aria-label={`Focus ${directory.name}`}
                     onclick={(event) => setDirectoryRule(event, directory, 'whitelist')}

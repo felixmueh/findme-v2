@@ -728,6 +728,10 @@ button.folder-row.retained {
   box-shadow: inset 3px 0 0 #15803d;
 }
 
+.folder-row.whitelist-superseded {
+  box-shadow: inset 3px 0 0 #86a38d;
+}
+
 .folder-row.blacklist {
   box-shadow: inset 3px 0 0 var(--danger);
 }
@@ -843,6 +847,14 @@ button.folder-row.retained {
   color: #166534;
   border-color: #15803d;
   background: #dcfce7;
+}
+
+.folder-control > button.superseded,
+.scope-actions button.superseded {
+  color: #5f7f66;
+  border-color: #9db7a3;
+  background: #eef6ef;
+  opacity: 0.72;
 }
 
 .folder-control > button.blocked {

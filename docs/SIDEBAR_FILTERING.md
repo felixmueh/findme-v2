@@ -58,13 +58,15 @@ UI language:
 
 The UI should expose focus and block actions alongside the folder ranking control so filtering and ranking feel like one folder-preference surface. The current rule state must remain legible on the row. Shift-clicking a folder row should toggle whitelist/focus for that row; Alt-clicking a folder row should toggle blacklist/block for that row.
 
-Whitelists act as focus points. There must never be two whitelist rules in the same source subtree. A whitelist on one branch and another whitelist on a sibling branch are valid, and whitelist rules in different sources are valid. If the user whitelists a child of an already-whitelisted node, the whitelist moves from the parent to the child. If the user whitelists a parent of an already-whitelisted descendant, the whitelist moves to the parent.
+Whitelists act as focus points. Multiple whitelist rules may exist in the same source subtree. When whitelist rules overlap, only the bottom-most whitelist nodes are effective. An ancestor whitelist with a descendant whitelist remains visible as an explicit but superseded setting; assets under that ancestor but outside the descendant whitelist are not included by the ancestor whitelist.
 
 ## Effective Filter Algorithm
 
 The rule set is global for the current browser session.
 
-Whitelist mode becomes active when at least one whitelist rule exists anywhere in the tree. In whitelist mode, otherwise-unspecified assets are excluded.
+Whitelist mode becomes active when at least one effective whitelist rule exists anywhere in the tree. In whitelist mode, otherwise-unspecified assets are excluded.
+
+Before evaluating assets, derive the effective rule set by deactivating every whitelist rule that has another whitelist below it in the same source subtree. Blacklist rules remain in the effective rule set.
 
 For each asset:
 
@@ -79,10 +81,11 @@ For each asset:
 In pseudocode:
 
 ```text
-has_global_whitelist = any(rule.state == whitelist for rule in rules)
+effective_rules = rules without whitelist ancestors of other whitelists
+has_global_whitelist = any(rule.state == whitelist for rule in effective_rules)
 
 function includes(asset):
-    nearest = nearest_rule_on_asset_ancestor_chain(asset, rules)
+    nearest = nearest_rule_on_asset_ancestor_chain(asset, effective_rules)
     if nearest == whitelist:
         return true
     if nearest == blacklist:
@@ -194,7 +197,7 @@ active search profile for the browser search session, and search requests send
 only `search_session`.
 - Unknown sources or malformed rules should produce a clear 400 error.
 - Duplicate rules for the same node should be rejected or last-write-wins consistently; rejecting is preferred because it surfaces client bugs.
-- Multiple whitelist rules in the same source subtree should be rejected because the client is responsible for normalizing whitelist focus before sending rules.
+- Multiple whitelist rules in the same source subtree are allowed. The backend derives which ones are effective and should expose enough state for the UI to show superseded whitelist rows.
 
 The same parameter should be accepted by:
 

@@ -132,6 +132,12 @@ search_profile_folder_settings
 `quality_override = null` means default folder quality. `selection_state = null`
 means no explicit selection rule on that folder.
 
+Multiple whitelist settings may overlap in the same source subtree. At runtime,
+only bottom-most whitelist rules are effective. An ancestor whitelist with a
+descendant whitelist remains stored and visible in the UI as a superseded
+selection setting, but it does not include sibling assets outside the descendant
+whitelist subtree.
+
 The current `folder_quality_overrides` table should be migrated into the
 `Default` profile when search profiles are introduced.
 
@@ -219,6 +225,7 @@ SearchProfileRuntime
 - included_asset_indexes: profile selection compiled to asset indexes, or `None`
   when all assets are included
 - selection rules for UI display/fingerprinting
+- effective selection rules after superseded whitelist ancestors are removed
 - settings fingerprint
 - dirty flags
 ```

@@ -40,7 +40,8 @@ function actionsFor(asset: typeof sampleAsset, absolutePath: string) {
 function sampleDirectory(
   quality = 4,
   qualityOverride: number | null = null,
-  selectionState: FilterRuleState | null = null
+  selectionState: FilterRuleState | null = null,
+  selectionEffective = true
 ) {
   return {
     source_id: 'sample',
@@ -53,6 +54,7 @@ function sampleDirectory(
     quality,
     quality_override: qualityOverride,
     selection_state: selectionState,
+    selection_effective: selectionEffective,
   }
 }
 
@@ -68,6 +70,7 @@ function sampleRootDirectory() {
     quality: 5,
     quality_override: null,
     selection_state: null,
+    selection_effective: true,
   }
 }
 
@@ -282,6 +285,41 @@ test('combines folder filtering and quality in one control popover', async ({ pa
     directory: 'maps',
     selection_state: 'whitelist',
   })
+})
+
+test('shows superseded whitelist state in the folder control', async ({ page }) => {
+  await page.route('**/api/search-with-directory-counts?*', async (route) => {
+    await route.fulfill({
+      json: {
+        total: 1,
+        cards: [{ kind: 'asset', asset: sampleAsset }],
+        directories: [
+          sampleRootDirectory(),
+          sampleDirectory(4, null, 'whitelist', false),
+          {
+            source_id: 'sample',
+            path: 'maps/nested',
+            name: 'nested',
+            depth: 2,
+            asset_count: 1,
+            matched_asset_count: 1,
+            included_asset_count: 1,
+            quality: 5,
+            quality_override: null,
+            selection_state: 'whitelist',
+            selection_effective: true,
+          },
+        ],
+      },
+    })
+  })
+
+  await page.goto('/')
+  await expect(page.getByRole('button', { name: /castle\.png/i })).toBeVisible()
+  await revealSampleFolder(page)
+
+  await expect(page.getByRole('button', { name: 'Folder controls for maps, superseded focus, quality 4' })).toBeVisible()
+  await expect(page.getByRole('group', { name: 'maps folder' })).toHaveClass(/whitelist-superseded/)
 })
 
 test('marks folders that contain custom descendant folder settings', async ({ page }) => {

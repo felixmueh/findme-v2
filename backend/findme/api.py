@@ -577,6 +577,7 @@ def _directory_response(directory: DirectoryMatch) -> dict[str, object]:
         "quality": directory.quality,
         "quality_override": directory.quality_override,
         "selection_state": directory.selection_state,
+        "selection_effective": directory.selection_effective,
     }
 
 

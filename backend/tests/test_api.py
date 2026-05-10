@@ -997,25 +997,150 @@ def test_api_rejects_malformed_profile_selection_rules(tmp_path: Path) -> None:
         assert response.status_code == 400
         assert response.json()["detail"]
 
+
+def test_api_profile_nested_whitelist_supersedes_parent_for_inclusion(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "assets"
+    write_image(source_root / "Maps" / "Keep.png")
+    write_image(source_root / "Maps" / "Nested" / "Keep.png")
+    write_image(source_root / "Tokens" / "Skip.png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+    rebuild_search_corpus(config, db_path)
+
+    client = TestClient(create_app(config, db_path))
+
     assert client.patch(
         "/api/search-profile/settings",
         json={
-            "search_session": "tab-2",
+            "search_session": "tab-1",
+            "source_id": "dnd",
+            "directory": "Maps",
+            "quality_override": 8,
+            "selection_state": "whitelist",
+        },
+    ).status_code == 200
+    assert client.patch(
+        "/api/search-profile/settings",
+        json={
+            "search_session": "tab-1",
+            "source_id": "dnd",
+            "directory": "Maps/Nested",
+            "selection_state": "whitelist",
+        },
+    ).status_code == 200
+
+    profile_body = client.get(
+        "/api/search-profiles",
+        params={"search_session": "tab-1"},
+    ).json()
+    settings = {
+        (setting["source_id"], setting["directory"]): setting
+        for setting in profile_body["settings"]
+    }
+    browse_body = client.get(
+        "/api/search-with-directory-counts",
+        params={"search_session": "tab-1"},
+    ).json()
+    directories = {
+        (directory["source_id"], directory["path"]): directory
+        for directory in browse_body["directories"]
+    }
+
+    assert settings[("dnd", "Maps")]["quality_override"] == 8
+    assert settings[("dnd", "Maps")]["selection_state"] == "whitelist"
+    assert settings[("dnd", "Maps/Nested")]["selection_state"] == "whitelist"
+    assert directories[("dnd", "Maps")]["selection_state"] == "whitelist"
+    assert directories[("dnd", "Maps")]["selection_effective"] is False
+    assert directories[("dnd", "Maps")]["included_asset_count"] == 1
+    assert directories[("dnd", "Maps/Nested")]["selection_state"] == "whitelist"
+    assert directories[("dnd", "Maps/Nested")]["selection_effective"] is True
+    assert browse_body["total"] == 1
+
+
+def test_api_profile_parent_whitelist_is_superseded_by_existing_child_whitelist(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "assets"
+    write_image(source_root / "Maps" / "Keep.png")
+    write_image(source_root / "Maps" / "Nested" / "Keep.png")
+    write_image(source_root / "Tokens" / "Skip.png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+    rebuild_search_corpus(config, db_path)
+
+    client = TestClient(create_app(config, db_path))
+
+    assert client.patch(
+        "/api/search-profile/settings",
+        json={
+            "search_session": "tab-1",
+            "source_id": "dnd",
+            "directory": "Maps/Nested",
+            "selection_state": "whitelist",
+        },
+    ).status_code == 200
+    assert client.patch(
+        "/api/search-profile/settings",
+        json={
+            "search_session": "tab-1",
             "source_id": "dnd",
             "directory": "Maps",
             "selection_state": "whitelist",
         },
     ).status_code == 200
-    response = client.patch(
-        "/api/search-profile/settings",
-        json={
-            "search_session": "tab-2",
-            "source_id": "dnd",
-            "directory": "Maps/Nested",
-            "selection_state": "whitelist",
-        },
-    )
-    assert response.status_code == 400
+
+    profile_body = client.get(
+        "/api/search-profiles",
+        params={"search_session": "tab-1"},
+    ).json()
+    settings = {
+        (setting["source_id"], setting["directory"]): setting
+        for setting in profile_body["settings"]
+    }
+    browse_body = client.get(
+        "/api/search-with-directory-counts",
+        params={"search_session": "tab-1"},
+    ).json()
+    directories = {
+        (directory["source_id"], directory["path"]): directory
+        for directory in browse_body["directories"]
+    }
+
+    assert settings[("dnd", "Maps")]["selection_state"] == "whitelist"
+    assert settings[("dnd", "Maps/Nested")]["selection_state"] == "whitelist"
+    assert directories[("dnd", "Maps")]["selection_effective"] is False
+    assert directories[("dnd", "Maps/Nested")]["selection_effective"] is True
+    assert browse_body["total"] == 1
 
 
 def test_api_search_uses_startup_search_index_until_app_restart(tmp_path: Path) -> None:

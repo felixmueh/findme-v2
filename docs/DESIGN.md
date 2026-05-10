@@ -328,9 +328,12 @@ live in backend memory per browser search session.
 
 The active sidebar profile model is tracked in `SEARCH_PROFILES_DESIGN.md`.
 Source roots and directories can be marked as green whitelist or red blacklist
-rules. The nearest specified ancestor decides whether an asset is included, and
-the existence of any whitelist rule globally excludes otherwise-unspecified
-assets. This rule model replaces a single selected-directory hard filter.
+rules. Overlapping whitelist rules are allowed, but only the bottom-most
+whitelist rules are effective; ancestor whitelists with descendant whitelists
+remain visible as superseded settings. The nearest specified effective ancestor
+decides whether an asset is included, and the existence of any effective
+whitelist rule globally excludes otherwise-unspecified assets. This rule model
+replaces a single selected-directory hard filter.
 
 A row selection can still focus, expand, or provide preview context, but final hard filtering should come from the explicit include/exclude subtree rules. Global empty-query behavior can be conservative, such as showing nothing, recent assets, or preferred assets.
 
