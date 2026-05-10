@@ -568,6 +568,51 @@ test('copies paths with the legacy clipboard fallback', async ({ page }) => {
     .toBe('/tmp/sample-assets/maps/castle.png')
 })
 
+test('clears transient clipboard errors', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: undefined,
+    })
+  })
+
+  await page.goto('/')
+  await page.getByRole('button', { name: /castle\.png/i }).click()
+
+  await page.getByRole('button', { name: 'Copy', exact: true }).click()
+
+  await expect(page.locator('.status')).toContainText('Image clipboard requires HTTPS or localhost')
+  await expect(page.locator('.status')).toContainText('1 card', { timeout: 4000 })
+})
+
+test('successful copy clears previous clipboard errors', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: undefined,
+    })
+    document.execCommand = (command: string) => {
+      if (command !== 'copy') return false
+      const selected = document.activeElement
+      if (selected instanceof HTMLTextAreaElement) {
+        ;(window as unknown as { __copiedText?: string }).__copiedText = selected.value
+        return true
+      }
+      return false
+    }
+  })
+
+  await page.goto('/')
+  await page.getByRole('button', { name: /castle\.png/i }).click()
+
+  await page.getByRole('button', { name: 'Copy', exact: true }).click()
+  await expect(page.locator('.status')).toContainText('Image clipboard requires HTTPS or localhost')
+  await page.getByRole('button', { name: 'Copy path' }).click()
+
+  await expect(page.getByRole('button', { name: 'Copied' })).toBeVisible()
+  await expect(page.locator('.status')).toContainText('1 card')
+})
+
 test('updates folder quality through the picker and refreshes ranked search results', async ({ page }) => {
   let directoryQuality = 4
 

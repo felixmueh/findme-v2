@@ -91,6 +91,7 @@
   let error = $state('')
   let copied = $state('')
   let debounceTimer: number | undefined
+  let errorTimer: number | undefined
   let directoryDebounceTimer: number | undefined
   let requestId = 0
   let searchRevision = 0
@@ -247,7 +248,7 @@
       }
     } catch (caught) {
       if (!isAbortError(caught) && directoryRequestController === controller) {
-        error = 'Could not load folders'
+        showError('Could not load folders')
       }
     } finally {
       if (directoryRequestController === controller) {
@@ -290,7 +291,7 @@
       hasMoreAssets = false
       resultTotal = 0
     }
-    error = ''
+    clearError()
     try {
       const response = await fetch(`${path}?${params}`, { signal: controller.signal })
       if (response.status === 204) return
@@ -311,7 +312,7 @@
         selected = null
       }
     } catch (caught) {
-      if (!isAbortError(caught) && currentRequest === requestId) error = 'Search failed'
+      if (!isAbortError(caught) && currentRequest === requestId) showError('Search failed')
     } finally {
       if (currentRequest === requestId) {
         loading = false
@@ -330,7 +331,7 @@
   async function selectAsset(asset: Asset) {
     const response = await fetch(`/api/assets/${asset.asset_id}`)
     if (!response.ok) {
-      error = 'Could not load asset'
+      showError('Could not load asset')
       return
     }
     const detail = (await response.json()) as AssetDetail
@@ -355,7 +356,7 @@
       if (legacyCopyText(action.value)) {
         markCopied(action.id)
       } else {
-        error = 'Text clipboard is not available'
+        showError('Text clipboard is not available', { transient: true })
       }
     }
   }
@@ -363,7 +364,7 @@
   async function copyUrlAction(action: ClipboardUrlAction) {
     if (!action.enabled || !action.url) return
     if (!navigator.clipboard?.write || typeof ClipboardItem === 'undefined') {
-      error = 'Image clipboard requires HTTPS or localhost'
+      showError('Image clipboard requires HTTPS or localhost', { transient: true })
       return
     }
     try {
@@ -374,7 +375,7 @@
       await navigator.clipboard.write([new ClipboardItem({ [type]: blob })])
       markCopied(action.id)
     } catch {
-      error = 'Could not copy image'
+      showError('Could not copy image', { transient: true })
     }
   }
 
@@ -403,10 +404,29 @@
   }
 
   function markCopied(actionId: string) {
+    clearError()
     copied = actionId
     window.setTimeout(() => {
       if (copied === actionId) copied = ''
     }, 1200)
+  }
+
+  function showError(message: string, options: { transient?: boolean } = {}) {
+    window.clearTimeout(errorTimer)
+    errorTimer = undefined
+    error = message
+    if (options.transient) {
+      errorTimer = window.setTimeout(() => {
+        if (error === message) error = ''
+        errorTimer = undefined
+      }, 2800)
+    }
+  }
+
+  function clearError() {
+    window.clearTimeout(errorTimer)
+    errorTimer = undefined
+    error = ''
   }
 
   function chooseRelative(offset: number) {
@@ -734,7 +754,7 @@
       }),
     })
     if (!response.ok) {
-      error = 'Could not update folder quality'
+      showError('Could not update folder quality')
       return
     }
     const revision = ++searchRevision
