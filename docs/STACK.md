@@ -176,7 +176,8 @@ Logs should go to stdout/stderr so systemd/journald can collect them.
 
 ## Deployment
 
-V1 app deployment is native on the server.
+V1 app deployment can run either native on the server or through the server
+Docker Compose deployment.
 
 Expected deployment pieces:
 
@@ -185,4 +186,11 @@ Expected deployment pieces:
 - CLI indexing commands run manually or through systemd-run/timers later
 - optional separate search-engine service if selected
 
-Docker is not required for the app itself in v1. Docker can be used for search-engine experiments or services if convenient.
+For the server Docker deployment, preserve the production app data and source
+paths as container bind mounts so the existing index remains valid:
+
+- `/var/lib/findme-v2:/var/lib/findme-v2`
+- `/media/NAS/main/Documents/DND:/media/NAS/main/Documents/DND:ro`
+
+Indexing remains an explicit CLI/admin command, not a container startup side
+effect.
