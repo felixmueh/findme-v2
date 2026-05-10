@@ -6,6 +6,7 @@ from findme.api import create_app
 from findme.config import AppConfig, SourceConfig
 from findme.db import connect, initialize_database
 from findme.indexer import index_sources
+from findme.search_corpus import rebuild_search_corpus
 
 from helpers import write_image
 
@@ -36,6 +37,7 @@ def test_api_lists_sources_and_current_assets(tmp_path: Path) -> None:
     with connect(db_path) as db:
         initialize_database(db)
         index_sources(db, config)
+    rebuild_search_corpus(config, db_path)
 
     client = TestClient(create_app(config, db_path))
 
@@ -59,6 +61,71 @@ def test_api_lists_sources_and_current_assets(tmp_path: Path) -> None:
     assert asset["thumbnail_url"].startswith(
         f"/api/assets/{asset['asset_id']}/thumb?v="
     )
+
+
+def test_api_requires_prebuilt_search_corpus(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    write_image(source_root / "goblin.png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+
+    try:
+        create_app(config, db_path)
+    except RuntimeError as exc:
+        assert "rebuild-search-corpus" in str(exc)
+    else:
+        raise AssertionError("create_app should require a prebuilt search corpus")
+
+
+def test_api_opens_prebuilt_lexical_index_without_rebuilding(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    write_image(source_root / "goblin.png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+    rebuild_search_corpus(config, db_path)
+
+    def fail_lexical_rebuild(*_args, **_kwargs):
+        raise AssertionError("serve should open the prebuilt lexical index")
+
+    monkeypatch.setattr("findme.search_corpus.SearchLexicalIndex.build", fail_lexical_rebuild)
+
+    client = TestClient(create_app(config, db_path))
+    body = client.get("/api/search", params={"q": "goblin", "mode": "strict"}).json()
+
+    assert body["total"] == 1
 
 
 def test_api_lists_numbered_variants_as_collection_cards(tmp_path: Path) -> None:
@@ -86,7 +153,7 @@ def test_api_lists_numbered_variants_as_collection_cards(tmp_path: Path) -> None
     with connect(db_path) as db:
         initialize_database(db)
         index_sources(db, config)
-
+    rebuild_search_corpus(config, db_path)
     client = TestClient(create_app(config, db_path))
 
     body = client.get("/api/search").json()
@@ -130,7 +197,7 @@ def test_api_updates_folder_quality_and_applies_it_to_current_ranking(
     with connect(db_path) as db:
         initialize_database(db)
         index_sources(db, config)
-
+    rebuild_search_corpus(config, db_path)
     client = TestClient(create_app(config, db_path))
 
     before = client.get("/api/search", params={"q": "goblin"}).json()
@@ -204,7 +271,7 @@ def test_api_groups_numbered_variants_with_accidental_embedded_image_extension(
     with connect(db_path) as db:
         initialize_database(db)
         index_sources(db, config)
-
+    rebuild_search_corpus(config, db_path)
     client = TestClient(create_app(config, db_path))
 
     body = client.get("/api/search").json()
@@ -243,7 +310,7 @@ def test_api_groups_numeric_letter_variants_as_collection_cards(
     with connect(db_path) as db:
         initialize_database(db)
         index_sources(db, config)
-
+    rebuild_search_corpus(config, db_path)
     client = TestClient(create_app(config, db_path))
 
     body = client.get("/api/search").json()
@@ -281,7 +348,7 @@ def test_api_groups_color_variants_inside_filename_stems(tmp_path: Path) -> None
     with connect(db_path) as db:
         initialize_database(db)
         index_sources(db, config)
-
+    rebuild_search_corpus(config, db_path)
     client = TestClient(create_app(config, db_path))
 
     body = client.get("/api/search").json()
@@ -318,7 +385,7 @@ def test_api_groups_letter_variants_inside_filename_stems(tmp_path: Path) -> Non
     with connect(db_path) as db:
         initialize_database(db)
         index_sources(db, config)
-
+    rebuild_search_corpus(config, db_path)
     client = TestClient(create_app(config, db_path))
 
     body = client.get("/api/search").json()
@@ -356,7 +423,7 @@ def test_api_groups_multiple_variant_positions_inside_filename_stems(
     with connect(db_path) as db:
         initialize_database(db)
         index_sources(db, config)
-
+    rebuild_search_corpus(config, db_path)
     client = TestClient(create_app(config, db_path))
 
     body = client.get("/api/search").json()
@@ -391,7 +458,7 @@ def test_api_search_returns_ranked_results(tmp_path: Path) -> None:
     with connect(db_path) as db:
         initialize_database(db)
         index_sources(db, config)
-
+    rebuild_search_corpus(config, db_path)
     client = TestClient(create_app(config, db_path))
 
     response = client.get("/api/search", params={"q": "goblin"})
@@ -429,7 +496,7 @@ def test_api_search_collection_includes_unmatched_variants(tmp_path: Path) -> No
     with connect(db_path) as db:
         initialize_database(db)
         index_sources(db, config)
-
+    rebuild_search_corpus(config, db_path)
     client = TestClient(create_app(config, db_path))
 
     body = client.get("/api/search", params={"q": "mage2", "mode": "strict"}).json()
@@ -465,7 +532,7 @@ def test_api_search_accepts_search_mode(tmp_path: Path) -> None:
     with connect(db_path) as db:
         initialize_database(db)
         index_sources(db, config)
-
+    rebuild_search_corpus(config, db_path)
     client = TestClient(create_app(config, db_path))
 
     strict_body = client.get(
@@ -504,6 +571,7 @@ def test_api_search_with_directory_counts_uses_one_search_scope(
     with connect(db_path) as db:
         initialize_database(db)
         index_sources(db, config)
+    rebuild_search_corpus(config, db_path)
 
     client = TestClient(create_app(config, db_path))
 
@@ -565,7 +633,7 @@ expansions:
     with connect(db_path) as db:
         initialize_database(db)
         index_sources(db, config)
-
+    rebuild_search_corpus(config, db_path)
     client = TestClient(create_app(config, db_path))
 
     body = client.get("/api/search", params={"q": "hero", "mode": "domain"}).json()
@@ -596,7 +664,7 @@ def test_api_result_totals_ignore_limit_and_offset(tmp_path: Path) -> None:
     with connect(db_path) as db:
         initialize_database(db)
         index_sources(db, config)
-
+    rebuild_search_corpus(config, db_path)
     client = TestClient(create_app(config, db_path))
 
     assets_body = client.get("/api/search", params={"limit": 1, "offset": 1}).json()
@@ -628,7 +696,7 @@ def test_api_search_uses_startup_search_index_until_app_restart(tmp_path: Path) 
     with connect(db_path) as db:
         initialize_database(db)
         index_sources(db, config)
-
+    rebuild_search_corpus(config, db_path)
     client = TestClient(create_app(config, db_path))
 
     with connect(db_path) as db:
@@ -661,7 +729,7 @@ def test_api_directories_use_startup_search_index_until_app_restart(tmp_path: Pa
     with connect(db_path) as db:
         initialize_database(db)
         index_sources(db, config)
-
+    rebuild_search_corpus(config, db_path)
     client = TestClient(create_app(config, db_path))
 
     with connect(db_path) as db:
@@ -700,7 +768,7 @@ def test_api_search_rejects_superseded_search_revision(tmp_path: Path) -> None:
     with connect(db_path) as db:
         initialize_database(db)
         index_sources(db, config)
-
+    rebuild_search_corpus(config, db_path)
     client = TestClient(create_app(config, db_path))
 
     current = client.get(
@@ -736,7 +804,7 @@ def test_api_directories_reject_superseded_search_revision(tmp_path: Path) -> No
     with connect(db_path) as db:
         initialize_database(db)
         index_sources(db, config)
-
+    rebuild_search_corpus(config, db_path)
     client = TestClient(create_app(config, db_path))
 
     current = client.get(
@@ -752,9 +820,7 @@ def test_api_directories_reject_superseded_search_revision(tmp_path: Path) -> No
     assert superseded.status_code == 204
 
 
-def test_api_requests_do_not_initialize_database(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_api_uses_preinitialized_database(tmp_path: Path) -> None:
     source_root = tmp_path / "assets"
     source_root.mkdir()
     config = AppConfig(
@@ -773,15 +839,8 @@ def test_api_requests_do_not_initialize_database(
     with connect(db_path) as db:
         initialize_database(db)
         index_sources(db, config)
-
+    rebuild_search_corpus(config, db_path)
     client = TestClient(create_app(config, db_path))
-
-    def fail_request_time_initialization(_db) -> None:
-        raise AssertionError("request attempted schema initialization")
-
-    monkeypatch.setattr(
-        "findme.api.initialize_database", fail_request_time_initialization
-    )
 
     response = client.get("/api/search")
 
@@ -794,7 +853,11 @@ def test_api_serves_static_frontend_when_configured(tmp_path: Path) -> None:
     static_dir.mkdir()
     (static_dir / "index.html").write_text("<main>Findme</main>", encoding="utf-8")
     config = AppConfig(data_root=tmp_path / "data", sources=())
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+    rebuild_search_corpus(config, db_path)
 
-    client = TestClient(create_app(config, tmp_path / "findme.sqlite3", static_dir=static_dir))
+    client = TestClient(create_app(config, db_path, static_dir=static_dir))
 
     assert client.get("/").text == "<main>Findme</main>"

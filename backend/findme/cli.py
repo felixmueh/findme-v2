@@ -14,6 +14,14 @@ from findme.config import ConfigError, load_config
 from findme.db import connect, initialize_database
 from findme.indexer import count_indexable_files, index_sources
 from findme.search import SearchIndex, SearchMode, load_domain_vocabulary
+from findme.search_corpus import (
+    SEARCH_CORPUS_VERSION,
+    SearchCorpusError,
+    load_search_corpus_snapshot,
+    rebuild_search_corpus,
+    search_corpus_lexical_path,
+    search_corpus_snapshot_path,
+)
 from findme.search_eval import (
     EvaluationQuery,
     SearchEvaluation,
@@ -61,6 +69,7 @@ def run(argv: list[str]) -> int:
                     progress=progress,
                 )
             progress.finish()
+            corpus_path = rebuild_search_corpus(config, db_path)
             print(
                 "indexed "
                 f"{summary.scanned_files} files, "
@@ -69,12 +78,20 @@ def run(argv: list[str]) -> int:
                 f"failed {len(summary.thumbnail_failures)} thumbnails, "
                 f"marked stale {summary.marked_stale}"
             )
+            print(f"rebuilt search corpus: {corpus_path}")
             for failure in summary.thumbnail_failures:
                 print(
                     "thumbnail failed: "
                     f"{failure.source_id}:{failure.relative_path}: {failure.message}",
                     file=sys.stderr,
                 )
+            return 0
+
+        if args.command == "rebuild-search-corpus":
+            with connect(db_path) as db:
+                initialize_database(db)
+            corpus_path = rebuild_search_corpus(config, db_path)
+            print(f"rebuilt search corpus: {corpus_path}")
             return 0
 
         if args.command == "serve":
@@ -106,7 +123,21 @@ def run(argv: list[str]) -> int:
             )
             with connect(db_path) as db:
                 initialize_database(db)
-                search_index = SearchIndex.load(db)
+                snapshot_path = search_corpus_snapshot_path(
+                    config.data_root,
+                    config.search_corpus_path,
+                )
+                lexical_path = search_corpus_lexical_path(
+                    config.data_root,
+                    config.search_corpus_path,
+                )
+                snapshot = load_search_corpus_snapshot(snapshot_path)
+                search_index = SearchIndex.load_from_snapshot(
+                    db,
+                    snapshot,
+                    expected_version=SEARCH_CORPUS_VERSION,
+                    lexical_index_path=lexical_path,
+                )
                 report = evaluate_search(
                     evaluation,
                     runner=lambda scope, query: [
@@ -137,6 +168,9 @@ def run(argv: list[str]) -> int:
     except ConfigError as exc:
         print(f"configuration error: {exc}", file=sys.stderr)
         return 2
+    except SearchCorpusError as exc:
+        print(f"search corpus error: {exc}", file=sys.stderr)
+        return 2
     except OSError as exc:
         print(f"filesystem error: {exc}", file=sys.stderr)
         return 2
@@ -164,6 +198,12 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         help="override configured thumbnail worker count for this index run",
     )
+
+    rebuild_search = subparsers.add_parser(
+        "rebuild-search-corpus",
+        help="rebuild the derived search corpus from the indexed database",
+    )
+    rebuild_search.add_argument("--config", type=Path, required=True)
 
     serve = subparsers.add_parser("serve", help="serve the API and built frontend")
     serve.add_argument("--config", type=Path, required=True)

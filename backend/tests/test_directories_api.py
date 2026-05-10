@@ -6,6 +6,7 @@ from findme.api import create_app
 from findme.config import AppConfig, SourceConfig
 from findme.db import connect, initialize_database
 from findme.indexer import index_sources
+from findme.search_corpus import rebuild_search_corpus
 
 from helpers import write_image
 
@@ -31,7 +32,7 @@ def test_api_lists_indexed_directory_tree(tmp_path: Path) -> None:
     with connect(db_path) as db:
         initialize_database(db)
         index_sources(db, config)
-
+    rebuild_search_corpus(config, db_path)
     client = TestClient(create_app(config, db_path))
     body = client.get("/api/search-with-directory-counts", params={"source_id": "dnd"}).json()
 
@@ -110,7 +111,7 @@ def test_api_lists_only_directories_with_search_matches(tmp_path: Path) -> None:
     with connect(db_path) as db:
         initialize_database(db)
         index_sources(db, config)
-
+    rebuild_search_corpus(config, db_path)
     client = TestClient(create_app(config, db_path))
     body = client.get("/api/search-with-directory-counts", params={"source_id": "dnd", "q": "goblin"}).json()
 
@@ -186,7 +187,7 @@ def test_api_directory_rows_are_source_scoped_for_all_sources(tmp_path: Path) ->
     with connect(db_path) as db:
         initialize_database(db)
         index_sources(db, config)
-
+    rebuild_search_corpus(config, db_path)
     client = TestClient(create_app(config, db_path))
     body = client.get("/api/search-with-directory-counts").json()
 

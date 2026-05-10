@@ -19,7 +19,7 @@ from findme.assets import (
     thumbnail_url,
 )
 from findme.config import AppConfig
-from findme.db import connect, initialize_database
+from findme.db import connect
 from findme.result_cards import ResultCardResolver
 from findme.search import (
     DirectoryMatch,
@@ -31,6 +31,13 @@ from findme.search import (
     SearchSuperseded,
     load_domain_vocabulary,
     upsert_folder_quality,
+)
+from findme.search_corpus import (
+    SEARCH_CORPUS_VERSION,
+    SearchCorpusError,
+    load_search_corpus_snapshot,
+    search_corpus_lexical_path,
+    search_corpus_snapshot_path,
 )
 
 
@@ -44,11 +51,19 @@ def create_app(
     config: AppConfig, db_path: Path | None = None, static_dir: Path | None = None
 ) -> FastAPI:
     database_path = db_path or config.data_root / "findme.sqlite3"
+    snapshot_path = search_corpus_snapshot_path(config.data_root, config.search_corpus_path)
+    lexical_path = search_corpus_lexical_path(config.data_root, config.search_corpus_path)
+    snapshot = load_search_corpus_snapshot(snapshot_path)
     with connect(database_path) as db:
-        initialize_database(db)
-        search_index = SearchIndex.load(db)
+        search_index = SearchIndex.load_from_snapshot(
+            db,
+            snapshot,
+            expected_version=SEARCH_CORPUS_VERSION,
+            lexical_index_path=lexical_path,
+        )
     card_resolver = ResultCardResolver.from_assets(
-        [_search_response(result) for result in search_index.scoped_assets()]
+        [_search_response(result) for result in search_index.scoped_assets()],
+        card_metadata_by_asset_id=snapshot.card_metadata_by_asset_id(),
     )
     search_revisions = _SearchRevisionRegistry()
 

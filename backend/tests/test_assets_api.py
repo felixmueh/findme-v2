@@ -6,6 +6,7 @@ from findme.api import create_app
 from findme.config import AppConfig, OutputProfile, SourceConfig
 from findme.db import connect, initialize_database
 from findme.indexer import index_sources
+from findme.search_corpus import rebuild_search_corpus
 
 from helpers import write_image
 
@@ -38,6 +39,7 @@ def test_asset_detail_includes_derived_actions_and_serves_file(tmp_path: Path) -
         row = db.execute("SELECT asset_id, size_bytes, mtime_ns FROM assets").fetchone()
         asset_id = row["asset_id"]
         thumbnail_url = f"/api/assets/{asset_id}/thumb?v={row['size_bytes']}-{row['mtime_ns']}"
+    rebuild_search_corpus(config, db_path)
 
     client = TestClient(create_app(config, db_path))
     detail = client.get(f"/api/assets/{asset_id}").json()
@@ -85,6 +87,7 @@ def test_missing_asset_file_returns_404(tmp_path: Path) -> None:
         initialize_database(db)
         index_sources(db, config)
         asset_id = db.execute("SELECT asset_id FROM assets").fetchone()["asset_id"]
+    rebuild_search_corpus(config, db_path)
     asset_path.unlink()
 
     client = TestClient(create_app(config, db_path))

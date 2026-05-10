@@ -4,6 +4,7 @@ from PIL import Image
 
 from findme.cli import run
 from findme.db import connect
+from findme.search_corpus import load_search_corpus_snapshot, search_corpus_snapshot_path
 
 from helpers import write_image
 
@@ -32,6 +33,43 @@ media_extensions = [".webp"]
     assert run(["init-db", "--config", str(config_path)]) == 0
     assert (data_root / "findme.sqlite3").exists()
     assert run(["index", "--config", str(config_path)]) == 0
+    assert search_corpus_snapshot_path(data_root).exists()
+
+
+def test_cli_rebuild_search_corpus_without_reindexing_assets(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    write_image(source_root / "dragon.webp")
+    config_path = tmp_path / "findme.toml"
+    data_root = tmp_path / "data"
+    config_path.write_text(
+        f"""
+[app]
+data_root = "{data_root}"
+
+[[sources]]
+id = "dnd"
+display_name = "DND"
+root = "{source_root}"
+priority = 10
+media_extensions = [".webp"]
+""",
+        encoding="utf-8",
+    )
+    assert run(["index", "--config", str(config_path), "--thumbnail-workers", "1"]) == 0
+
+    write_image(source_root / "not-indexed-yet.webp")
+    assert run(["rebuild-search-corpus", "--config", str(config_path)]) == 0
+
+    snapshot = load_search_corpus_snapshot(search_corpus_snapshot_path(data_root))
+    assets = sorted(snapshot.assets, key=lambda asset: asset.relative_path)
+    paths = [asset.relative_path for asset in assets]
+    assert paths == ["dragon.webp"]
+    assert assets[0].filename_tokens == ("dragon", "webp")
+    metadata = snapshot.card_metadata_by_asset_id()[assets[0].asset_id]
+    assert metadata.collection_key == "dnd\x00\x00dragon"
+    assert metadata.variant_sort_key == "\x1fdragon.webp"
+    assert metadata.has_variant is False
 
 
 def test_cli_index_can_rebuild_thumbnail_cache(tmp_path: Path) -> None:
