@@ -314,6 +314,13 @@ hard filter. Changing quality should update the live search index preferences,
 clear ranked result caches, and make the current query/browse ordering change
 without re-indexing or restarting the app.
 
+Current reranking updates preference scores incrementally and swaps the live
+preference table after the update. A search already in progress while that swap
+happens may observe a mix of old and new preferences. This is acceptable for now
+because subsequent searches see the new preference revision, but future
+performance/concurrency work should make each search use a stable preference
+snapshot for the duration of ranking.
+
 The final sidebar filtering model is tracked in `docs/SIDEBAR_FILTERING.md`. In that model, source roots and directories can be marked as green whitelist or red blacklist rules. The nearest specified ancestor decides whether an asset is included, and the existence of any whitelist rule globally excludes otherwise-unspecified assets. This rule model replaces a single selected-directory hard filter.
 
 A row selection can still focus, expand, or provide preview context, but final hard filtering should come from the explicit include/exclude subtree rules. Global empty-query behavior can be conservative, such as showing nothing, recent assets, or preferred assets.

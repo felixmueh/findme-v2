@@ -154,6 +154,7 @@ class _InFlightSearch:
 class SearchIndex:
     assets: tuple[_AssetRecord, ...]
     directory_counts: dict[tuple[str, str], int]
+    directory_asset_indexes: dict[tuple[str, str], tuple[int, ...]]
     source_display_names: dict[str, str]
     source_sort_keys: dict[str, tuple[int, str, str]]
     folder_quality_overrides: dict[tuple[str, str], int] = field(default_factory=dict)
@@ -184,6 +185,7 @@ class SearchIndex:
             directory_counts=_counts_from_asset_directories(
                 [(asset.source_id, asset.directory) for asset in assets]
             ),
+            directory_asset_indexes=_asset_indexes_by_directory(assets),
             source_display_names={
                 asset.source_id: asset.source_display_name for asset in assets
             },
@@ -284,12 +286,17 @@ class SearchIndex:
             raise ValueError("folder quality must be between 0 and 10")
         if (source_id, directory) not in self.directory_counts:
             raise KeyError((source_id, directory))
-        next_overrides = dict(self.folder_quality_overrides)
-        if quality == DEFAULT_FOLDER_QUALITY:
-            next_overrides.pop((source_id, directory), None)
-        else:
-            next_overrides[(source_id, directory)] = quality
-        self._replace_folder_quality_overrides(next_overrides)
+        with self._cache_lock:
+            next_overrides = dict(self.folder_quality_overrides)
+            if quality == DEFAULT_FOLDER_QUALITY:
+                next_overrides.pop((source_id, directory), None)
+            else:
+                next_overrides[(source_id, directory)] = quality
+            self._replace_folder_quality_overrides_locked(
+                source_id,
+                directory,
+                next_overrides,
+            )
 
     def folder_quality(self, source_id: str, directory: str) -> tuple[int, int | None]:
         override = self.folder_quality_overrides.get((source_id, directory))
@@ -302,19 +309,24 @@ class SearchIndex:
             override,
         )
 
-    def _replace_folder_quality_overrides(
+    def _replace_folder_quality_overrides_locked(
         self,
+        changed_source_id: str,
+        changed_directory: str,
         folder_quality_overrides: dict[tuple[str, str], int],
     ) -> None:
-        preference_adjustments = _preference_adjustments(
-            self.assets,
+        preference_adjustments = _updated_preference_adjustments(
+            self.directory_asset_indexes,
+            self.preference_adjustments,
+            self.folder_quality_overrides,
             folder_quality_overrides,
+            changed_source_id=changed_source_id,
+            changed_directory=changed_directory,
         )
-        with self._cache_lock:
-            self.folder_quality_overrides = folder_quality_overrides
-            self.preference_adjustments = preference_adjustments
-            self.preferences_revision += 1
-            self._ranked_cache.clear()
+        self.folder_quality_overrides = folder_quality_overrides
+        self.preference_adjustments = preference_adjustments
+        self.preferences_revision += 1
+        self._ranked_cache.clear()
 
     def _preference_adjustment(self, asset: _AssetRecord) -> float:
         return self.preference_adjustments[asset.asset_index]
@@ -1233,6 +1245,15 @@ def upsert_folder_quality(
     )
 
 
+def _asset_indexes_by_directory(
+    assets: tuple[_AssetRecord, ...],
+) -> dict[tuple[str, str], tuple[int, ...]]:
+    indexes: dict[tuple[str, str], list[int]] = {}
+    for index, asset in enumerate(assets):
+        indexes.setdefault((asset.source_id, asset.directory), []).append(index)
+    return {key: tuple(value) for key, value in indexes.items()}
+
+
 def _preference_adjustments(
     assets: tuple[_AssetRecord, ...],
     folder_quality_overrides: dict[tuple[str, str], int],
@@ -1250,6 +1271,55 @@ def _preference_adjustments(
     )
 
 
+def _updated_preference_adjustments(
+    directory_asset_indexes: dict[tuple[str, str], tuple[int, ...]],
+    preference_adjustments: tuple[float, ...],
+    current_overrides: dict[tuple[str, str], int],
+    next_overrides: dict[tuple[str, str], int],
+    *,
+    changed_source_id: str,
+    changed_directory: str,
+) -> tuple[float, ...]:
+    current_quality = _effective_folder_quality(
+        current_overrides,
+        changed_source_id,
+        changed_directory,
+    )
+    next_quality = _effective_folder_quality(
+        next_overrides,
+        changed_source_id,
+        changed_directory,
+    )
+    if current_quality == next_quality:
+        return preference_adjustments
+
+    more_specific_override_paths = tuple(
+        path
+        for (source_id, path) in next_overrides
+        if source_id == changed_source_id
+        and path != changed_directory
+        and _directory_is_within(path, changed_directory)
+    )
+    adjustment_delta = _folder_quality_adjustment(
+        next_quality
+    ) - _folder_quality_adjustment(current_quality)
+    next_adjustments = list(preference_adjustments)
+    for (source_id, directory), asset_indexes in directory_asset_indexes.items():
+        if source_id != changed_source_id or not _directory_is_within(
+            directory,
+            changed_directory,
+        ):
+            continue
+        if _has_more_specific_folder_quality_override(
+            more_specific_override_paths,
+            directory,
+        ):
+            continue
+        for asset_index in asset_indexes:
+            next_adjustments[asset_index] += adjustment_delta
+    return tuple(next_adjustments)
+
+
 def _effective_folder_quality(
     folder_quality_overrides: dict[tuple[str, str], int],
     source_id: str,
@@ -1260,6 +1330,20 @@ def _effective_folder_quality(
         if override is not None:
             return override
     return DEFAULT_FOLDER_QUALITY
+
+
+def _directory_is_within(directory: str, parent: str) -> bool:
+    return parent == "" or directory == parent or directory.startswith(f"{parent}/")
+
+
+def _has_more_specific_folder_quality_override(
+    more_specific_override_paths: tuple[str, ...],
+    directory: str,
+) -> bool:
+    for path in more_specific_override_paths:
+        if _directory_is_within(directory, path):
+            return True
+    return False
 
 
 def _directory_ancestors(directory: str) -> tuple[str, ...]:

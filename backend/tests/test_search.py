@@ -252,6 +252,42 @@ def test_search_index_applies_folder_quality_to_combined_and_strict_ranking(
     ]
 
 
+def test_search_index_updates_only_assets_with_changed_effective_folder_quality(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source_root = tmp_path / "assets"
+    write_image(source_root / "Parent" / "Inherited" / "Goblin.png")
+    write_image(source_root / "Parent" / "Overridden" / "Goblin.png")
+    write_image(source_root / "Other" / "Goblin.png")
+    config = _config(tmp_path, source_root)
+
+    with connect(tmp_path / "findme.sqlite3") as db:
+        initialize_database(db)
+        index_sources(db, config)
+        upsert_folder_quality(
+            db,
+            source_id="dnd",
+            directory="Parent/Overridden",
+            quality=0,
+        )
+        search_index = SearchIndex.load(db)
+
+    def fail_full_recompute(*_args, **_kwargs):
+        raise AssertionError("folder quality update rebuilt all preferences")
+
+    monkeypatch.setattr(search_module, "_preference_adjustments", fail_full_recompute)
+
+    search_index.set_folder_quality("dnd", "Parent", 10)
+
+    assert search_index.folder_quality("dnd", "Parent/Inherited") == (10, None)
+    assert search_index.folder_quality("dnd", "Parent/Overridden") == (0, 0)
+    assert [result.relative_path for result in search_index.search("goblin").assets] == [
+        "Parent/Inherited/Goblin.png",
+        "Other/Goblin.png",
+        "Parent/Overridden/Goblin.png",
+    ]
+
+
 def test_directories_for_matches_keep_each_source_subtree_together(tmp_path: Path) -> None:
     dnd_root = tmp_path / "dnd"
     maps_root = tmp_path / "maps"
