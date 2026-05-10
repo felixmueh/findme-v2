@@ -6,6 +6,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 env_profile="${CODEX_SBX_ENV_PROFILE:-$repo_root/docs/environments/server-sbx.md}"
 host_ip="${CODEX_SBX_HOST_IP:-0.0.0.0}"
 main_sandbox_app_port="8001"
+setup_timeout_seconds="${CODEX_SBX_SETUP_TIMEOUT_SECONDS:-60}"
 
 branch=""
 
@@ -109,49 +110,55 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
 PY
 }
 
-publish_port() {
+publish_port_once() {
   local app_port="$1"
   local port_spec="${host_ip}:${app_port}:${app_port}"
+  local publish_output
 
-  (
-    for attempt in {1..20}; do
-      if sbx ports "$sandbox_name" 2>/dev/null | grep -Fq "$port_spec"; then
-        exit 0
-      fi
+  if sbx ports "$sandbox_name" 2>/dev/null | grep -Fq "$port_spec"; then
+    return 0
+  fi
 
-      publish_output="$(sbx ports "$sandbox_name" --publish "$port_spec" 2>&1)" && exit 0
+  publish_output="$(sbx ports "$sandbox_name" --publish "$port_spec" 2>&1)" && return 0
 
-      if grep -Eiq 'already|allocated|in use' <<<"$publish_output"; then
-        exit 0
-      fi
+  if sbx ports "$sandbox_name" 2>/dev/null | grep -Fq "$port_spec"; then
+    return 0
+  fi
 
-      if [[ "$attempt" == 20 ]]; then
-        printf '%s\n' "$publish_output" >&2
-        echo "failed to publish sandbox port after $attempt attempts: $port_spec" >&2
-        exit 1
-      fi
-
-      sleep 1
-    done
-  ) &
+  return 1
 }
 
-ensure_sandbox_exists() {
-  if ! sbx ls --quiet | grep -Fxq "$sandbox_name"; then
-    sbx create --name "$sandbox_name" codex "$repo_root"
+parent_process_exists() {
+  local parent_pid="$1"
+
+  kill -0 "$parent_pid" 2>/dev/null
+}
+
+branch_worktree_dir() {
+  local wanted_branch="$1"
+  local worktree_dir
+
+  worktree_dir="$(find_worktree_for_branch "$wanted_branch")"
+
+  if [[ -z "$worktree_dir" ]]; then
+    worktree_dir="$repo_root/.sbx/${sandbox_name}-worktrees/${wanted_branch}"
+  fi
+
+  if [[ -d "$worktree_dir" ]]; then
+    printf '%s\n' "$worktree_dir"
   fi
 }
 
-read_or_create_worktree_port() {
+read_worktree_port() {
   local worktree_dir="$1"
   local port_file="$worktree_dir/.port"
   local port
 
-  if [[ ! -e "$port_file" ]]; then
-    random_free_port > "$port_file"
+  if [[ -e "$port_file" ]]; then
+    port="$(tr -d '[:space:]' < "$port_file")"
+  else
+    port="$(random_free_port)"
   fi
-
-  port="$(tr -d '[:space:]' < "$port_file")"
 
   if [[ ! "$port" =~ ^[0-9]+$ ]]; then
     echo "invalid port in $port_file: $port" >&2
@@ -161,34 +168,72 @@ read_or_create_worktree_port() {
   printf '%s\n' "$port"
 }
 
-ensure_sandbox_exists
+create_worktree_port_file() {
+  local worktree_dir="$1"
+  local app_port="$2"
+  local port_file="$worktree_dir/.port"
+
+  if [[ ! -e "$port_file" ]]; then
+    printf '%s\n' "$app_port" > "$port_file"
+  fi
+}
+
+setup_branch_worker() {
+  local parent_pid="$1"
+  local branch_name="$2"
+  local deadline=$((SECONDS + setup_timeout_seconds))
+  local worktree_dir
+  local app_port
+
+  while (( SECONDS < deadline )); do
+    if ! parent_process_exists "$parent_pid"; then
+      exit 0
+    fi
+
+    worktree_dir="$(branch_worktree_dir "$branch_name")"
+
+    if [[ -n "$worktree_dir" ]]; then
+      app_port="$(read_worktree_port "$worktree_dir")"
+
+      if publish_port_once "$app_port"; then
+        create_worktree_port_file "$worktree_dir" "$app_port"
+        exit 0
+      fi
+    fi
+
+    sleep 1
+  done
+
+  echo "timed out setting up sandbox branch after ${setup_timeout_seconds}s: $branch_name" >&2
+  exit 1
+}
+
+setup_main_worker() {
+  local parent_pid="$1"
+  local app_port="$2"
+  local deadline=$((SECONDS + setup_timeout_seconds))
+
+  while (( SECONDS < deadline )); do
+    if ! parent_process_exists "$parent_pid"; then
+      exit 0
+    fi
+
+    if publish_port_once "$app_port"; then
+      exit 0
+    fi
+
+    sleep 1
+  done
+
+  echo "timed out publishing sandbox port after ${setup_timeout_seconds}s: $app_port" >&2
+  exit 1
+}
 
 if [[ -n "$branch" ]]; then
-  # Create/reuse the sbx branch worktree, then exit immediately.
-  sbx run "$sandbox_name" --branch "$branch" -- true >/dev/null
-
-  worktree_dir="$(find_worktree_for_branch "$branch")"
-
-  if [[ -z "$worktree_dir" ]]; then
-    # Fallback for the usual sbx worktree layout.
-    worktree_dir="$repo_root/.sbx/${sandbox_name}-worktrees/${branch}"
-  fi
-
-  if [[ ! -d "$worktree_dir" ]]; then
-    echo "could not find sbx worktree for branch: $branch" >&2
-    echo "expected/fallback path was: $worktree_dir" >&2
-    echo "known worktrees:" >&2
-    git worktree list >&2
-    exit 1
-  fi
-
-  app_port="$(read_or_create_worktree_port "$worktree_dir")"
-  publish_port "$app_port"
-
+  setup_branch_worker "$$" "$branch" &
   exec sbx run "$sandbox_name" --branch "$branch" -- "$@"
 else
   app_port="$main_sandbox_app_port"
-  publish_port "$app_port"
-
+  setup_main_worker "$$" "$app_port" &
   exec sbx run "$sandbox_name" -- "$@"
 fi
