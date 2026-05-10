@@ -282,14 +282,17 @@ def create_app(
             offset=offset,
             limit=limit,
         )
-        directories = search_index.directory_matches(
-            q,
-            source_id=source_id,
-            directory_filter=directory_filter,
-            domain_vocabulary=domain_vocabulary,
-            mode=mode,
-            control=control,
-        )
+        try:
+            directories = search_index.directory_matches(
+                q,
+                source_id=source_id,
+                directory_filter=directory_filter,
+                domain_vocabulary=domain_vocabulary,
+                mode=mode,
+                control=control,
+            )
+        except SearchSuperseded:
+            return Response(status_code=204)
         return JSONResponse(
             {
                 "cards": cards,

@@ -6,6 +6,7 @@ from findme.api import create_app
 from findme.config import AppConfig, SourceConfig
 from findme.db import connect, initialize_database
 from findme.indexer import index_sources
+from findme.search import SearchIndex, SearchSuperseded
 from findme.search_corpus import rebuild_search_corpus
 
 from helpers import write_image
@@ -907,6 +908,49 @@ def test_api_directories_reject_superseded_search_revision(tmp_path: Path) -> No
 
     assert current.status_code == 200
     assert superseded.status_code == 204
+
+
+def test_api_search_with_directory_counts_rejects_superseded_directory_counts(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source_root = tmp_path / "assets"
+    write_image(source_root / "Maps" / "Goblin Cave.png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+    rebuild_search_corpus(config, db_path)
+    client = TestClient(create_app(config, db_path))
+
+    def supersede_directory_counts(*_args, **_kwargs):
+        raise SearchSuperseded
+
+    monkeypatch.setattr(SearchIndex, "directory_matches", supersede_directory_counts)
+
+    response = client.get(
+        "/api/search-with-directory-counts",
+        params=[
+            ("q", "goblin"),
+            ("search_session", "tab-1"),
+            ("search_revision", "1"),
+            ("filter_rule", '{"source_id":"dnd","path":"Maps","state":"whitelist"}'),
+        ],
+    )
+
+    assert response.status_code == 204
 
 
 def test_api_uses_preinitialized_database(tmp_path: Path) -> None:
