@@ -100,7 +100,7 @@
   let assetRequestController: AbortController | undefined
   let hoverAudioElement = $state<HTMLAudioElement>()
   let hoverPreviewMuted = $state(true)
-  let hoverPreviewVolume = $state(0.35)
+  let hoverPreviewVolume = $state(0.5)
   let hoverClearTimer: number | undefined
   let searchInput: HTMLInputElement
   let tileGridElement = $state<HTMLDivElement>()
@@ -555,6 +555,17 @@
 
   function toggleHoverPreviewMuted() {
     hoverPreviewMuted = !hoverPreviewMuted
+  }
+
+  function selectedPreviewStyle(asset: Pick<Asset, 'media_type' | 'thumbnail_width' | 'thumbnail_height'>) {
+    if (
+      (asset.media_type === 'image' || asset.media_type === 'video') &&
+      asset.thumbnail_width &&
+      asset.thumbnail_height
+    ) {
+      return `--selected-preview-aspect: ${asset.thumbnail_width} / ${asset.thumbnail_height}`
+    }
+    return ''
   }
 
   function assetFileUrl(asset: Pick<Asset, 'asset_id'>) {
@@ -1122,7 +1133,12 @@
         {@const SelectedIcon = assetIcon(selected.asset)}
         {@const actions = selected.actions}
         <aside class="asset-panel" aria-label="Selected asset">
-          <div class="preview">
+          <div
+            class="preview"
+            class:media-preview={selected.asset.media_type === 'image' || selected.asset.media_type === 'video'}
+            class:audio-preview-shell={selected.asset.media_type === 'audio'}
+            style={selectedPreviewStyle(selected.asset)}
+          >
             {#if selected.asset.media_type === 'image'}
               <img src={actions.open.url} alt={selected.asset.filename} />
             {:else if selected.asset.media_type === 'video'}

@@ -520,7 +520,7 @@ test('previews audio on hover and shows playback controls when selected', async 
 
   await tile.hover()
   await expect.poll(() => page.evaluate(() => (window as unknown as { __audioEvents: string[] }).__audioEvents)).toContain(
-    'play:/api/assets/asset-thunder/file:muted=true:volume=0.35'
+    'play:/api/assets/asset-thunder/file:muted=true:volume=0.5'
   )
   const audioCard = page.getByRole('group', { name: 'Audio asset card for thunder.mp3' })
   await expect(audioCard.getByRole('button', { name: 'Unmute preview' })).toBeVisible()
@@ -535,7 +535,7 @@ test('previews audio on hover and shows playback controls when selected', async 
 
   await muteButton.hover()
   await expect(audioCard.getByRole('slider', { name: 'Preview volume' })).toBeVisible()
-  await expect(audioCard.getByRole('slider', { name: 'Preview volume' })).toHaveValue('35')
+  await expect(audioCard.getByRole('slider', { name: 'Preview volume' })).toHaveValue('50')
   const sliderBox = await audioCard.getByRole('slider', { name: 'Preview volume' }).boundingBox()
   if (!sliderBox) throw new Error('preview slider is missing')
   expect(sliderBox.x).toBeGreaterThanOrEqual(muteButtonBox.x - 44)
@@ -696,6 +696,64 @@ test('copies the selected asset FoundryVTT path', async ({ page }) => {
   await expect
     .poll(() => page.evaluate(() => (window as unknown as { __copiedText?: string }).__copiedText))
     .toBe('library/Sample Assets/maps/castle.png')
+})
+
+test('sizes the selected preview to show the whole image while keeping actions visible', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 })
+  const tallAsset = {
+    ...sampleAsset,
+    asset_id: 'asset-banner',
+    relative_path: 'maps/banner.png',
+    filename: 'banner.png',
+    stem: 'banner',
+    thumbnail_width: 200,
+    thumbnail_height: 600,
+  }
+
+  await page.route('**/api/search-with-directory-counts?*', async (route) => {
+    await route.fulfill({
+      json: {
+        total: 1,
+        cards: [{ kind: 'asset', asset: tallAsset }],
+        directories: [sampleRootDirectory(), sampleDirectory()],
+      },
+    })
+  })
+  await page.route('**/api/search?*', async (route) => {
+    await route.fulfill({ json: { total: 1, cards: [{ kind: 'asset', asset: tallAsset }] } })
+  })
+  await page.route('**/api/assets/asset-banner', async (route) => {
+    await route.fulfill({
+      json: {
+        asset: tallAsset,
+        actions: actionsFor(tallAsset, '/tmp/sample-assets/maps/banner.png'),
+      },
+    })
+  })
+  await page.route('**/api/assets/asset-banner/file', async (route) => {
+    await route.fulfill({
+      contentType: 'image/gif',
+      body: Buffer.from('R0lGODlhAQABAAAAACw=', 'base64'),
+    })
+  })
+
+  await page.goto('/')
+  await page.getByRole('button', { name: /banner\.png/i }).click()
+
+  const panel = page.getByLabel('Selected asset')
+  const preview = panel.locator('.preview')
+  const previewImage = preview.locator('img')
+  await expect(previewImage).toBeVisible()
+  await expect(previewImage).toHaveCSS('object-fit', 'contain')
+
+  const previewBox = await preview.boundingBox()
+  const panelBox = await panel.boundingBox()
+  const finalActionBox = await panel.getByRole('button', { name: 'Copy FoundryVTT path' }).boundingBox()
+  if (!previewBox || !panelBox || !finalActionBox) throw new Error('selected preview layout is missing')
+
+  expect(previewBox.width).toBeLessThanOrEqual(310)
+  expect(previewBox.height).toBeGreaterThan(230)
+  expect(finalActionBox.y + finalActionBox.height).toBeLessThanOrEqual(panelBox.y + panelBox.height)
 })
 
 test('copies paths with the legacy clipboard fallback', async ({ page }) => {
