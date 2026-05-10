@@ -13,6 +13,8 @@ from rapidfuzz import fuzz, process
 import tantivy
 import yaml
 
+from findme.result_cards import CardMetadata
+
 
 SearchMode = Literal["strict", "fuzzy", "domain", "combined"]
 DEFAULT_FOLDER_QUALITY = 5
@@ -60,6 +62,10 @@ class SearchSuperseded(RuntimeError):
     pass
 
 
+class SearchCorpusError(RuntimeError):
+    pass
+
+
 @dataclass(frozen=True)
 class SearchControl:
     is_cancelled: Callable[[], bool]
@@ -99,6 +105,9 @@ class _AssetRecord:
     path_tokens: tuple[str, ...]
     normalized_text: str
     fuzzy_text: str
+    collection_key: str = ""
+    variant_sort_key: str = ""
+    has_variant: bool = False
 
 
 @dataclass(frozen=True)
@@ -111,6 +120,19 @@ class _SearchCorpus:
     @classmethod
     def from_assets(cls, assets: Iterable[_AssetRecord]) -> "_SearchCorpus":
         asset_tuple = tuple(assets)
+        return cls.from_preprocessed_assets(
+            asset_tuple,
+            lexical_index=_TantivyLexicalIndex.build(asset_tuple),
+        )
+
+    @classmethod
+    def from_preprocessed_assets(
+        cls,
+        assets: Iterable[_AssetRecord],
+        *,
+        lexical_index: "_TantivyLexicalIndex | None",
+    ) -> "_SearchCorpus":
+        asset_tuple = tuple(assets)
         fuzzy_token_assets: dict[str, list[int]] = {}
         for asset_index, asset in enumerate(asset_tuple):
             for token in dict.fromkeys(asset.filename_tokens + asset.path_tokens):
@@ -121,7 +143,7 @@ class _SearchCorpus:
             fuzzy_token_asset_indexes=tuple(
                 tuple(asset_indexes) for asset_indexes in fuzzy_token_assets.values()
             ),
-            lexical_index=_TantivyLexicalIndex.build(asset_tuple),
+            lexical_index=lexical_index,
         )
 
 
@@ -179,6 +201,100 @@ class SearchIndex:
         )
         folder_quality_overrides = _fetch_folder_quality_overrides(db)
         corpus = _SearchCorpus.from_assets(assets)
+        return cls(
+            assets=assets,
+            directory_counts=_counts_from_asset_directories(
+                [(asset.source_id, asset.directory) for asset in assets]
+            ),
+            source_display_names={
+                asset.source_id: asset.source_display_name for asset in assets
+            },
+            source_sort_keys={
+                asset.source_id: (
+                    -asset.source_priority,
+                    asset.source_display_name.casefold(),
+                    asset.source_id,
+                )
+                for asset in assets
+            },
+            folder_quality_overrides=folder_quality_overrides,
+            preference_adjustments=_preference_adjustments(
+                assets,
+                folder_quality_overrides,
+            ),
+            fuzzy_tokens=corpus.fuzzy_tokens,
+            fuzzy_token_asset_indexes=corpus.fuzzy_token_asset_indexes,
+            lexical_index=corpus.lexical_index,
+        )
+
+    @classmethod
+    def load_from_corpus(
+        cls,
+        db: sqlite3.Connection,
+        corpus_db: sqlite3.Connection,
+        *,
+        expected_version: str,
+        lexical_index_path: Path,
+    ) -> "SearchIndex":
+        row = corpus_db.execute(
+            "SELECT value FROM corpus_metadata WHERE key = 'version'"
+        ).fetchone()
+        if row is None or row["value"] != expected_version:
+            found = "missing" if row is None else row["value"]
+            raise SearchCorpusError(
+                "search corpus version mismatch "
+                f"(expected {expected_version}, found {found}); "
+                "run findme rebuild-search-corpus --config <config>"
+            )
+        rows = corpus_db.execute(
+            """
+            SELECT
+              asset_index,
+              asset_id,
+              source_id,
+              source_display_name,
+              source_priority,
+              relative_path,
+              filename,
+              stem,
+              extension,
+              directory,
+              size_bytes,
+              mtime_ns,
+              media_type,
+              thumbnail_path,
+              thumbnail_width,
+              thumbnail_height,
+              source_tokens,
+              filename_tokens,
+              directory_tokens,
+              path_tokens,
+              normalized_text,
+              fuzzy_text,
+              collection_key,
+              variant_sort_key,
+              has_variant
+            FROM search_assets
+            ORDER BY asset_index
+            """
+        ).fetchall()
+        assets = tuple(_corpus_row_to_record(row) for row in rows)
+        folder_quality_overrides = _fetch_folder_quality_overrides(db)
+        lexical_index = None
+        if assets:
+            if not lexical_index_path.is_dir():
+                raise SearchCorpusError(
+                    f"search lexical index is missing: {lexical_index_path}; "
+                    "run findme rebuild-search-corpus --config <config>"
+                )
+            lexical_index = _TantivyLexicalIndex.open(
+                lexical_index_path,
+                asset_count=len(assets),
+            )
+        corpus = _SearchCorpus.from_preprocessed_assets(
+            assets,
+            lexical_index=lexical_index,
+        )
         return cls(
             assets=assets,
             directory_counts=_counts_from_asset_directories(
@@ -318,6 +434,17 @@ class SearchIndex:
 
     def _preference_adjustment(self, asset: _AssetRecord) -> float:
         return self.preference_adjustments[asset.asset_index]
+
+    def card_metadata_by_asset_id(self) -> dict[str, CardMetadata]:
+        return {
+            asset.asset_id: CardMetadata(
+                asset_id=asset.asset_id,
+                collection_key=asset.collection_key,
+                variant_sort_key=asset.variant_sort_key,
+                has_variant=asset.has_variant,
+            )
+            for asset in self.assets
+        }
 
     def directory_matches(
         self,
@@ -929,7 +1056,12 @@ class _TantivyLexicalIndex:
         self.asset_count = asset_count
 
     @classmethod
-    def build(cls, assets: tuple[_AssetRecord, ...]) -> "_TantivyLexicalIndex | None":
+    def build(
+        cls,
+        assets: tuple[_AssetRecord, ...],
+        *,
+        path: Path | None = None,
+    ) -> "_TantivyLexicalIndex | None":
         if not assets:
             return None
         schema_builder = tantivy.SchemaBuilder()
@@ -937,7 +1069,7 @@ class _TantivyLexicalIndex:
         for field_name in cls._FIELDS + cls._TRIGRAM_FIELDS:
             schema_builder.add_text_field(field_name)
         schema = schema_builder.build()
-        index = tantivy.Index(schema)
+        index = tantivy.Index(schema, path=str(path) if path is not None else None)
         writer = index.writer(heap_size=300_000_000, num_threads=2)
         for asset_index, asset in enumerate(assets):
             writer.add_document(
@@ -957,6 +1089,12 @@ class _TantivyLexicalIndex:
         writer.commit()
         index.reload()
         return cls(index=index, searcher=index.searcher(), asset_count=len(assets))
+
+    @classmethod
+    def open(cls, path: Path, *, asset_count: int) -> "_TantivyLexicalIndex":
+        index = tantivy.Index.open(str(path))
+        index.reload()
+        return cls(index=index, searcher=index.searcher(), asset_count=asset_count)
 
     def candidates_with_scores(
         self,
@@ -1702,6 +1840,36 @@ def _row_to_record(row: sqlite3.Row, asset_index: int) -> _AssetRecord:
         path_tokens=path_tokens,
         normalized_text=normalized_text,
         fuzzy_text=fuzzy_text,
+    )
+
+
+def _corpus_row_to_record(row: sqlite3.Row) -> _AssetRecord:
+    return _AssetRecord(
+        asset_index=row["asset_index"],
+        asset_id=row["asset_id"],
+        source_id=row["source_id"],
+        source_display_name=row["source_display_name"],
+        source_priority=row["source_priority"],
+        relative_path=row["relative_path"],
+        filename=row["filename"],
+        stem=row["stem"],
+        extension=row["extension"],
+        directory=row["directory"],
+        size_bytes=row["size_bytes"],
+        mtime_ns=row["mtime_ns"],
+        media_type=row["media_type"],
+        thumbnail_path=row["thumbnail_path"],
+        thumbnail_width=row["thumbnail_width"],
+        thumbnail_height=row["thumbnail_height"],
+        source_tokens=tuple(row["source_tokens"].split()),
+        filename_tokens=tuple(row["filename_tokens"].split()),
+        directory_tokens=tuple(row["directory_tokens"].split()),
+        path_tokens=tuple(row["path_tokens"].split()),
+        normalized_text=row["normalized_text"],
+        fuzzy_text=row["fuzzy_text"],
+        collection_key=row["collection_key"],
+        variant_sort_key=row["variant_sort_key"],
+        has_variant=bool(row["has_variant"]),
     )
 
 

@@ -39,6 +39,7 @@ class AppConfig:
     sources: tuple[SourceConfig, ...]
     thumbnail_workers: int = 2
     domain_vocabulary_path: Path | None = None
+    search_corpus_path: Path | None = None
 
 
 _ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
@@ -63,10 +64,9 @@ def load_config(path: Path) -> AppConfig:
     if not isinstance(thumbnail_workers, int) or thumbnail_workers < 1:
         raise ConfigError("[app].thumbnail_workers must be a positive integer")
 
-    domain_vocabulary_path = _load_domain_vocabulary_path(
-        raw.get("search"),
-        config_path.parent,
-    )
+    search_config = raw.get("search")
+    domain_vocabulary_path = _load_domain_vocabulary_path(search_config, config_path.parent)
+    search_corpus_path = _load_search_corpus_path(search_config, config_path.parent)
 
     source_tables = raw.get("sources")
     if not isinstance(source_tables, list) or not source_tables:
@@ -88,6 +88,7 @@ def load_config(path: Path) -> AppConfig:
         sources=tuple(sources),
         thumbnail_workers=thumbnail_workers,
         domain_vocabulary_path=domain_vocabulary_path,
+        search_corpus_path=search_corpus_path,
     )
 
 
@@ -108,6 +109,22 @@ def _load_domain_vocabulary_path(raw: object, config_dir: Path) -> Path | None:
         raise ConfigError(f"domain vocabulary file does not exist: {path}")
     if not path.is_file():
         raise ConfigError(f"domain vocabulary path is not a file: {path}")
+    return path
+
+
+def _load_search_corpus_path(raw: object, config_dir: Path) -> Path | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ConfigError("[search] must be a table")
+    corpus_path = raw.get("corpus_path")
+    if corpus_path is None:
+        return None
+    if not isinstance(corpus_path, str) or not corpus_path:
+        raise ConfigError("[search].corpus_path must be a non-empty string")
+    path = Path(corpus_path).expanduser()
+    if not path.is_absolute():
+        path = config_dir / path
     return path
 
 

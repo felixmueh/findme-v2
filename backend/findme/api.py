@@ -19,17 +19,23 @@ from findme.assets import (
     thumbnail_url,
 )
 from findme.config import AppConfig
-from findme.db import connect, initialize_database
+from findme.db import connect
 from findme.result_cards import ResultCardResolver
 from findme.search import (
     DirectoryMatch,
     SearchIndex,
     SearchMode,
+    SearchCorpusError,
     SearchResult,
     SearchControl,
     SearchSuperseded,
     load_domain_vocabulary,
     upsert_folder_quality,
+)
+from findme.search_preprocess import (
+    SEARCH_CORPUS_VERSION,
+    search_corpus_lexical_path,
+    search_corpus_path,
 )
 
 
@@ -43,11 +49,24 @@ def create_app(
     config: AppConfig, db_path: Path | None = None, static_dir: Path | None = None
 ) -> FastAPI:
     database_path = db_path or config.data_root / "findme.sqlite3"
+    corpus_path = search_corpus_path(config.data_root, config.search_corpus_path)
+    lexical_path = search_corpus_lexical_path(config.data_root, config.search_corpus_path)
+    if not corpus_path.is_file():
+        raise SearchCorpusError(
+            f"search corpus is missing: {corpus_path}; "
+            "run findme rebuild-search-corpus --config <config>"
+        )
     with connect(database_path) as db:
-        initialize_database(db)
-        search_index = SearchIndex.load(db)
+        with connect(corpus_path) as corpus_db:
+            search_index = SearchIndex.load_from_corpus(
+                db,
+                corpus_db,
+                expected_version=SEARCH_CORPUS_VERSION,
+                lexical_index_path=lexical_path,
+            )
     card_resolver = ResultCardResolver.from_assets(
-        [_search_response(result) for result in search_index.scoped_assets()]
+        [_search_response(result) for result in search_index.scoped_assets()],
+        card_metadata_by_asset_id=search_index.card_metadata_by_asset_id(),
     )
     search_revisions = _SearchRevisionRegistry()
 

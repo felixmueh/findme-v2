@@ -181,6 +181,15 @@ source_id + relative_path + size + mtime
 
 This avoids content hashing in v1 while still invalidating derived files when an asset changes.
 
+Search-serving data is a derived corpus, not canonical metadata. The main database remains the source of truth for indexed assets, sources, folder quality, and thumbnail references. Search preprocessing builds a separate versioned search corpus under the app data root, with the active filename derived from the preprocessing version. Serving and search evaluation consume that prepared corpus and fail clearly if it is missing or stale; they do not rebuild it implicitly.
+
+Indexing runs in two phases:
+
+- normal asset indexing updates the canonical database and thumbnail cache
+- search preprocessing snapshots current non-stale assets into the versioned search corpus, builds the lexical index used by search, and precomputes result-card grouping metadata
+
+The search corpus is disposable and may be rebuilt from the canonical database with the explicit `rebuild-search-corpus` command. Folder quality overrides stay in the main database and are applied at search time so UI quality changes do not require corpus rebuilds.
+
 ## Media Scope
 
 V1 should support common image and VTT media assets:
