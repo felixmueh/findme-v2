@@ -368,11 +368,16 @@ class SearchIndex:
         self,
         *,
         directory_filter: DirectoryFilter | None = None,
+        display_directory_filter: DirectoryFilter | None = None,
         quality_overrides: dict[tuple[str, str], int] | None = None,
     ) -> SearchPreferences:
         directory_filter = directory_filter or DirectoryFilter()
+        display_directory_filter = display_directory_filter or directory_filter
         quality_overrides = quality_overrides or {}
         effective_directory_filter = _bottommost_whitelist_filter(directory_filter)
+        effective_display_directory_filter = _bottommost_whitelist_filter(
+            display_directory_filter
+        )
         included_asset_index_order = self._included_asset_index_order(
             effective_directory_filter
         )
@@ -397,11 +402,11 @@ class SearchIndex:
             quality_overrides=quality_overrides,
             selection_states={
                 (rule.source_id, rule.path): rule.state
-                for rule in directory_filter.rules
+                for rule in display_directory_filter.rules
             },
             effective_selection_states={
                 (rule.source_id, rule.path): rule.state
-                for rule in effective_directory_filter.rules
+                for rule in effective_display_directory_filter.rules
             },
             settings_fingerprint=folder_settings_fingerprint(
                 directory_filter,
@@ -585,30 +590,63 @@ class SearchIndex:
                 dirty_folder_subtree_keys=dirty_folder_subtree_keys,
             )
 
-        match_counts = self._directory_counts_for_scope(
+        match_asset_indexes = self._asset_index_array_for_scope(
             source_id=source_id,
             directory=directory,
             directory_prefix=directory_prefix,
             preferences=empty_search_preferences(self.assets),
             control=control,
         )
+        match_counts = self._directory_count_array_for_asset_indexes(match_asset_indexes)
         included_counts = (
             match_counts
             if preferences.included_asset_mask is None
-            else self._directory_counts_for_scope(
+            else self._directory_count_array_for_asset_indexes(
+                self._asset_index_array_for_scope(
+                    source_id=source_id,
+                    directory=directory,
+                    directory_prefix=directory_prefix,
+                    preferences=preferences,
+                    control=control,
+                )
+            )
+        )
+        return self._directory_responses_from_count_arrays(
+            match_counts,
+            included_counts,
+            preferences=preferences,
+            dirty_folder_subtree_keys=dirty_folder_subtree_keys,
+        )
+
+    def _asset_index_array_for_scope(
+        self,
+        *,
+        source_id: str | None,
+        directory: str | None,
+        directory_prefix: str | None,
+        preferences: SearchPreferences,
+        control: SearchControl | None = None,
+    ) -> np.ndarray:
+        if source_id is not None and directory is None:
+            indexes = np.fromiter(
+                self.directory_subtree_asset_indexes.get(
+                    (source_id, directory_prefix or ""),
+                    (),
+                ),
+                dtype=np.int32,
+            )
+            if preferences.included_asset_mask is not None:
+                indexes = indexes[preferences.included_asset_mask[indexes]]
+            return indexes
+        return np.fromiter(
+            self.browse_asset_indexes(
                 source_id=source_id,
                 directory=directory,
                 directory_prefix=directory_prefix,
                 preferences=preferences,
                 control=control,
-            )
-        )
-        return self._directory_responses_from_count_dicts(
-            _filter_directory_counts(self.directory_counts, source_id),
-            match_counts,
-            included_counts,
-            preferences=preferences,
-            dirty_folder_subtree_keys=dirty_folder_subtree_keys,
+            ),
+            dtype=np.int32,
         )
 
     def directory_responses_for_search(
@@ -731,26 +769,6 @@ class SearchIndex:
             ):
                 continue
             yield asset
-
-    def _directory_counts_for_scope(
-        self,
-        *,
-        source_id: str | None,
-        directory: str | None,
-        directory_prefix: str | None,
-        preferences: SearchPreferences,
-        control: SearchControl | None = None,
-    ) -> dict[tuple[str, str], int]:
-        return count_asset_directories(
-            (asset.source_id, asset.directory)
-            for asset in self._browse_assets(
-                source_id=source_id,
-                directory=directory,
-                directory_prefix=directory_prefix,
-                preferences=preferences,
-                control=control,
-            )
-        )
 
     def _search_page_from_numeric_arrays(
         self,
@@ -1204,53 +1222,6 @@ class SearchIndex:
                 }
             )
         return responses
-
-    def _directory_responses_from_count_dicts(
-        self,
-        total_counts: dict[tuple[str, str], int],
-        match_counts: dict[tuple[str, str], int],
-        included_counts: dict[tuple[str, str], int] | None = None,
-        *,
-        preferences: SearchPreferences,
-        dirty_folder_subtree_keys: frozenset[tuple[str, str]],
-    ) -> list[dict[str, object]]:
-        preferences = preferences or empty_search_preferences(self.assets)
-        if included_counts is None:
-            included_counts = match_counts
-        responses = []
-        for (source, path), total_count in total_counts.items():
-            matched_count = match_counts.get((source, path), 0)
-            if matched_count == 0:
-                continue
-            name = self.source_display_names.get(source, source) if path == "" else path.rsplit("/", 1)[-1]
-            depth = 0 if path == "" else len(path.split("/"))
-            quality, quality_override = preferences.folder_quality(source, path)
-            responses.append(
-                {
-                    "source_id": source,
-                    "path": path,
-                    "name": name,
-                    "depth": depth,
-                    "asset_count": total_count,
-                    "matched_asset_count": matched_count,
-                    "included_asset_count": included_counts.get((source, path), 0),
-                    "quality": quality,
-                    "quality_override": quality_override,
-                    "selection_state": preferences.selection_state(source, path),
-                    "selection_effective": preferences.selection_effective(source, path),
-                    "profile_dirty": (source, path) in dirty_folder_subtree_keys,
-                }
-            )
-        return sorted(
-            responses,
-            key=lambda item: (
-                *self.source_sort_keys.get(
-                    str(item["source_id"]),
-                    (0, str(item["source_id"]).casefold(), str(item["source_id"])),
-                ),
-                _directory_path_sort_key(str(item["path"])),
-            ),
-        )
 
 DEFAULT_DOMAIN_VOCABULARY = DomainVocabulary(
     expansions={

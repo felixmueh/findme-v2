@@ -645,7 +645,7 @@ a:focus-visible {
   width: 100%;
   min-height: 30px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: 14px minmax(0, 1fr) auto auto;
   gap: 6px;
   align-items: center;
   padding: 0 9px 0 calc(9px + var(--depth, 0) * 14px);
@@ -670,7 +670,7 @@ button.folder-row.retained {
   min-width: 0;
   min-height: 30px;
   display: grid;
-  grid-template-columns: 14px 16px minmax(0, 1fr);
+  grid-template-columns: 16px minmax(0, 1fr);
   gap: 6px;
   align-items: center;
   padding: 0;
@@ -686,7 +686,7 @@ button.folder-row.retained {
 }
 
 .folder-main.source-root {
-  grid-template-columns: 14px minmax(0, 1fr);
+  grid-template-columns: 16px minmax(0, 1fr);
 }
 
 .folder-row:hover,
@@ -724,6 +724,16 @@ button.folder-row.retained {
   background: #e4f2f4;
 }
 
+.folder-row.view-folder,
+.folder-row.view-folder .folder-main {
+  background: #f5efe4;
+}
+
+.folder-row.source-root.view-folder,
+.folder-row.source-root.view-folder .folder-main {
+  background: #eee5d8;
+}
+
 .folder-row.whitelist {
   box-shadow: inset 3px 0 0 #15803d;
 }
@@ -745,7 +755,17 @@ button.folder-row.retained {
   color: var(--muted);
 }
 
-.folder-main .folder-chevron {
+.folder-toggle {
+  width: 14px;
+  height: 30px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  background: transparent;
+  color: var(--faint);
+}
+
+.folder-toggle .folder-chevron {
   color: var(--faint);
   transform: rotate(90deg);
 }
@@ -758,7 +778,7 @@ button.folder-row.retained {
   width: 14px;
 }
 
-.folder-row > span:not(.folder-control),
+.folder-row > span:not(.folder-control):not(.folder-toggle),
 .folder-main > span {
   min-width: 0;
   overflow: hidden;

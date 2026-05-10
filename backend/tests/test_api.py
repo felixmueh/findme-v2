@@ -1296,6 +1296,91 @@ def test_api_profile_parent_whitelist_is_superseded_by_existing_child_whitelist(
     assert browse_body["total"] == 1
 
 
+def test_api_view_scope_ignores_sibling_whitelist_and_keeps_descendant_rules(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "assets"
+    write_image(source_root / "Maps" / "Keep.png")
+    write_image(source_root / "Maps" / "Unused" / "Skip.png")
+    write_image(source_root / "Tokens" / "Skip.png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+    rebuild_search_corpus(config, db_path)
+
+    client = TestClient(create_app(config, db_path))
+
+    assert client.patch(
+        "/api/search-profile/settings",
+        json={
+            "search_session": "tab-1",
+            "source_id": "dnd",
+            "directory": "Tokens",
+            "selection_state": "whitelist",
+        },
+    ).status_code == 200
+    assert client.patch(
+        "/api/search-profile/settings",
+        json={
+            "search_session": "tab-1",
+            "source_id": "dnd",
+            "directory": "Maps/Unused",
+            "selection_state": "blacklist",
+        },
+    ).status_code == 200
+
+    unscoped_body = client.get(
+        "/api/search-with-directory-counts",
+        params={"search_session": "tab-1"},
+    ).json()
+    scoped_body = client.get(
+        "/api/search-with-directory-counts",
+        params={
+            "search_session": "tab-1",
+            "view_source_id": "dnd",
+            "view_directory": "Maps",
+        },
+    ).json()
+    scoped_search_body = client.get(
+        "/api/search",
+        params={
+            "q": "skip",
+            "mode": "strict",
+            "search_session": "tab-1",
+            "view_source_id": "dnd",
+            "view_directory": "Maps",
+        },
+    ).json()
+    directories = {
+        (directory["source_id"], directory["path"]): directory
+        for directory in scoped_body["directories"]
+    }
+
+    assert unscoped_body["total"] == 1
+    assert [_card_asset(card)["relative_path"] for card in scoped_body["cards"]] == [
+        "Maps/Keep.png"
+    ]
+    assert scoped_body["total"] == 1
+    assert directories[("dnd", "Maps")]["included_asset_count"] == 1
+    assert directories[("dnd", "Maps/Unused")]["selection_state"] == "blacklist"
+    assert directories[("dnd", "Maps/Unused")]["included_asset_count"] == 0
+    assert ("dnd", "Tokens") not in directories
+    assert scoped_search_body["total"] == 0
+
+
 def test_api_search_uses_startup_search_index_until_app_restart(tmp_path: Path) -> None:
     source_root = tmp_path / "assets"
     source_root.mkdir()

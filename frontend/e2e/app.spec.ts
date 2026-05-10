@@ -231,6 +231,36 @@ test('searches with the selected lane mode', async ({ page }) => {
   await expect(page.getByRole('tab', { name: 'Domain' })).toHaveAttribute('aria-selected', 'true')
 })
 
+test('uses folder rows as transient view scopes', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.getByRole('button', { name: /castle\.png/i })).toBeVisible()
+  await revealSampleFolder(page)
+
+  const viewRequest = page.waitForRequest((request) => {
+    const url = new URL(request.url())
+    return (
+      url.pathname === '/api/search-with-directory-counts' &&
+      url.searchParams.get('view_source_id') === 'sample' &&
+      url.searchParams.get('view_directory') === 'maps'
+    )
+  })
+  await page.getByRole('group', { name: 'maps folder' }).getByRole('button', { name: 'maps', exact: true }).click()
+  await viewRequest
+  await expect(page.getByRole('group', { name: 'maps folder' })).toHaveClass(/view-folder/)
+
+  const scopedSearchRequest = page.waitForRequest((request) => {
+    const url = new URL(request.url())
+    return (
+      url.pathname === '/api/search-with-directory-counts' &&
+      url.searchParams.get('q') === 'castle' &&
+      url.searchParams.get('view_source_id') === 'sample' &&
+      url.searchParams.get('view_directory') === 'maps'
+    )
+  })
+  await page.getByRole('searchbox', { name: 'Search assets' }).fill('castle')
+  await scopedSearchRequest
+})
+
 test('sends sidebar whitelist and blacklist rules with folder shortcuts', async ({ page }) => {
   await page.goto('/')
   await expect(page.getByRole('button', { name: /castle\.png/i })).toBeVisible()
@@ -793,9 +823,9 @@ test('selecting an asset unfolds and scrolls to its folder path without refoldin
 
   await page
     .getByRole('group', { name: 'Sample Assets folder' })
-    .getByRole('button', { name: 'Sample Assets', exact: true })
+    .getByRole('button', { name: 'Expand Sample Assets' })
     .click()
-  await page.getByRole('group', { name: 'tokens folder' }).getByRole('button', { name: 'tokens', exact: true }).click()
+  await page.getByRole('group', { name: 'tokens folder' }).getByRole('button', { name: 'Expand tokens' }).click()
   await expect(page.getByRole('group', { name: 'hidden folder' })).toBeVisible()
 
   const folderPanel = page.getByLabel('Folder tree')
