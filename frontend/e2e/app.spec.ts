@@ -436,7 +436,7 @@ test('previews audio on hover and shows playback controls when selected', async 
       configurable: true,
       value(this: HTMLMediaElement) {
         ;(window as unknown as { __audioEvents: string[] }).__audioEvents.push(
-          `play:${this.getAttribute('src') ?? ''}`
+          `play:${this.getAttribute('src') ?? ''}:muted=${this.muted}:volume=${this.volume}`
         )
         return Promise.resolve()
       },
@@ -496,8 +496,21 @@ test('previews audio on hover and shows playback controls when selected', async 
 
   await tile.hover()
   await expect.poll(() => page.evaluate(() => (window as unknown as { __audioEvents: string[] }).__audioEvents)).toContain(
-    'play:/api/assets/asset-thunder/file'
+    'play:/api/assets/asset-thunder/file:muted=true:volume=0.35'
   )
+  await expect(page.getByRole('button', { name: 'Unmute preview' })).toBeVisible()
+  await expect(page.getByRole('slider', { name: 'Preview volume' })).toHaveValue('35')
+
+  await page.getByRole('button', { name: 'Unmute preview' }).click()
+  await expect(page.getByRole('button', { name: 'Mute preview' })).toBeVisible()
+  await expect
+    .poll(() => page.locator('audio').first().evaluate((audio) => (audio as HTMLAudioElement).muted))
+    .toBe(false)
+
+  await page.getByRole('slider', { name: 'Preview volume' }).fill('70')
+  await expect
+    .poll(() => page.locator('audio').first().evaluate((audio) => (audio as HTMLAudioElement).volume))
+    .toBe(0.7)
 
   await page.mouse.move(0, 0)
   await expect.poll(() => page.evaluate(() => (window as unknown as { __audioEvents: string[] }).__audioEvents)).toContain(

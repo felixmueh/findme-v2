@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from 'svelte'
+  import { tick, untrack } from 'svelte'
   import {
     Copy,
     Ban,
@@ -15,6 +15,7 @@
     LoaderCircle,
     Search,
     Volume2,
+    VolumeX,
   } from 'lucide-svelte'
   import {
     type Asset,
@@ -98,6 +99,9 @@
   let collectionCycleTimer: number | undefined
   let assetRequestController: AbortController | undefined
   let hoverAudioElement = $state<HTMLAudioElement>()
+  let hoverPreviewMuted = $state(true)
+  let hoverPreviewVolume = $state(0.35)
+  let hoverClearTimer: number | undefined
   let searchInput: HTMLInputElement
   let tileGridElement = $state<HTMLDivElement>()
   let folderPanelElement = $state<HTMLElement>()
@@ -208,6 +212,8 @@
     const url = hoverAudioUrl
     if (!audio || !url) return
 
+    audio.muted = untrack(() => hoverPreviewMuted)
+    audio.volume = untrack(() => hoverPreviewVolume)
     audio.src = url
     audio.load()
     const playback = audio.play()
@@ -217,6 +223,15 @@
       })
     }
     return () => stopAudioPreview(audio)
+  })
+
+  $effect(() => {
+    const audio = hoverAudioElement
+    const muted = hoverPreviewMuted
+    const volume = hoverPreviewVolume
+    if (!audio) return
+    audio.muted = muted
+    audio.volume = volume
   })
 
   function setSearchMode(mode: SearchMode) {
@@ -497,6 +512,41 @@
     if (asset.media_type === 'video') return Film
     if (asset.media_type === 'audio') return Volume2
     return FileQuestion
+  }
+
+  function setHoveredAsset(asset: Asset) {
+    window.clearTimeout(hoverClearTimer)
+    hoverClearTimer = undefined
+    hoveredAsset = asset
+  }
+
+  function scheduleClearHoveredAsset(asset: Asset) {
+    window.clearTimeout(hoverClearTimer)
+    hoverClearTimer = window.setTimeout(() => {
+      if (hoveredAsset?.asset_id === asset.asset_id) hoveredAsset = null
+      hoverClearTimer = undefined
+    }, 120)
+  }
+
+  function keepHoverPreviewOpen() {
+    window.clearTimeout(hoverClearTimer)
+    hoverClearTimer = undefined
+  }
+
+  function clearHoverPreview() {
+    window.clearTimeout(hoverClearTimer)
+    hoverClearTimer = undefined
+    hoveredAsset = null
+  }
+
+  function setHoverPreviewVolume(event: Event) {
+    const input = event.currentTarget as HTMLInputElement
+    const nextVolume = Number(input.value) / 100
+    hoverPreviewVolume = Math.max(0, Math.min(1, nextVolume))
+  }
+
+  function toggleHoverPreviewMuted() {
+    hoverPreviewMuted = !hoverPreviewMuted
   }
 
   function assetFileUrl(asset: Pick<Asset, 'asset_id'>) {
@@ -946,10 +996,12 @@
               class="asset-tile"
               style={entry.collection_key ? `--collection-color: ${collectionColor(entry.collection_key)}` : ''}
               type="button"
-              onmouseenter={() => (hoveredAsset = asset)}
-              onmouseleave={() => (hoveredAsset = hoveredAsset?.asset_id === asset.asset_id ? null : hoveredAsset)}
-              onfocus={() => (hoveredAsset = asset)}
-              onblur={() => (hoveredAsset = hoveredAsset?.asset_id === asset.asset_id ? null : hoveredAsset)}
+              onmouseenter={() => setHoveredAsset(asset)}
+              onmouseleave={() => scheduleClearHoveredAsset(asset)}
+              onfocus={() => setHoveredAsset(asset)}
+              onblur={() => {
+                if (hoveredAsset?.asset_id === asset.asset_id) clearHoverPreview()
+              }}
               onclick={() => selectAsset(asset)}
               onauxclick={(event) => handleAssetAuxClick(event, asset)}
             >
@@ -982,7 +1034,12 @@
 
       {#if hoverPreviewAsset}
         {@const HoverIcon = assetIcon(hoverPreviewAsset)}
-        <aside class="hover-preview" aria-label="Hovered asset preview">
+        <aside
+          class="hover-preview"
+          aria-label="Hovered asset preview"
+          onmouseenter={keepHoverPreviewOpen}
+          onmouseleave={clearHoverPreview}
+        >
           {#if hoverPreviewAsset.thumbnail_url}
             <img src={hoverPreviewAsset.thumbnail_url} alt="" />
           {:else}
@@ -991,7 +1048,37 @@
               <span>{hoverPreviewAsset.extension.slice(1).toUpperCase()}</span>
             </div>
           {/if}
-          <span>{hoverPreviewAsset.filename}</span>
+          <span class="hover-preview-name">{hoverPreviewAsset.filename}</span>
+          {#if hoverPreviewAsset.media_type === 'audio'}
+            <div class="hover-audio-controls" role="group" aria-label="Audio preview controls">
+              <button
+                type="button"
+                class="hover-mute-button"
+                onclick={toggleHoverPreviewMuted}
+                aria-label={hoverPreviewMuted ? 'Unmute preview' : 'Mute preview'}
+                title={hoverPreviewMuted ? 'Unmute preview' : 'Mute preview'}
+              >
+                {#if hoverPreviewMuted}
+                  <VolumeX size={16} />
+                {:else}
+                  <Volume2 size={16} />
+                {/if}
+              </button>
+              <label class="hover-volume-control">
+                <span>Volume</span>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value={Math.round(hoverPreviewVolume * 100)}
+                  oninput={setHoverPreviewVolume}
+                  aria-label="Preview volume"
+                />
+                <span>{Math.round(hoverPreviewVolume * 100)}%</span>
+              </label>
+            </div>
+          {/if}
         </aside>
       {/if}
 
