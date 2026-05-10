@@ -224,7 +224,7 @@ SearchProfileRuntime
 - profile id, if backed by a persisted profile
 - base profile version
 - normalized folder settings
-- preference_adjustments: tuple[float, ...]
+- preference_adjustment_array: numeric score adjustment per asset index
 - included_asset_indexes: profile selection compiled to asset indexes, or `None`
   when all assets are included
 - selection rules for UI display/fingerprinting
@@ -233,9 +233,9 @@ SearchProfileRuntime
 - dirty flags
 ```
 
-`preference_adjustments` is derived from the current search corpus and must not
-be persisted. Asset indexes can change after indexing or corpus rebuilds, so the
-database should store only user-authored folder settings.
+`preference_adjustment_array` is derived from the current search corpus and must
+not be persisted. Asset indexes can change after indexing or corpus rebuilds, so
+the database should store only user-authored folder settings.
 
 ## SearchIndex Boundary
 
@@ -243,10 +243,8 @@ The shared `SearchIndex` should become stable indexed data plus shared caches.
 Mutable user preference state should move out of the singleton `SearchIndex` and
 into per-session `SearchProfileRuntime` values.
 
-Today, folder quality is stored directly on the singleton `SearchIndex` as a
-single global `preference_adjustments` tuple. Search profiles require changing
-search calls so ranking receives the session runtime's preference adjustment
-data instead.
+Folder quality is compiled into the active session preferences. Search calls
+receive that runtime preference data directly.
 
 Selection also belongs in the profile runtime. It remains a hard filter before
 pagination, but search and browse should test `asset.asset_index` against the

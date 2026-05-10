@@ -26,28 +26,11 @@ class CardMetadata:
     has_variant: bool
 
 
-def result_cards_for_assets(
-    assets: list[AssetResponse],
-    *,
-    collection_assets: list[AssetResponse] | None = None,
-    card_metadata_by_asset_id: dict[str, CardMetadata],
-) -> list[ResultCard]:
-    resolver = ResultCardResolver.from_assets(
-        collection_assets or assets,
-        card_metadata_by_asset_id=card_metadata_by_asset_id,
-    )
-    cards, _total = resolver.page_for(
-        assets,
-        offset=0,
-        limit=len(assets),
-    )
-    return cards
-
-
 @dataclass(frozen=True)
 class ResultCardResolver:
     by_collection: dict[str, tuple[_GroupedAsset, ...]]
     by_asset_id: dict[str, _GroupedAsset]
+    by_asset_index: tuple[_GroupedAsset, ...]
     collection_counts: dict[str, int]
     has_variant_asset: dict[str, bool]
     browse_cards: tuple[ResultCard, ...] = ()
@@ -82,6 +65,9 @@ class ResultCardResolver:
                 for key, values in by_collection.items()
             },
             by_asset_id=by_asset_id,
+            by_asset_index=tuple(
+                by_asset_id[str(asset["asset_id"])] for asset in ordered_assets
+            ),
             collection_counts=collection_counts,
             has_variant_asset=has_variant_asset,
         )
@@ -93,14 +79,11 @@ class ResultCardResolver:
         return cls(
             by_collection=resolver.by_collection,
             by_asset_id=resolver.by_asset_id,
+            by_asset_index=resolver.by_asset_index,
             collection_counts=resolver.collection_counts,
             has_variant_asset=resolver.has_variant_asset,
             browse_cards=tuple(browse_cards),
         )
-
-    def cards_for(self, assets: Iterable[AssetResponse]) -> list[ResultCard]:
-        cards, _total = self.page_for(assets, offset=0, limit=None)
-        return cards
 
     def page_for(
         self,
@@ -109,25 +92,64 @@ class ResultCardResolver:
         offset: int,
         limit: int | None,
     ) -> tuple[list[ResultCard], int]:
+        return self._page_for_grouped_assets(
+            (self._grouped_for_asset(asset) for asset in assets),
+            offset=offset,
+            limit=limit,
+        )
+
+    def browse_page(
+        self,
+        *,
+        offset: int,
+        limit: int | None,
+    ) -> tuple[list[ResultCard], int]:
+        end = None if limit is None else offset + limit
+        return list(self.browse_cards[offset:end]), len(self.browse_cards)
+
+    def page_for_asset_indexes(
+        self,
+        asset_indexes: Iterable[int],
+        *,
+        offset: int,
+        limit: int | None,
+        total: int | None = None,
+    ) -> tuple[list[ResultCard], int]:
+        return self._page_for_grouped_assets(
+            (self.by_asset_index[asset_index] for asset_index in asset_indexes),
+            offset=offset,
+            limit=limit,
+            total=total,
+        )
+
+    def _page_for_grouped_assets(
+        self,
+        grouped_assets: Iterable[_GroupedAsset],
+        *,
+        offset: int,
+        limit: int | None,
+        total: int | None = None,
+    ) -> tuple[list[ResultCard], int]:
         emitted_collections: set[str] = set()
         cards: list[ResultCard] = []
-        total = 0
+        observed_total = 0
 
-        for asset in assets:
-            grouped = self._grouped_for_asset(asset)
+        for grouped in grouped_assets:
             if (
                 self.collection_counts[grouped.collection_key] < 2
                 or not self.has_variant_asset[grouped.collection_key]
             ):
-                total += 1
-                if total > offset and (limit is None or len(cards) < limit):
+                observed_total += 1
+                if observed_total > offset and (limit is None or len(cards) < limit):
                     cards.append({"kind": "asset", "asset": grouped.asset})
+                if total is not None and limit is not None and len(cards) >= limit:
+                    break
                 continue
             if grouped.collection_key in emitted_collections:
                 continue
             emitted_collections.add(grouped.collection_key)
-            total += 1
-            if total <= offset or (limit is not None and len(cards) >= limit):
+            observed_total += 1
+            if observed_total <= offset or (limit is not None and len(cards) >= limit):
                 continue
             variants = self.by_collection[grouped.collection_key]
             representative = grouped
@@ -142,36 +164,18 @@ class ResultCardResolver:
                     "count": len(variants),
                 }
             )
-        return cards, total
+            if total is not None and limit is not None and len(cards) >= limit:
+                break
+        return cards, observed_total if total is None else total
 
-    def browse_page(
-        self,
-        *,
-        offset: int,
-        limit: int | None,
-        asset_ids: Iterable[str] | None = None,
-    ) -> tuple[list[ResultCard], int]:
-        if asset_ids is not None:
-            return self.page_for_asset_ids(
-                asset_ids,
-                offset=offset,
-                limit=limit,
-            )
-        end = None if limit is None else offset + limit
-        return list(self.browse_cards[offset:end]), len(self.browse_cards)
-
-    def page_for_asset_ids(
-        self,
-        asset_ids: Iterable[str],
-        *,
-        offset: int,
-        limit: int | None,
-    ) -> tuple[list[ResultCard], int]:
-        return self.page_for(
-            (self.by_asset_id[asset_id].asset for asset_id in asset_ids),
-            offset=offset,
-            limit=limit,
-        )
+    def card_key_for_asset_index(self, asset_index: int) -> str:
+        grouped = self.by_asset_index[asset_index]
+        if (
+            self.collection_counts[grouped.collection_key] < 2
+            or not self.has_variant_asset[grouped.collection_key]
+        ):
+            return f"asset:{grouped.asset['asset_id']}"
+        return f"collection:{grouped.collection_key}"
 
     def _grouped_for_asset(self, asset: AssetResponse) -> _GroupedAsset:
         cached = self.by_asset_id.get(str(asset["asset_id"]))

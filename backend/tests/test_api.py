@@ -759,6 +759,86 @@ def test_api_search_with_directory_counts_uses_one_search_scope(
     assert directories[("dnd", "Tokens")]["matched_asset_count"] == 1
 
 
+def test_api_query_modes_use_paged_numeric_path(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "assets"
+    write_image(source_root / "Maps" / "Goblin Cave.png")
+    write_image(source_root / "Maps" / "Goblin Camp.png")
+    write_image(source_root / "Tokens" / "Goblin.png")
+    write_image(source_root / "Tokens" / "Goblin Warrior.png")
+    write_image(source_root / "Characters" / "Human Mage.png")
+    vocabulary_path = tmp_path / "vocabulary.yaml"
+    vocabulary_path.write_text(
+        """
+version: 1
+expansions:
+  hero:
+    - mage
+""".strip(),
+        encoding="utf-8",
+    )
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        domain_vocabulary_path=vocabulary_path,
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+    rebuild_search_corpus(config, db_path)
+
+    client = TestClient(create_app(config, db_path))
+
+    search_body = client.get(
+        "/api/search",
+        params={"q": "goblin", "limit": 1},
+    ).json()
+    directory_body = client.get(
+        "/api/search-with-directory-counts",
+        params={"q": "goblin", "limit": 1},
+    ).json()
+
+    assert search_body["total"] == 4
+    assert len(search_body["cards"]) == 1
+    assert directory_body["total"] == 4
+    assert len(directory_body["cards"]) == 1
+    directories = {
+        (directory["source_id"], directory["path"]): directory
+        for directory in directory_body["directories"]
+    }
+    assert directories[("dnd", "")]["matched_asset_count"] == 4
+    assert directories[("dnd", "Maps")]["matched_asset_count"] == 2
+    assert directories[("dnd", "Tokens")]["matched_asset_count"] == 2
+
+    fuzzy_body = client.get(
+        "/api/search",
+        params={"q": "goblin warror", "mode": "fuzzy", "limit": 1},
+    ).json()
+    domain_body = client.get(
+        "/api/search-with-directory-counts",
+        params={"q": "hero", "mode": "domain", "limit": 1},
+    ).json()
+
+    assert fuzzy_body["total"] == 1
+    assert _card_asset(fuzzy_body["cards"][0])["relative_path"] == (
+        "Tokens/Goblin Warrior.png"
+    )
+    assert domain_body["total"] == 1
+    assert _card_asset(domain_body["cards"][0])["relative_path"] == (
+        "Characters/Human Mage.png"
+    )
+
+
 def test_api_domain_search_uses_configured_vocabulary(tmp_path: Path) -> None:
     source_root = tmp_path / "assets"
     source_root.mkdir()
@@ -1460,7 +1540,11 @@ def test_api_search_with_directory_counts_rejects_superseded_directory_counts(
     def supersede_directory_counts(*_args, **_kwargs):
         raise SearchSuperseded
 
-    monkeypatch.setattr(SearchIndex, "directories_for_search", supersede_directory_counts)
+    monkeypatch.setattr(
+        SearchIndex,
+        "search_with_directory_responses",
+        supersede_directory_counts,
+    )
 
     response = client.get(
         "/api/search-with-directory-counts",

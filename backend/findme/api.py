@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from pathlib import Path
 import sqlite3
 import threading
@@ -22,8 +23,6 @@ from findme.config import AppConfig
 from findme.db import connect
 from findme.result_cards import ResultCardResolver
 from findme.search import (
-    DirectoryMatch,
-    DomainVocabulary,
     SearchIndex,
     SearchMode,
     SearchResult,
@@ -89,10 +88,15 @@ def create_app(
     card_metadata_by_asset_id = snapshot.card_metadata_by_asset_id()
     profile_sessions = SearchProfileSessionManager(search_index)
     card_resolver = ResultCardResolver.from_assets(
-        [_search_response(result) for result in search_index.all_asset_results()],
+        [_asset_search_response(asset, score=0.0) for asset in search_index.assets],
         card_metadata_by_asset_id=card_metadata_by_asset_id,
     )
+    card_counts_by_directory = _card_counts_by_directory_subtree(
+        search_index,
+        card_resolver,
+    )
     search_revisions = _SearchRevisionRegistry()
+
     def needs_scoped_scope(
         *,
         preferences,
@@ -101,26 +105,10 @@ def create_app(
         directory_prefix: str | None,
     ) -> bool:
         return (
-            preferences.included_asset_indexes is not None
+            preferences.included_asset_mask is not None
             or source_id is not None
             or directory is not None
             or directory_prefix is not None
-        )
-
-    def directories_for_browse_scope(
-        *,
-        preferences,
-        source_id: str | None,
-        directory: str | None,
-        directory_prefix: str | None,
-        control: SearchControl | None = None,
-    ) -> list[DirectoryMatch]:
-        return search_index.directories_for_scope(
-            source_id=source_id,
-            directory=directory,
-            directory_prefix=directory_prefix,
-            preferences=preferences,
-            control=control,
         )
 
     def card_page_for_browse_scope(
@@ -139,15 +127,32 @@ def create_app(
             directory_prefix=directory_prefix,
         ):
             return card_resolver.browse_page(offset=offset, limit=limit)
-        return card_resolver.browse_page(
-            offset=offset,
-            limit=limit,
-            asset_ids=search_index.browse_asset_ids(
+        if (
+            source_id is None
+            and directory is None
+            and directory_prefix is None
+            and preferences.included_asset_index_order is not None
+        ):
+            total = _single_whitelist_card_count(
+                preferences,
+                card_counts_by_directory,
+            )
+            if total is not None:
+                return card_resolver.page_for_asset_indexes(
+                    preferences.included_asset_index_order,
+                    offset=offset,
+                    limit=limit,
+                    total=total,
+                )
+        return card_resolver.page_for_asset_indexes(
+            search_index.browse_asset_indexes(
                 source_id=source_id,
                 directory=directory,
                 directory_prefix=directory_prefix,
                 preferences=preferences,
             ),
+            offset=offset,
+            limit=limit,
         )
 
     app = FastAPI(title="Findme V2")
@@ -327,7 +332,8 @@ def create_app(
         control = search_revisions.control(search_session, search_revision)
         if control and control.is_cancelled():
             return Response(status_code=204)
-        if not _trimmed_query(q):
+        trimmed_query = _trimmed_query(q)
+        if not trimmed_query:
             cards, total = card_page_for_browse_scope(
                 preferences=preferences,
                 source_id=source_id,
@@ -339,25 +345,26 @@ def create_app(
             return JSONResponse({"cards": cards, "total": total})
         domain_vocabulary = _load_domain_vocabulary(config)
         try:
-            matched_assets = _matched_assets(
-                search_index,
-                q,
+            page = search_index.search(
+                trimmed_query,
                 source_id=source_id,
                 directory=directory,
                 directory_prefix=directory_prefix,
                 preferences=preferences,
                 domain_vocabulary=domain_vocabulary,
                 mode=mode,
+                limit=limit,
+                offset=offset,
                 control=control,
             )
         except SearchSuperseded:
             return Response(status_code=204)
-        cards, total = card_resolver.page_for(
-            [_search_response(result) for result in matched_assets],
-            offset=offset,
+        cards, _card_total = card_resolver.page_for(
+            [_search_response(result) for result in page.assets],
+            offset=0,
             limit=limit,
         )
-        return JSONResponse({"cards": cards, "total": total})
+        return JSONResponse({"cards": cards, "total": page.total})
 
     @app.get("/api/search-with-directory-counts")
     def search_with_directory_counts(
@@ -384,7 +391,8 @@ def create_app(
         control = search_revisions.control(search_session, search_revision)
         if control and control.is_cancelled():
             return Response(status_code=204)
-        if not _trimmed_query(q):
+        trimmed_query = _trimmed_query(q)
+        if not trimmed_query:
             cards, total = card_page_for_browse_scope(
                 preferences=preferences,
                 source_id=source_id,
@@ -394,11 +402,14 @@ def create_app(
                 limit=limit,
             )
             try:
-                directories = directories_for_browse_scope(
+                directories = search_index.directory_responses_for_scope(
                     preferences=preferences,
                     source_id=source_id,
                     directory=directory,
                     directory_prefix=directory_prefix,
+                    dirty_folder_subtree_keys=dirty_folder_subtree_keys,
+                    descendant_whitelist_keys=descendant_whitelist_keys,
+                    descendant_blacklist_keys=descendant_blacklist_keys,
                     control=control,
                 )
             except SearchSuperseded:
@@ -407,63 +418,38 @@ def create_app(
                 {
                     "cards": cards,
                     "total": total,
-                    "directories": [
-                        _directory_response(
-                            directory,
-                            dirty_folder_subtree_keys=dirty_folder_subtree_keys,
-                            descendant_whitelist_keys=descendant_whitelist_keys,
-                            descendant_blacklist_keys=descendant_blacklist_keys,
-                        )
-                        for directory in directories
-                    ],
+                    "directories": directories,
                 }
             )
         domain_vocabulary = _load_domain_vocabulary(config)
         try:
-            matched_assets = _matched_assets(
-                search_index,
-                q,
+            search_response = search_index.search_with_directory_responses(
+                trimmed_query,
                 source_id=source_id,
                 directory=directory,
                 directory_prefix=directory_prefix,
                 preferences=preferences,
                 domain_vocabulary=domain_vocabulary,
                 mode=mode,
+                limit=limit,
+                offset=offset,
+                dirty_folder_subtree_keys=dirty_folder_subtree_keys,
+                descendant_whitelist_keys=descendant_whitelist_keys,
+                descendant_blacklist_keys=descendant_blacklist_keys,
                 control=control,
             )
         except SearchSuperseded:
             return Response(status_code=204)
-        cards, total = card_resolver.page_for(
-            [_search_response(result) for result in matched_assets],
-            offset=offset,
+        cards, _card_total = card_resolver.page_for(
+            [_search_response(result) for result in search_response.page.assets],
+            offset=0,
             limit=limit,
         )
-        try:
-            directories = search_index.directories_for_search(
-                _trimmed_query(q),
-                source_id=source_id,
-                directory=directory,
-                directory_prefix=directory_prefix,
-                preferences=preferences,
-                domain_vocabulary=domain_vocabulary,
-                mode=mode,
-                control=control,
-            )
-        except SearchSuperseded:
-            return Response(status_code=204)
         return JSONResponse(
             {
                 "cards": cards,
-                "total": total,
-                "directories": [
-                    _directory_response(
-                        directory,
-                        dirty_folder_subtree_keys=dirty_folder_subtree_keys,
-                        descendant_whitelist_keys=descendant_whitelist_keys,
-                        descendant_blacklist_keys=descendant_blacklist_keys,
-                    )
-                    for directory in directories
-                ],
+                "total": search_response.page.total,
+                "directories": search_response.directories,
             }
         )
 
@@ -540,42 +526,6 @@ def _trimmed_query(query: str | None) -> str:
     return query.strip() if query is not None else ""
 
 
-def _matched_assets(
-    search_index: SearchIndex,
-    query: str | None,
-    *,
-    source_id: str | None,
-    directory: str | None,
-    directory_prefix: str | None,
-    preferences,
-    domain_vocabulary: DomainVocabulary | None,
-    mode: SearchMode,
-    control: SearchControl | None,
-) -> list[SearchResult]:
-    trimmed = _trimmed_query(query)
-    if not trimmed:
-        return search_index.browse(
-            source_id=source_id,
-            directory=directory,
-            directory_prefix=directory_prefix,
-            preferences=preferences,
-            limit=len(search_index.assets),
-            control=control,
-        ).assets
-    return search_index.search(
-        trimmed,
-        source_id=source_id,
-        directory=directory,
-        directory_prefix=directory_prefix,
-        preferences=preferences,
-        domain_vocabulary=domain_vocabulary,
-        mode=mode,
-        limit=len(search_index.assets),
-        offset=0,
-        control=control,
-    ).assets
-
-
 def _load_asset_or_404(db: sqlite3.Connection, config: AppConfig, asset_id: str):
     try:
         return get_asset(db, config, asset_id)
@@ -585,33 +535,11 @@ def _load_asset_or_404(db: sqlite3.Connection, config: AppConfig, asset_id: str)
         raise HTTPException(status_code=500, detail="asset path is outside source root") from exc
 
 
-def _directory_response(
-    directory: DirectoryMatch,
-    *,
-    dirty_folder_subtree_keys: frozenset[tuple[str, str]] = frozenset(),
-    descendant_whitelist_keys: frozenset[tuple[str, str]] = frozenset(),
-    descendant_blacklist_keys: frozenset[tuple[str, str]] = frozenset(),
-) -> dict[str, object]:
-    directory_key = (directory.source_id, directory.path)
-    return {
-        "source_id": directory.source_id,
-        "path": directory.path,
-        "name": directory.name,
-        "depth": directory.depth,
-        "asset_count": directory.asset_count,
-        "matched_asset_count": directory.matched_asset_count,
-        "included_asset_count": directory.included_asset_count,
-        "quality": directory.quality,
-        "quality_override": directory.quality_override,
-        "selection_state": directory.selection_state,
-        "selection_effective": directory.selection_effective,
-        "profile_dirty": directory_key in dirty_folder_subtree_keys,
-        "has_descendant_whitelist": directory_key in descendant_whitelist_keys,
-        "has_descendant_blacklist": directory_key in descendant_blacklist_keys,
-    }
-
-
 def _search_response(result: SearchResult) -> dict[str, object]:
+    return _asset_search_response(result, score=result.score)
+
+
+def _asset_search_response(result, *, score: float) -> dict[str, object]:
     response = {
         "asset_id": result.asset_id,
         "source_id": result.source_id,
@@ -623,7 +551,7 @@ def _search_response(result: SearchResult) -> dict[str, object]:
         "directory": result.directory,
         "size_bytes": result.size_bytes,
         "media_type": result.media_type,
-        "score": result.score,
+        "score": score,
     }
     if result.thumbnail_path is not None:
         response["thumbnail_url"] = thumbnail_url(
@@ -634,3 +562,34 @@ def _search_response(result: SearchResult) -> dict[str, object]:
         response["thumbnail_width"] = result.thumbnail_width
         response["thumbnail_height"] = result.thumbnail_height
     return response
+
+
+def _card_counts_by_directory_subtree(
+    search_index: SearchIndex,
+    card_resolver: ResultCardResolver,
+) -> dict[tuple[str, str], int]:
+    card_keys_by_directory: dict[tuple[str, str], set[str]] = defaultdict(set)
+    for asset in search_index.assets:
+        card_key = card_resolver.card_key_for_asset_index(asset.asset_index)
+        for directory_key in search_index.asset_directory_keys[asset.asset_index]:
+            card_keys_by_directory[directory_key].add(card_key)
+    return {
+        directory_key: len(card_keys)
+        for directory_key, card_keys in card_keys_by_directory.items()
+    }
+
+
+def _single_whitelist_card_count(
+    preferences,
+    card_counts_by_directory: dict[tuple[str, str], int],
+) -> int | None:
+    effective_rules = [
+        (source_id, directory, state)
+        for (source_id, directory), state in preferences.effective_selection_states.items()
+    ]
+    if len(effective_rules) != 1:
+        return None
+    source_id, directory, state = effective_rules[0]
+    if state != "whitelist":
+        return None
+    return card_counts_by_directory.get((source_id, directory), 0)

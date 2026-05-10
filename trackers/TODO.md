@@ -16,5 +16,4 @@
   - Combined ranking exists server-side and is the API default when `mode` is omitted, but the frontend exposes only strict, fuzzy, and domain tabs.
 
 - [x] Remove the strict-mode Python ranking fallback path.
-  The current strict path falls back to `_rank_candidates()` when `corpus.lexical_index is None`.
-  This fallback is unwanted because it makes strict search semantics harder to reason about and maintain.
+  The old `_rank_candidates()` object-ranking path has been removed.

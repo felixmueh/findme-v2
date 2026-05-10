@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections import OrderedDict, defaultdict
+from collections import OrderedDict
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -8,6 +8,7 @@ from typing import Literal
 import sqlite3
 import threading
 
+import numpy as np
 from rapidfuzz import fuzz, process
 import yaml
 
@@ -56,21 +57,6 @@ class SearchResultsPage:
 
 
 @dataclass(frozen=True)
-class DirectoryMatch:
-    source_id: str
-    path: str
-    name: str
-    depth: int
-    asset_count: int
-    matched_asset_count: int
-    included_asset_count: int
-    quality: int
-    quality_override: int | None
-    selection_state: DirectoryFilterState | None = None
-    selection_effective: bool = True
-
-
-@dataclass(frozen=True)
 class DirectoryFilterRule:
     source_id: str
     path: str
@@ -92,26 +78,30 @@ class DirectoryFilter:
 
 @dataclass(frozen=True)
 class SearchPreferences:
-    preference_adjustments: tuple[float, ...]
+    preference_adjustment_array: np.ndarray
     directory_filter: DirectoryFilter = field(default_factory=DirectoryFilter)
-    included_asset_indexes: frozenset[int] | None = None
+    included_asset_mask: np.ndarray | None = None
     included_asset_index_order: tuple[int, ...] | None = None
+    included_directory_counts: dict[tuple[str, str], int] | None = None
+    included_directory_count_array: np.ndarray | None = None
     quality_overrides: dict[tuple[str, str], int] = field(default_factory=dict)
     selection_states: dict[tuple[str, str], DirectoryFilterState] = field(default_factory=dict)
     effective_selection_states: dict[tuple[str, str], DirectoryFilterState] = field(default_factory=dict)
     settings_fingerprint: str = "empty"
 
     def preference_adjustment(self, asset: SearchCorpusAsset) -> float:
-        return self.preference_adjustments[asset.asset_index]
+        return float(self.preference_adjustment_array[asset.asset_index])
 
     def includes(self, asset: SearchCorpusAsset) -> bool:
         return (
-            self.included_asset_indexes is None
-            or asset.asset_index in self.included_asset_indexes
+            self.included_asset_mask is None
+            or bool(self.included_asset_mask[asset.asset_index])
         )
 
     def folder_quality(self, source_id: str, directory: str) -> tuple[int, int | None]:
         override = self.quality_overrides.get((source_id, directory))
+        if not self.quality_overrides:
+            return DEFAULT_FOLDER_QUALITY, None
         return (
             _effective_folder_quality(
                 self.quality_overrides,
@@ -151,27 +141,34 @@ class DomainVocabulary:
 
 
 @dataclass(frozen=True)
-class _Candidate:
-    asset: SearchCorpusAsset
-    lane: str
-    raw_score: float
-    matched_terms: tuple[str, ...]
-    query_variant: str
+class _SearchMatchArrays:
+    asset_indexes: np.ndarray
+    scores: np.ndarray
+    total: int
 
 
 @dataclass(frozen=True)
-class _RankedCandidate:
-    asset: SearchCorpusAsset
-    score: float
+class _DirectoryRuntime:
+    keys: tuple[tuple[str, str], ...]
+    names: tuple[str, ...]
+    depths: np.ndarray
+    asset_counts: np.ndarray
+    parent_ids: np.ndarray
+    rollup_order: np.ndarray
+    sort_order: np.ndarray
+    id_by_key: dict[tuple[str, str], int]
 
 
-_SearchCacheKey = tuple[object, ...]
+@dataclass(frozen=True)
+class SearchWithDirectoryResponses:
+    page: SearchResultsPage
+    directories: list[dict[str, object]]
 
 
 @dataclass
-class _InFlightSearch:
+class _InFlightStrictSearch:
     done: threading.Event = field(default_factory=threading.Event)
-    result: tuple[_RankedCandidate, ...] | None = None
+    result: _SearchMatchArrays | None = None
     error: BaseException | None = None
 
 
@@ -180,6 +177,10 @@ class SearchIndex:
     assets: tuple[SearchCorpusAsset, ...]
     directory_counts: dict[tuple[str, str], int]
     directory_subtree_asset_indexes: dict[tuple[str, str], tuple[int, ...]]
+    asset_directory_keys: tuple[tuple[tuple[str, str], ...], ...]
+    asset_directory_ids: np.ndarray
+    asset_path_sort_ranks: np.ndarray
+    directory_runtime: _DirectoryRuntime
     source_display_names: dict[str, str]
     source_sort_keys: dict[str, tuple[int, str, str]]
     fuzzy_tokens: tuple[str, ...] = ()
@@ -187,10 +188,10 @@ class SearchIndex:
     lexical_index: "SearchLexicalIndex | None" = None
     cache_size: int = 128
     _cache_lock: threading.Lock = field(default_factory=threading.Lock)
-    _ranked_cache: OrderedDict[_SearchCacheKey, tuple[_RankedCandidate, ...]] = field(
+    _strict_match_cache: OrderedDict[tuple[str, ...], _SearchMatchArrays] = field(
         default_factory=OrderedDict
     )
-    _in_flight: dict[_SearchCacheKey, _InFlightSearch] = field(default_factory=dict)
+    _strict_in_flight: dict[tuple[str, ...], _InFlightStrictSearch] = field(default_factory=dict)
 
     @classmethod
     def load(cls, db: sqlite3.Connection) -> "SearchIndex":
@@ -201,23 +202,35 @@ class SearchIndex:
             directory_prefix=None,
         )
         corpus = SearchCorpus.from_assets(assets)
+        directory_counts = count_asset_directories(
+            [(asset.source_id, asset.directory) for asset in assets]
+        )
+        source_display_names = {
+            asset.source_id: asset.source_display_name for asset in assets
+        }
+        source_sort_keys = {
+            asset.source_id: (
+                -asset.source_priority,
+                asset.source_display_name.casefold(),
+                asset.source_id,
+            )
+            for asset in assets
+        }
+        directory_runtime = _directory_runtime(
+            directory_counts,
+            source_display_names=source_display_names,
+            source_sort_keys=source_sort_keys,
+        )
         return cls(
             assets=assets,
-            directory_counts=count_asset_directories(
-                [(asset.source_id, asset.directory) for asset in assets]
-            ),
+            directory_counts=directory_counts,
             directory_subtree_asset_indexes=_asset_indexes_by_directory_subtree(assets),
-            source_display_names={
-                asset.source_id: asset.source_display_name for asset in assets
-            },
-            source_sort_keys={
-                asset.source_id: (
-                    -asset.source_priority,
-                    asset.source_display_name.casefold(),
-                    asset.source_id,
-                )
-                for asset in assets
-            },
+            asset_directory_keys=_asset_directory_keys(assets),
+            asset_directory_ids=_asset_directory_ids(assets, directory_runtime.id_by_key),
+            asset_path_sort_ranks=_asset_path_sort_ranks(assets),
+            directory_runtime=directory_runtime,
+            source_display_names=source_display_names,
+            source_sort_keys=source_sort_keys,
             fuzzy_tokens=corpus.fuzzy_tokens,
             fuzzy_token_asset_indexes=corpus.fuzzy_token_asset_indexes,
             lexical_index=corpus.lexical_index,
@@ -249,12 +262,24 @@ class SearchIndex:
                 lexical_index_path,
                 asset_count=len(snapshot.assets),
             )
+        directory_runtime = _directory_runtime(
+            snapshot.directory_counts,
+            source_display_names=snapshot.source_display_names,
+            source_sort_keys=snapshot.source_sort_keys,
+        )
         return cls(
             assets=snapshot.assets,
             directory_counts=snapshot.directory_counts,
             directory_subtree_asset_indexes=_asset_indexes_by_directory_subtree(
                 snapshot.assets
             ),
+            asset_directory_keys=_asset_directory_keys(snapshot.assets),
+            asset_directory_ids=_asset_directory_ids(
+                snapshot.assets,
+                directory_runtime.id_by_key,
+            ),
+            asset_path_sort_ranks=_asset_path_sort_ranks(snapshot.assets),
+            directory_runtime=directory_runtime,
             source_display_names=snapshot.source_display_names,
             source_sort_keys=snapshot.source_sort_keys,
             fuzzy_tokens=snapshot.fuzzy_tokens,
@@ -280,7 +305,7 @@ class SearchIndex:
         if mode not in {"strict", "fuzzy", "domain"}:
             raise ValueError(f"unsupported search mode: {mode}")
         preferences = preferences or empty_search_preferences(self.assets)
-        ranked = self._ranked_search(
+        return self._search_page_from_numeric_arrays(
             query,
             source_id=source_id,
             directory=directory,
@@ -288,15 +313,9 @@ class SearchIndex:
             preferences=preferences,
             domain_vocabulary=domain_vocabulary,
             mode=mode,
+            limit=limit,
+            offset=offset,
             control=control,
-        )
-        ranked = _filter_ranked_candidates(ranked, preferences)
-        return SearchResultsPage(
-            assets=[
-                _record_to_result(candidate.asset, candidate.score)
-                for candidate in ranked[offset : offset + limit]
-            ],
-            total=len(ranked),
         )
 
     def browse(
@@ -326,7 +345,7 @@ class SearchIndex:
             total += 1
         return SearchResultsPage(assets=results, total=total)
 
-    def browse_asset_ids(
+    def browse_asset_indexes(
         self,
         *,
         source_id: str | None = None,
@@ -334,7 +353,7 @@ class SearchIndex:
         directory_prefix: str | None = None,
         preferences: SearchPreferences | None = None,
         control: SearchControl | None = None,
-    ) -> Iterable[str]:
+    ) -> Iterable[int]:
         preferences = preferences or empty_search_preferences(self.assets)
         for asset in self._browse_assets(
             source_id=source_id,
@@ -343,10 +362,7 @@ class SearchIndex:
             preferences=preferences,
             control=control,
         ):
-            yield asset.asset_id
-
-    def all_asset_results(self) -> list[SearchResult]:
-        return [_record_to_result(asset, 0) for asset in self.assets]
+            yield asset.asset_index
 
     def compile_preferences(
         self,
@@ -357,15 +373,26 @@ class SearchIndex:
         directory_filter = directory_filter or DirectoryFilter()
         quality_overrides = quality_overrides or {}
         effective_directory_filter = _bottommost_whitelist_filter(directory_filter)
-        included_asset_indexes = self._included_asset_indexes(effective_directory_filter)
+        included_asset_index_order = self._included_asset_index_order(
+            effective_directory_filter
+        )
+        included_asset_mask = (
+            None
+            if included_asset_index_order is None
+            else _asset_selection_mask(len(self.assets), included_asset_index_order)
+        )
+        preference_adjustment_values = self._preference_adjustments(quality_overrides)
+        included_directory_counts = self._included_directory_counts(
+            effective_directory_filter
+        )
         return SearchPreferences(
-            preference_adjustments=self._preference_adjustments(quality_overrides),
+            preference_adjustment_array=preference_adjustment_values,
             directory_filter=directory_filter,
-            included_asset_indexes=included_asset_indexes,
-            included_asset_index_order=(
-                None
-                if included_asset_indexes is None
-                else tuple(sorted(included_asset_indexes))
+            included_asset_mask=included_asset_mask,
+            included_asset_index_order=included_asset_index_order,
+            included_directory_counts=included_directory_counts,
+            included_directory_count_array=self._directory_count_array(
+                included_directory_counts
             ),
             quality_overrides=quality_overrides,
             selection_states={
@@ -385,11 +412,11 @@ class SearchIndex:
     def _preference_adjustments(
         self,
         quality_overrides: dict[tuple[str, str], int],
-    ) -> tuple[float, ...]:
+    ) -> np.ndarray:
         if not quality_overrides:
-            return (0.0,) * len(self.assets)
+            return np.zeros(len(self.assets), dtype=np.float64)
 
-        adjustments = [0.0] * len(self.assets)
+        adjustments = np.zeros(len(self.assets), dtype=np.float64)
         for (source_id, directory), quality in sorted(
             quality_overrides.items(),
             key=lambda item: (
@@ -404,19 +431,28 @@ class SearchIndex:
                 (),
             ):
                 adjustments[asset_index] = adjustment
-        return tuple(adjustments)
+        return adjustments
 
-    def _included_asset_indexes(
+    def _included_asset_index_order(
         self,
         directory_filter: DirectoryFilter,
-    ) -> frozenset[int] | None:
+    ) -> tuple[int, ...] | None:
         if not directory_filter.rules:
             return None
+        if (
+            len(directory_filter.rules) == 1
+            and directory_filter.rules[0].state == "whitelist"
+        ):
+            rule = directory_filter.rules[0]
+            return self.directory_subtree_asset_indexes.get(
+                (rule.source_id, rule.path),
+                (),
+            )
 
         included: set[int] = (
             set()
             if directory_filter.has_whitelist
-            else {asset.asset_index for asset in self.assets}
+            else set(range(len(self.assets)))
         )
         for rule in sorted(
             directory_filter.rules,
@@ -434,59 +470,135 @@ class SearchIndex:
                 included.update(indexes)
             else:
                 included.difference_update(indexes)
-        return frozenset(included)
+        return tuple(sorted(included))
 
-    def directories_for_matches(
+    def _included_directory_counts(
         self,
-        matches: Iterable[SearchResult],
-        *,
-        source_id: str | None = None,
-        included_matches: Iterable[SearchResult] | None = None,
-        preferences: SearchPreferences | None = None,
-    ) -> list[DirectoryMatch]:
-        preferences = preferences or empty_search_preferences(self.assets)
-        total_counts = _filter_directory_counts(self.directory_counts, source_id)
-        match_counts = count_asset_directories(
-            (match.source_id, match.directory) for match in matches
-        )
-        included_counts = (
-            count_asset_directories(
-                (match.source_id, match.directory) for match in included_matches
-            )
-            if included_matches is not None
-            else match_counts
-        )
-        return self._directory_matches_from_counts(
-            total_counts,
-            match_counts,
-            included_counts,
-            preferences=preferences,
-        )
+        directory_filter: DirectoryFilter,
+    ) -> dict[tuple[str, str], int] | None:
+        if not directory_filter.rules:
+            return None
 
-    def directories_for_scope(
+        included_counts = (
+            {}
+            if directory_filter.has_whitelist
+            else dict(self.directory_counts)
+        )
+        for rule in sorted(
+            directory_filter.rules,
+            key=lambda item: (
+                0 if item.path == "" else len(item.path.split("/")),
+                item.source_id,
+                item.path,
+            ),
+        ):
+            delta = 1 if rule.state == "whitelist" else -1
+            self._apply_directory_subtree_count_delta(
+                included_counts,
+                source_id=rule.source_id,
+                directory=rule.path,
+                delta=delta,
+            )
+        return {key: count for key, count in included_counts.items() if count > 0}
+
+    def _directory_count_array(
+        self,
+        counts: dict[tuple[str, str], int] | None,
+    ) -> np.ndarray | None:
+        if counts is None:
+            return None
+        values = np.zeros(len(self.directory_runtime.keys), dtype=np.int32)
+        for key, count in counts.items():
+            directory_id = self.directory_runtime.id_by_key.get(key)
+            if directory_id is not None:
+                values[directory_id] = count
+        return values
+
+    def _apply_directory_subtree_count_delta(
+        self,
+        counts: dict[tuple[str, str], int],
+        *,
+        source_id: str,
+        directory: str,
+        delta: int,
+    ) -> None:
+        subtree_total = self.directory_counts.get((source_id, directory), 0)
+        if subtree_total == 0:
+            return
+
+        for ancestor in _directory_ancestors(directory):
+            if ancestor == directory:
+                continue
+            key = (source_id, ancestor)
+            counts[key] = counts.get(key, 0) + (delta * subtree_total)
+
+        for (candidate_source, candidate_path), count in self.directory_counts.items():
+            if candidate_source != source_id:
+                continue
+            if not _directory_is_within(candidate_path, directory):
+                continue
+            key = (candidate_source, candidate_path)
+            counts[key] = counts.get(key, 0) + (delta * count)
+
+    def directory_responses_for_scope(
         self,
         *,
         source_id: str | None = None,
         directory: str | None = None,
         directory_prefix: str | None = None,
         preferences: SearchPreferences | None = None,
+        dirty_folder_subtree_keys: frozenset[tuple[str, str]] = frozenset(),
+        descendant_whitelist_keys: frozenset[tuple[str, str]] = frozenset(),
+        descendant_blacklist_keys: frozenset[tuple[str, str]] = frozenset(),
         control: SearchControl | None = None,
-    ) -> list[DirectoryMatch]:
+    ) -> list[dict[str, object]]:
         preferences = preferences or empty_search_preferences(self.assets)
-        total_counts = _filter_directory_counts(self.directory_counts, source_id)
         if directory is None and directory_prefix is None:
-            match_counts = total_counts
-        else:
-            match_counts = self._directory_counts_for_scope(
-                source_id=source_id,
-                directory=directory,
-                directory_prefix=directory_prefix,
-                preferences=empty_search_preferences(self.assets),
-                control=control,
+            match_counts = (
+                self.directory_runtime.asset_counts
+                if source_id is None
+                else self._directory_count_array(
+                    _filter_directory_counts(self.directory_counts, source_id)
+                )
             )
+            if match_counts is None:
+                match_counts = np.zeros(len(self.directory_runtime.keys), dtype=np.int32)
+            included_counts = (
+                preferences.included_directory_count_array
+                if preferences.included_directory_count_array is not None
+                else match_counts
+            )
+            if source_id is not None and preferences.included_directory_counts is not None:
+                included_counts = self._directory_count_array(
+                    _filter_directory_counts(
+                        preferences.included_directory_counts,
+                        source_id,
+                    )
+                )
+                if included_counts is None:
+                    included_counts = np.zeros(
+                        len(self.directory_runtime.keys),
+                        dtype=np.int32,
+                    )
+            return self._directory_responses_from_count_arrays(
+                match_counts,
+                included_counts,
+                preferences=preferences,
+                dirty_folder_subtree_keys=dirty_folder_subtree_keys,
+                descendant_whitelist_keys=descendant_whitelist_keys,
+                descendant_blacklist_keys=descendant_blacklist_keys,
+            )
+
+        match_counts = self._directory_counts_for_scope(
+            source_id=source_id,
+            directory=directory,
+            directory_prefix=directory_prefix,
+            preferences=empty_search_preferences(self.assets),
+            control=control,
+        )
         included_counts = (
             match_counts
-            if preferences.included_asset_indexes is None
+            if preferences.included_asset_mask is None
             else self._directory_counts_for_scope(
                 source_id=source_id,
                 directory=directory,
@@ -495,14 +607,17 @@ class SearchIndex:
                 control=control,
             )
         )
-        return self._directory_matches_from_counts(
-            total_counts,
+        return self._directory_responses_from_count_dicts(
+            _filter_directory_counts(self.directory_counts, source_id),
             match_counts,
             included_counts,
             preferences=preferences,
+            dirty_folder_subtree_keys=dirty_folder_subtree_keys,
+            descendant_whitelist_keys=descendant_whitelist_keys,
+            descendant_blacklist_keys=descendant_blacklist_keys,
         )
 
-    def directories_for_search(
+    def directory_responses_for_search(
         self,
         query: str,
         *,
@@ -512,10 +627,13 @@ class SearchIndex:
         preferences: SearchPreferences | None = None,
         domain_vocabulary: DomainVocabulary | None = None,
         mode: SearchMode = "strict",
+        dirty_folder_subtree_keys: frozenset[tuple[str, str]] = frozenset(),
+        descendant_whitelist_keys: frozenset[tuple[str, str]] = frozenset(),
+        descendant_blacklist_keys: frozenset[tuple[str, str]] = frozenset(),
         control: SearchControl | None = None,
-    ) -> list[DirectoryMatch]:
+    ) -> list[dict[str, object]]:
         preferences = preferences or empty_search_preferences(self.assets)
-        ranked = self._ranked_search(
+        match_counts, included_counts = self._directory_count_arrays_for_numeric_search(
             query,
             source_id=source_id,
             directory=directory,
@@ -525,25 +643,78 @@ class SearchIndex:
             mode=mode,
             control=control,
         )
-        total_counts = _filter_directory_counts(self.directory_counts, source_id)
-        match_counts = count_asset_directories(
-            (candidate.asset.source_id, candidate.asset.directory)
-            for candidate in ranked
-        )
-        included_counts = (
-            match_counts
-            if preferences.included_asset_indexes is None
-            else count_asset_directories(
-                (candidate.asset.source_id, candidate.asset.directory)
-                for candidate in ranked
-                if preferences.includes(candidate.asset)
-            )
-        )
-        return self._directory_matches_from_counts(
-            total_counts,
+        return self._directory_responses_from_count_arrays(
             match_counts,
             included_counts,
             preferences=preferences,
+            dirty_folder_subtree_keys=dirty_folder_subtree_keys,
+            descendant_whitelist_keys=descendant_whitelist_keys,
+            descendant_blacklist_keys=descendant_blacklist_keys,
+        )
+
+    def search_with_directory_responses(
+        self,
+        query: str,
+        *,
+        source_id: str | None = None,
+        directory: str | None = None,
+        directory_prefix: str | None = None,
+        preferences: SearchPreferences | None = None,
+        domain_vocabulary: DomainVocabulary | None = None,
+        mode: SearchMode = "strict",
+        limit: int = 100,
+        offset: int = 0,
+        dirty_folder_subtree_keys: frozenset[tuple[str, str]] = frozenset(),
+        descendant_whitelist_keys: frozenset[tuple[str, str]] = frozenset(),
+        descendant_blacklist_keys: frozenset[tuple[str, str]] = frozenset(),
+        control: SearchControl | None = None,
+    ) -> SearchWithDirectoryResponses:
+        preferences = preferences or empty_search_preferences(self.assets)
+        matches = self._search_match_arrays(
+            query,
+            source_id=source_id,
+            directory=directory,
+            directory_prefix=directory_prefix,
+            domain_vocabulary=domain_vocabulary or DEFAULT_DOMAIN_VOCABULARY,
+            mode=mode,
+            control=control,
+        )
+        asset_indexes, scores = self._apply_preferences_to_match_arrays(
+            matches.asset_indexes,
+            matches.scores,
+            preferences=preferences,
+        )
+        page_indexes, page_scores = self._top_page_indexes(
+            asset_indexes,
+            scores,
+            limit=limit,
+            offset=offset,
+        )
+        match_counts = self._directory_count_array_for_asset_indexes(
+            matches.asset_indexes
+        )
+        selection = preferences.included_asset_mask
+        included_counts = (
+            match_counts
+            if selection is None
+            else self._directory_count_array_for_asset_indexes(asset_indexes)
+        )
+        return SearchWithDirectoryResponses(
+            page=SearchResultsPage(
+                assets=[
+                    _record_to_result(self.assets[int(asset_index)], float(score))
+                    for asset_index, score in zip(page_indexes, page_scores, strict=True)
+                ],
+                total=len(asset_indexes),
+            ),
+            directories=self._directory_responses_from_count_arrays(
+                match_counts,
+                included_counts,
+                preferences=preferences,
+                dirty_folder_subtree_keys=dirty_folder_subtree_keys,
+                descendant_whitelist_keys=descendant_whitelist_keys,
+                descendant_blacklist_keys=descendant_blacklist_keys,
+            ),
         )
 
     def _browse_assets(
@@ -595,52 +766,7 @@ class SearchIndex:
             )
         )
 
-    def _directory_matches_from_counts(
-        self,
-        total_counts: dict[tuple[str, str], int],
-        match_counts: dict[tuple[str, str], int],
-        included_counts: dict[tuple[str, str], int] | None = None,
-        preferences: SearchPreferences | None = None,
-    ) -> list[DirectoryMatch]:
-        preferences = preferences or empty_search_preferences(self.assets)
-        if included_counts is None:
-            included_counts = match_counts
-        directories = []
-        for (source, path), total_count in total_counts.items():
-            matched_count = match_counts.get((source, path), 0)
-            if matched_count == 0:
-                continue
-            name = self.source_display_names.get(source, source) if path == "" else path.rsplit("/", 1)[-1]
-            depth = 0 if path == "" else len(path.split("/"))
-            quality, quality_override = preferences.folder_quality(source, path)
-            directories.append(
-                DirectoryMatch(
-                    source_id=source,
-                    path=path,
-                    name=name,
-                    depth=depth,
-                    asset_count=total_count,
-                    matched_asset_count=matched_count,
-                    included_asset_count=included_counts.get((source, path), 0),
-                    quality=quality,
-                    quality_override=quality_override,
-                    selection_state=preferences.selection_state(source, path),
-                    selection_effective=preferences.selection_effective(source, path),
-                )
-            )
-        return sorted(
-            directories,
-            key=self._directory_sort_key,
-        )
-
-    def _directory_sort_key(self, directory: DirectoryMatch) -> tuple[object, ...]:
-        source_key = self.source_sort_keys.get(
-            directory.source_id,
-            (0, directory.source_id.casefold(), directory.source_id),
-        )
-        return (*source_key, _directory_path_sort_key(directory.path))
-
-    def _ranked_search(
+    def _search_page_from_numeric_arrays(
         self,
         query: str,
         *,
@@ -650,134 +776,505 @@ class SearchIndex:
         preferences: SearchPreferences,
         domain_vocabulary: DomainVocabulary,
         mode: SearchMode,
-        control: SearchControl | None,
-    ) -> tuple[_RankedCandidate, ...]:
-        if control and control.is_cancelled():
-            raise SearchSuperseded
-        key = _search_cache_key(
+        limit: int,
+        offset: int,
+        control: SearchControl | None = None,
+    ) -> SearchResultsPage:
+        matches = self._search_match_arrays(
             query,
             source_id=source_id,
             directory=directory,
             directory_prefix=directory_prefix,
             domain_vocabulary=domain_vocabulary,
             mode=mode,
-            profile_fingerprint=folder_settings_fingerprint(
-                DirectoryFilter(),
-                preferences.quality_overrides,
-            ),
+            control=control,
         )
-        cached = self._cache_get(key)
+        asset_indexes, scores = self._apply_preferences_to_match_arrays(
+            matches.asset_indexes,
+            matches.scores,
+            preferences=preferences,
+        )
+        page_indexes, page_scores = self._top_page_indexes(
+            asset_indexes,
+            scores,
+            limit=limit,
+            offset=offset,
+        )
+        return SearchResultsPage(
+            assets=[
+                _record_to_result(self.assets[int(asset_index)], float(score))
+                for asset_index, score in zip(page_indexes, page_scores, strict=True)
+            ],
+            total=len(asset_indexes),
+        )
+
+    def _directory_count_arrays_for_numeric_search(
+        self,
+        query: str,
+        *,
+        source_id: str | None = None,
+        directory: str | None = None,
+        directory_prefix: str | None = None,
+        preferences: SearchPreferences,
+        domain_vocabulary: DomainVocabulary,
+        mode: SearchMode,
+        control: SearchControl | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        matches = self._search_match_arrays(
+            query,
+            source_id=source_id,
+            directory=directory,
+            directory_prefix=directory_prefix,
+            domain_vocabulary=domain_vocabulary,
+            mode=mode,
+            control=control,
+        )
+        match_counts = self._directory_count_array_for_asset_indexes(
+            matches.asset_indexes
+        )
+        selection = preferences.included_asset_mask
+        included_indexes = (
+            matches.asset_indexes
+            if selection is None
+            else matches.asset_indexes[selection[matches.asset_indexes]]
+        )
+        included_counts = (
+            match_counts
+            if selection is None
+            else self._directory_count_array_for_asset_indexes(included_indexes)
+        )
+        return match_counts, included_counts
+
+    def _search_match_arrays(
+        self,
+        query: str,
+        *,
+        source_id: str | None,
+        directory: str | None,
+        directory_prefix: str | None,
+        domain_vocabulary: DomainVocabulary,
+        mode: SearchMode,
+        control: SearchControl | None = None,
+    ) -> _SearchMatchArrays:
+        query_tokens = tokenize_search_text(query)
+        if not query_tokens:
+            matches = _empty_search_match_arrays()
+        elif mode == "strict":
+            matches = self._strict_match_arrays(query_tokens, control=control)
+        elif mode == "fuzzy":
+            matches = self._fuzzy_match_arrays(query_tokens, query, control=control)
+        elif mode == "domain":
+            matches = self._domain_match_arrays(
+                query_tokens,
+                query,
+                domain_vocabulary,
+                control=control,
+            )
+        else:
+            raise ValueError(f"unsupported search mode: {mode}")
+        return self._apply_request_scope_to_match_arrays(
+            matches,
+            source_id=source_id,
+            directory=directory,
+            directory_prefix=directory_prefix,
+        )
+
+    def _apply_request_scope_to_match_arrays(
+        self,
+        matches: _SearchMatchArrays,
+        *,
+        source_id: str | None,
+        directory: str | None,
+        directory_prefix: str | None,
+    ) -> _SearchMatchArrays:
+        if source_id is None and directory is None and directory_prefix is None:
+            return matches
+        keep = np.fromiter(
+            (
+                _asset_in_scope(
+                    self.assets[int(asset_index)],
+                    source_id=source_id,
+                    directory=directory,
+                    directory_prefix=directory_prefix,
+                    preferences=None,
+                )
+                for asset_index in matches.asset_indexes
+            ),
+            dtype=bool,
+            count=len(matches.asset_indexes),
+        )
+        return _SearchMatchArrays(
+            asset_indexes=matches.asset_indexes[keep],
+            scores=matches.scores[keep],
+            total=int(np.count_nonzero(keep)),
+        )
+
+    def _fuzzy_match_arrays(
+        self,
+        query_tokens: tuple[str, ...],
+        query: str,
+        *,
+        control: SearchControl | None = None,
+    ) -> _SearchMatchArrays:
+        corpus = SearchCorpus(
+            self.assets,
+            self.fuzzy_tokens,
+            self.fuzzy_token_asset_indexes,
+            self.lexical_index,
+        )
+        token_matches = _fuzzy_token_matches(corpus, query_tokens)
+        if not token_matches:
+            return _empty_search_match_arrays()
+
+        matching_indexes = set(token_matches[0])
+        for matches in token_matches[1:]:
+            matching_indexes.intersection_update(matches)
+            if not matching_indexes:
+                return _empty_search_match_arrays()
+
+        raw_matches = []
+        for index, asset_index in enumerate(matching_indexes, start=1):
+            if control:
+                control.check(index)
+            asset = self.assets[asset_index]
+            raw_score = _fuzzy_raw_score(
+                asset,
+                query_tokens,
+                query,
+                tuple(
+                    token_matches_by_index[asset_index]
+                    for token_matches_by_index in token_matches
+                ),
+            )
+            raw_matches.append((asset_index, raw_score))
+        return self._lane_match_arrays("fuzzy", raw_matches)
+
+    def _domain_match_arrays(
+        self,
+        query_tokens: tuple[str, ...],
+        query: str,
+        domain_vocabulary: DomainVocabulary,
+        *,
+        control: SearchControl | None = None,
+    ) -> _SearchMatchArrays:
+        del query
+        expanded_terms = _expanded_terms(query_tokens, domain_vocabulary)
+        if not expanded_terms:
+            return _empty_search_match_arrays()
+        corpus = SearchCorpus(
+            self.assets,
+            self.fuzzy_tokens,
+            self.fuzzy_token_asset_indexes,
+            self.lexical_index,
+        )
+        raw_matches = []
+        candidate_indexes = _domain_candidate_indexes(corpus, expanded_terms)
+        tokenized_terms = tuple(tokenize_search_text(term) for term in expanded_terms)
+        for index, asset_index in enumerate(candidate_indexes, start=1):
+            if control:
+                control.check(index)
+            asset = self.assets[asset_index]
+            raw_score, _matched = _domain_score_from_tokenized_terms(
+                asset,
+                tokenized_terms,
+            )
+            if raw_score <= 0:
+                continue
+            raw_matches.append((asset_index, raw_score))
+        return self._lane_match_arrays("domain", raw_matches)
+
+    def _lane_match_arrays(
+        self,
+        lane: Literal["fuzzy", "domain"],
+        raw_matches: list[tuple[int, float]],
+    ) -> _SearchMatchArrays:
+        if not raw_matches:
+            return _empty_search_match_arrays()
+        raw_matches.sort(
+            key=lambda item: (
+                -item[1],
+                self.assets[item[0]].relative_path.casefold(),
+            )
+        )
+        return _SearchMatchArrays(
+            asset_indexes=np.fromiter(
+                (asset_index for asset_index, _score in raw_matches),
+                dtype=np.int32,
+                count=len(raw_matches),
+            ),
+            scores=np.fromiter(
+                (
+                    _lane_score(lane, raw_score, rank)
+                    for rank, (_asset_index, raw_score) in enumerate(raw_matches, start=1)
+                ),
+                dtype=np.float64,
+                count=len(raw_matches),
+            ),
+            total=len(raw_matches),
+        )
+
+    def _strict_match_arrays(
+        self,
+        query_tokens: tuple[str, ...],
+        *,
+        control: SearchControl | None = None,
+    ) -> _SearchMatchArrays:
+        if control and control.is_cancelled():
+            raise SearchSuperseded
+        cached = self._strict_match_cache_get(query_tokens)
         if cached is not None:
             return cached
-
         owner = False
         with self._cache_lock:
-            cached = self._cache_get_locked(key)
+            cached = self._strict_match_cache.get(query_tokens)
             if cached is not None:
+                self._strict_match_cache.move_to_end(query_tokens)
                 return cached
-            in_flight = self._in_flight.get(key)
+            in_flight = self._strict_in_flight.get(query_tokens)
             if in_flight is None:
-                in_flight = _InFlightSearch()
-                self._in_flight[key] = in_flight
+                in_flight = _InFlightStrictSearch()
+                self._strict_in_flight[query_tokens] = in_flight
                 owner = True
 
         if not owner:
-            ranked = self._wait_for_in_flight(key, in_flight, control)
-            if ranked is not None:
-                return ranked
-            return self._ranked_search(
-                query,
-                source_id=source_id,
-                directory=directory,
-                directory_prefix=directory_prefix,
-                preferences=preferences,
-                domain_vocabulary=domain_vocabulary,
-                mode=mode,
-                control=control,
-            )
+            return self._wait_for_strict_in_flight(query_tokens, in_flight, control)
 
         try:
-            ranked = tuple(
-                _rank_search_assets(
-                    SearchCorpus(
-                        self.assets,
-                        self.fuzzy_tokens,
-                        self.fuzzy_token_asset_indexes,
-                        self.lexical_index,
-                    ),
-                    query,
-                    domain_vocabulary=domain_vocabulary,
-                    mode=mode,
-                    preference_adjustment=preferences.preference_adjustment,
-                    asset_filter=lambda asset: _asset_in_scope(
-                        asset,
-                        source_id=source_id,
-                        directory=directory,
-                        directory_prefix=directory_prefix,
-                        preferences=None,
-                    ),
-                    control=control,
+            if self.lexical_index is None:
+                if not self.assets:
+                    matches = _SearchMatchArrays(
+                        asset_indexes=np.empty(0, dtype=np.int32),
+                        scores=np.empty(0, dtype=np.float64),
+                        total=0,
+                    )
+                else:
+                    raise RuntimeError("strict lexical index is unavailable")
+            else:
+                raw_matches, total = self.lexical_index.search_with_scores(
+                    query_tokens,
+                    require_all_terms=True,
+                    limit=self.lexical_index.asset_count,
+                    offset=0,
                 )
-            )
+                if control and control.is_cancelled():
+                    raise SearchSuperseded
+                matches = _SearchMatchArrays(
+                    asset_indexes=np.fromiter(
+                        (asset_index for asset_index, _score in raw_matches),
+                        dtype=np.int32,
+                        count=len(raw_matches),
+                    ),
+                    scores=np.fromiter(
+                        (score for _asset_index, score in raw_matches),
+                        dtype=np.float64,
+                        count=len(raw_matches),
+                    ),
+                    total=total,
+                )
         except BaseException as exc:
             with self._cache_lock:
                 in_flight.error = exc
-                self._in_flight.pop(key, None)
+                self._strict_in_flight.pop(query_tokens, None)
                 in_flight.done.set()
             raise
-
         with self._cache_lock:
-            self._cache_put_locked(key, ranked)
-            in_flight.result = ranked
-            self._in_flight.pop(key, None)
+            self._strict_match_cache[query_tokens] = matches
+            self._strict_match_cache.move_to_end(query_tokens)
+            while len(self._strict_match_cache) > self.cache_size:
+                self._strict_match_cache.popitem(last=False)
+            in_flight.result = matches
+            self._strict_in_flight.pop(query_tokens, None)
             in_flight.done.set()
-        return ranked
+        return matches
 
-    def _wait_for_in_flight(
+    def _wait_for_strict_in_flight(
         self,
-        key: _SearchCacheKey,
-        in_flight: _InFlightSearch,
+        query_tokens: tuple[str, ...],
+        in_flight: _InFlightStrictSearch,
         control: SearchControl | None,
-    ) -> tuple[_RankedCandidate, ...] | None:
+    ) -> _SearchMatchArrays:
         while not in_flight.done.wait(0.025):
             if control and control.is_cancelled():
                 raise SearchSuperseded
         if in_flight.error is not None:
             if control and control.is_cancelled():
                 raise SearchSuperseded
-            cached = self._cache_get(key)
+            cached = self._strict_match_cache_get(query_tokens)
             if cached is not None:
                 return cached
             if isinstance(in_flight.error, SearchSuperseded):
-                return None
+                return self._strict_match_arrays(query_tokens, control=control)
             raise in_flight.error
         if in_flight.result is None:
-            raise RuntimeError("search finished without a result")
+            raise RuntimeError("strict search finished without a result")
         return in_flight.result
 
-    def _cache_get(self, key: _SearchCacheKey) -> tuple[_RankedCandidate, ...] | None:
-        with self._cache_lock:
-            return self._cache_get_locked(key)
-
-    def _cache_get_locked(
-        self, key: _SearchCacheKey
-    ) -> tuple[_RankedCandidate, ...] | None:
-        cached = self._ranked_cache.get(key)
-        if cached is None:
-            return None
-        self._ranked_cache.move_to_end(key)
-        return cached
-
-    def _cache_put_locked(
+    def _strict_match_cache_get(
         self,
-        key: _SearchCacheKey,
-        ranked: tuple[_RankedCandidate, ...],
-    ) -> None:
-        self._ranked_cache[key] = ranked
-        self._ranked_cache.move_to_end(key)
-        while len(self._ranked_cache) > self.cache_size:
-            self._ranked_cache.popitem(last=False)
+        query_tokens: tuple[str, ...],
+    ) -> _SearchMatchArrays | None:
+        with self._cache_lock:
+            cached = self._strict_match_cache.get(query_tokens)
+            if cached is None:
+                return None
+            self._strict_match_cache.move_to_end(query_tokens)
+            return cached
 
+    def _apply_preferences_to_match_arrays(
+        self,
+        asset_indexes: np.ndarray,
+        scores: np.ndarray,
+        *,
+        preferences: SearchPreferences,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        selection = preferences.included_asset_mask
+        if selection is not None:
+            included = selection[asset_indexes]
+            asset_indexes = asset_indexes[included]
+            scores = scores[included]
+        if preferences.quality_overrides:
+            scores = scores + preferences.preference_adjustment_array[asset_indexes]
+        return asset_indexes, scores
+
+    def _top_page_indexes(
+        self,
+        asset_indexes: np.ndarray,
+        scores: np.ndarray,
+        *,
+        limit: int,
+        offset: int,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        total = len(asset_indexes)
+        if total == 0 or offset >= total:
+            return (
+                np.empty(0, dtype=np.int32),
+                np.empty(0, dtype=np.float64),
+            )
+        page_end = min(total, offset + limit)
+        if page_end < total:
+            threshold = np.partition(scores, total - page_end)[total - page_end]
+            candidate_positions = np.flatnonzero(scores >= threshold)
+        else:
+            candidate_positions = np.arange(total, dtype=np.int32)
+        candidate_indexes = asset_indexes[candidate_positions]
+        candidate_scores = scores[candidate_positions]
+        order = np.lexsort(
+            (
+                self.asset_path_sort_ranks[candidate_indexes],
+                -candidate_scores,
+            )
+        )
+        page_positions = candidate_positions[order][offset:page_end]
+        return asset_indexes[page_positions], scores[page_positions]
+
+    def _directory_count_array_for_asset_indexes(
+        self,
+        asset_indexes: np.ndarray,
+    ) -> np.ndarray:
+        exact_counts = np.bincount(
+            self.asset_directory_ids[asset_indexes],
+            minlength=len(self.directory_runtime.keys),
+        ).astype(np.int32, copy=False)
+        return self._rollup_directory_counts(exact_counts)
+
+    def _rollup_directory_counts(self, exact_counts: np.ndarray) -> np.ndarray:
+        counts = exact_counts.copy()
+        for directory_id in self.directory_runtime.rollup_order:
+            parent_id = self.directory_runtime.parent_ids[directory_id]
+            if parent_id >= 0:
+                counts[parent_id] += counts[directory_id]
+        return counts
+
+    def _directory_responses_from_count_arrays(
+        self,
+        match_counts: np.ndarray,
+        included_counts: np.ndarray,
+        *,
+        preferences: SearchPreferences,
+        dirty_folder_subtree_keys: frozenset[tuple[str, str]],
+        descendant_whitelist_keys: frozenset[tuple[str, str]] = frozenset(),
+        descendant_blacklist_keys: frozenset[tuple[str, str]] = frozenset(),
+    ) -> list[dict[str, object]]:
+        responses = []
+        runtime = self.directory_runtime
+        for directory_id in runtime.sort_order:
+            matched_count = int(match_counts[directory_id])
+            if matched_count == 0:
+                continue
+            source_id, path = runtime.keys[directory_id]
+            directory_key = (source_id, path)
+            quality, quality_override = preferences.folder_quality(source_id, path)
+            responses.append(
+                {
+                    "source_id": source_id,
+                    "path": path,
+                    "name": runtime.names[directory_id],
+                    "depth": int(runtime.depths[directory_id]),
+                    "asset_count": int(runtime.asset_counts[directory_id]),
+                    "matched_asset_count": matched_count,
+                    "included_asset_count": int(included_counts[directory_id]),
+                    "quality": quality,
+                    "quality_override": quality_override,
+                    "selection_state": preferences.selection_state(source_id, path),
+                    "selection_effective": preferences.selection_effective(source_id, path),
+                    "profile_dirty": directory_key in dirty_folder_subtree_keys,
+                    "has_descendant_whitelist": directory_key in descendant_whitelist_keys,
+                    "has_descendant_blacklist": directory_key in descendant_blacklist_keys,
+                }
+            )
+        return responses
+
+    def _directory_responses_from_count_dicts(
+        self,
+        total_counts: dict[tuple[str, str], int],
+        match_counts: dict[tuple[str, str], int],
+        included_counts: dict[tuple[str, str], int] | None = None,
+        *,
+        preferences: SearchPreferences,
+        dirty_folder_subtree_keys: frozenset[tuple[str, str]],
+        descendant_whitelist_keys: frozenset[tuple[str, str]] = frozenset(),
+        descendant_blacklist_keys: frozenset[tuple[str, str]] = frozenset(),
+    ) -> list[dict[str, object]]:
+        preferences = preferences or empty_search_preferences(self.assets)
+        if included_counts is None:
+            included_counts = match_counts
+        responses = []
+        for (source, path), total_count in total_counts.items():
+            matched_count = match_counts.get((source, path), 0)
+            if matched_count == 0:
+                continue
+            directory_key = (source, path)
+            name = self.source_display_names.get(source, source) if path == "" else path.rsplit("/", 1)[-1]
+            depth = 0 if path == "" else len(path.split("/"))
+            quality, quality_override = preferences.folder_quality(source, path)
+            responses.append(
+                {
+                    "source_id": source,
+                    "path": path,
+                    "name": name,
+                    "depth": depth,
+                    "asset_count": total_count,
+                    "matched_asset_count": matched_count,
+                    "included_asset_count": included_counts.get((source, path), 0),
+                    "quality": quality,
+                    "quality_override": quality_override,
+                    "selection_state": preferences.selection_state(source, path),
+                    "selection_effective": preferences.selection_effective(source, path),
+                    "profile_dirty": directory_key in dirty_folder_subtree_keys,
+                    "has_descendant_whitelist": directory_key in descendant_whitelist_keys,
+                    "has_descendant_blacklist": directory_key in descendant_blacklist_keys,
+                }
+            )
+        return sorted(
+            responses,
+            key=lambda item: (
+                *self.source_sort_keys.get(
+                    str(item["source_id"]),
+                    (0, str(item["source_id"]).casefold(), str(item["source_id"])),
+                ),
+                _directory_path_sort_key(str(item["path"])),
+            ),
+        )
 
 DEFAULT_DOMAIN_VOCABULARY = DomainVocabulary(
     expansions={
@@ -798,14 +1295,24 @@ DEFAULT_DOMAIN_VOCABULARY = DomainVocabulary(
 
 def empty_search_preferences(assets: tuple[SearchCorpusAsset, ...]) -> SearchPreferences:
     return SearchPreferences(
-        preference_adjustments=tuple(0.0 for _asset in assets),
+        preference_adjustment_array=np.zeros(len(assets), dtype=np.float64),
         directory_filter=DirectoryFilter(),
-        included_asset_indexes=None,
+        included_asset_mask=None,
         included_asset_index_order=None,
+        included_directory_counts=None,
+        included_directory_count_array=None,
         quality_overrides={},
         selection_states={},
         effective_selection_states={},
         settings_fingerprint="empty",
+    )
+
+
+def _empty_search_match_arrays() -> _SearchMatchArrays:
+    return _SearchMatchArrays(
+        asset_indexes=np.empty(0, dtype=np.int32),
+        scores=np.empty(0, dtype=np.float64),
+        total=0,
     )
 
 
@@ -829,94 +1336,6 @@ def folder_settings_fingerprint(
     if not quality_part and not selection_part:
         return "empty"
     return repr((quality_part, selection_part))
-
-
-def search_assets(
-    db: sqlite3.Connection,
-    query: str,
-    *,
-    source_id: str | None = None,
-    directory: str | None = None,
-    directory_prefix: str | None = None,
-    preferences: SearchPreferences | None = None,
-    domain_vocabulary: DomainVocabulary | None = None,
-    mode: SearchMode = "strict",
-    limit: int = 100,
-    offset: int = 0,
-) -> list[SearchResult]:
-    return search_asset_page(
-        db,
-        query,
-        source_id=source_id,
-        directory=directory,
-        directory_prefix=directory_prefix,
-        preferences=preferences,
-        domain_vocabulary=domain_vocabulary,
-        mode=mode,
-        limit=limit,
-        offset=offset,
-    ).assets
-
-
-def search_asset_page(
-    db: sqlite3.Connection,
-    query: str,
-    *,
-    source_id: str | None = None,
-    directory: str | None = None,
-    directory_prefix: str | None = None,
-    preferences: SearchPreferences | None = None,
-    domain_vocabulary: DomainVocabulary | None = None,
-    mode: SearchMode = "strict",
-    limit: int = 100,
-    offset: int = 0,
-) -> SearchResultsPage:
-    ranked = _rank_search(
-        db,
-        query,
-        source_id=source_id,
-        directory=directory,
-        directory_prefix=directory_prefix,
-        preferences=preferences,
-        domain_vocabulary=domain_vocabulary or DEFAULT_DOMAIN_VOCABULARY,
-        mode=mode,
-    )
-    return SearchResultsPage(
-        assets=[
-            _record_to_result(candidate.asset, candidate.score)
-            for candidate in ranked[offset : offset + limit]
-        ],
-        total=len(ranked),
-    )
-
-
-def count_search_assets(
-    db: sqlite3.Connection,
-    query: str,
-    *,
-    source_id: str | None = None,
-    directory: str | None = None,
-    directory_prefix: str | None = None,
-    preferences: SearchPreferences | None = None,
-    domain_vocabulary: DomainVocabulary | None = None,
-    mode: SearchMode = "strict",
-) -> int:
-    return len(
-        _rank_search(
-            db,
-            query,
-            source_id=source_id,
-            directory=directory,
-            directory_prefix=directory_prefix,
-            preferences=preferences,
-            domain_vocabulary=domain_vocabulary or DEFAULT_DOMAIN_VOCABULARY,
-            mode=mode,
-        )
-    )
-
-
-def _no_preference_adjustment(_asset: SearchCorpusAsset) -> float:
-    return 0.0
 
 
 def load_domain_vocabulary(path: Path) -> DomainVocabulary:
@@ -944,238 +1363,6 @@ def load_domain_vocabulary(path: Path) -> DomainVocabulary:
             terms.append(expanded.strip().casefold())
         expansions[raw_term.strip().casefold()] = tuple(dict.fromkeys(terms))
     return DomainVocabulary(expansions=expansions)
-
-
-def _rank_search(
-    db: sqlite3.Connection,
-    query: str,
-    *,
-    source_id: str | None,
-    directory: str | None,
-    directory_prefix: str | None,
-    preferences: SearchPreferences | None,
-    domain_vocabulary: DomainVocabulary,
-    mode: SearchMode,
-) -> list[_RankedCandidate]:
-    assets = fetch_search_corpus_assets(
-        db,
-        source_id=source_id,
-        directory=directory,
-        directory_prefix=directory_prefix,
-    )
-    directory_filter = preferences.directory_filter if preferences else None
-    if directory_filter and directory_filter.rules:
-        assets = tuple(
-            asset
-            for asset in assets
-            if includes_asset(asset.source_id, asset.directory, directory_filter)
-        )
-    return _rank_search_assets(
-        SearchCorpus.from_assets(assets),
-        query,
-        domain_vocabulary=domain_vocabulary,
-        mode=mode,
-        preference_adjustment=preferences.preference_adjustment
-        if preferences
-        else _no_preference_adjustment,
-    )
-
-
-def _strict_search_page(
-    corpus: SearchCorpus,
-    query: str,
-    *,
-    limit: int,
-    offset: int,
-    preference_adjustment: Callable[[SearchCorpusAsset], float] = _no_preference_adjustment,
-    asset_filter: Callable[[SearchCorpusAsset], bool] | None = None,
-    control: SearchControl | None = None,
-) -> SearchResultsPage:
-    query_tokens = tokenize_search_text(query)
-    if not query_tokens:
-        return SearchResultsPage(assets=[], total=0)
-    if corpus.lexical_index is None:
-        raise RuntimeError("strict lexical index is unavailable")
-
-    ranked, total = _strict_ranked_candidates(
-        corpus,
-        query_tokens,
-        preference_adjustment=preference_adjustment,
-        asset_filter=asset_filter,
-        control=control,
-    )
-    return SearchResultsPage(
-        assets=[
-            _record_to_result(candidate.asset, candidate.score)
-            for candidate in ranked[offset : offset + limit]
-        ],
-        total=total,
-    )
-
-
-def _strict_ranked_candidates(
-    corpus: SearchCorpus,
-    query_tokens: tuple[str, ...],
-    *,
-    preference_adjustment: Callable[[SearchCorpusAsset], float],
-    asset_filter: Callable[[SearchCorpusAsset], bool] | None = None,
-    control: SearchControl | None = None,
-) -> tuple[list[_RankedCandidate], int]:
-    if corpus.lexical_index is None:
-        if not corpus.assets:
-            return [], 0
-        raise RuntimeError("strict lexical index is unavailable")
-    matches, total = corpus.lexical_index.search_with_scores(
-        query_tokens,
-        require_all_terms=True,
-        limit=corpus.lexical_index.asset_count,
-        offset=0,
-    )
-    ranked = []
-    for index, (asset_index, score) in enumerate(matches, start=1):
-        if control:
-            control.check(index)
-        asset = corpus.assets[asset_index]
-        if asset_filter is not None and not asset_filter(asset):
-            continue
-        ranked.append(
-            _RankedCandidate(
-                asset=asset,
-                score=score + preference_adjustment(asset),
-            )
-        )
-    ranked.sort(
-        key=lambda candidate: (
-            -candidate.score,
-            candidate.asset.relative_path.casefold(),
-        )
-    )
-    return ranked, len(ranked) if asset_filter is not None else total
-
-
-def _strict_match_directories(
-    corpus: SearchCorpus,
-    query: str,
-    *,
-    control: SearchControl | None = None,
-) -> list[tuple[str, str]]:
-    query_tokens = tokenize_search_text(query)
-    if not query_tokens:
-        return []
-    if corpus.lexical_index is None:
-        return [
-            (candidate.asset.source_id, candidate.asset.directory)
-            for candidate in _strict_candidates(
-                corpus.assets,
-                query_tokens,
-                query,
-                require_all_terms=True,
-                control=control,
-            )
-        ]
-    matches, _total = corpus.lexical_index.search_with_scores(
-        query_tokens,
-        require_all_terms=True,
-        limit=corpus.lexical_index.asset_count,
-        offset=0,
-    )
-    directories = []
-    for index, (asset_index, _score) in enumerate(matches, start=1):
-        if control:
-            control.check(index)
-        asset = corpus.assets[asset_index]
-        directories.append((asset.source_id, asset.directory))
-    return directories
-
-
-def _rank_search_assets(
-    assets: Iterable[SearchCorpusAsset] | SearchCorpus,
-    query: str,
-    *,
-    domain_vocabulary: DomainVocabulary,
-    mode: SearchMode,
-    preference_adjustment: Callable[[SearchCorpusAsset], float] = _no_preference_adjustment,
-    asset_filter: Callable[[SearchCorpusAsset], bool] | None = None,
-    control: SearchControl | None = None,
-) -> list[_RankedCandidate]:
-    corpus = (
-        assets if isinstance(assets, SearchCorpus) else SearchCorpus.from_assets(assets)
-    )
-    query_tokens = tokenize_search_text(query)
-    if not query_tokens:
-        return []
-    if mode not in {"strict", "fuzzy", "domain"}:
-        raise ValueError(f"unsupported search mode: {mode}")
-
-    if mode == "strict":
-        ranked, _total = _strict_ranked_candidates(
-            corpus,
-            query_tokens,
-            preference_adjustment=preference_adjustment,
-            asset_filter=asset_filter,
-            control=control,
-        )
-        return ranked
-
-    candidates: list[_Candidate] = []
-    if mode == "fuzzy":
-        candidates.extend(
-            _fuzzy_candidates(
-                corpus,
-                query_tokens,
-                query,
-                control=control,
-            )
-        )
-    if mode == "domain":
-        candidates.extend(
-            _domain_candidates(
-                corpus,
-                query_tokens,
-                query,
-                domain_vocabulary,
-                control=control,
-            )
-        )
-    if asset_filter is not None:
-        candidates = [candidate for candidate in candidates if asset_filter(candidate.asset)]
-    return _rank_candidates(
-        candidates,
-        preference_adjustment=preference_adjustment,
-        control=control,
-    )
-
-
-def _search_cache_key(
-    query: str,
-    *,
-    source_id: str | None,
-    directory: str | None,
-    directory_prefix: str | None,
-    domain_vocabulary: DomainVocabulary,
-    mode: SearchMode,
-    profile_fingerprint: str,
-) -> _SearchCacheKey:
-    return (
-        normalize_search_text(query),
-        mode,
-        source_id,
-        directory,
-        directory_prefix,
-        tuple(sorted(domain_vocabulary.expansions.items())),
-        profile_fingerprint,
-    )
-
-
-def _filter_ranked_candidates(
-    ranked: tuple[_RankedCandidate, ...],
-    preferences: SearchPreferences,
-) -> tuple[_RankedCandidate, ...]:
-    if preferences.included_asset_indexes is None:
-        return ranked
-    return tuple(
-        candidate for candidate in ranked if preferences.includes(candidate.asset)
-    )
 
 
 def _domain_candidate_indexes(
@@ -1279,20 +1466,111 @@ def _asset_indexes_by_directory_subtree(
     return {key: tuple(value) for key, value in indexes.items()}
 
 
-def preference_adjustments(
+def _asset_selection_mask(asset_count: int, asset_indexes: tuple[int, ...]) -> np.ndarray:
+    mask = np.zeros(asset_count, dtype=bool)
+    if asset_indexes:
+        mask[np.fromiter(asset_indexes, dtype=np.int32, count=len(asset_indexes))] = True
+    return mask
+
+
+def _asset_directory_keys(
     assets: tuple[SearchCorpusAsset, ...],
-    folder_quality_overrides: dict[tuple[str, str], int],
-) -> tuple[float, ...]:
-    return tuple(
-        _folder_quality_adjustment(
-            _effective_folder_quality(
-                folder_quality_overrides,
-                asset.source_id,
-                asset.directory,
-            )
+) -> tuple[tuple[tuple[str, str], ...], ...]:
+    keys_by_asset_index: list[tuple[tuple[str, str], ...]] = [()] * len(assets)
+    for asset in assets:
+        keys_by_asset_index[asset.asset_index] = tuple(
+            (asset.source_id, ancestor)
+            for ancestor in _directory_ancestors(asset.directory)
         )
-        for asset in assets
+    return tuple(keys_by_asset_index)
+
+
+def _directory_runtime(
+    directory_counts: dict[tuple[str, str], int],
+    *,
+    source_display_names: dict[str, str],
+    source_sort_keys: dict[str, tuple[int, str, str]],
+) -> _DirectoryRuntime:
+    keys = tuple(directory_counts)
+    id_by_key = {key: index for index, key in enumerate(keys)}
+    names = tuple(
+        source_display_names.get(source_id, source_id)
+        if directory == ""
+        else directory.rsplit("/", 1)[-1]
+        for source_id, directory in keys
     )
+    depths = np.fromiter(
+        (0 if directory == "" else len(directory.split("/")) for _source_id, directory in keys),
+        dtype=np.int16,
+        count=len(keys),
+    )
+    asset_counts = np.fromiter(
+        (directory_counts[key] for key in keys),
+        dtype=np.int32,
+        count=len(keys),
+    )
+    parent_ids = np.full(len(keys), -1, dtype=np.int32)
+    for directory_id, (source_id, directory) in enumerate(keys):
+        if directory == "":
+            continue
+        parent = directory.rsplit("/", 1)[0] if "/" in directory else ""
+        parent_ids[directory_id] = id_by_key[(source_id, parent)]
+    rollup_order = np.argsort(-depths, kind="stable").astype(np.int32)
+    sort_order = np.asarray(
+        sorted(
+            range(len(keys)),
+            key=lambda directory_id: (
+                *source_sort_keys.get(
+                    keys[directory_id][0],
+                    (0, keys[directory_id][0].casefold(), keys[directory_id][0]),
+                ),
+                _directory_path_sort_key(keys[directory_id][1]),
+            ),
+        ),
+        dtype=np.int32,
+    )
+    return _DirectoryRuntime(
+        keys=keys,
+        names=names,
+        depths=depths,
+        asset_counts=asset_counts,
+        parent_ids=parent_ids,
+        rollup_order=rollup_order,
+        sort_order=sort_order,
+        id_by_key=id_by_key,
+    )
+
+
+def _asset_directory_ids(
+    assets: tuple[SearchCorpusAsset, ...],
+    directory_id_by_key: dict[tuple[str, str], int],
+) -> np.ndarray:
+    directory_ids = np.empty(len(assets), dtype=np.int32)
+    for asset in assets:
+        directory_ids[asset.asset_index] = directory_id_by_key[
+            (asset.source_id, asset.directory)
+        ]
+    return directory_ids
+
+
+def _asset_path_sort_ranks(assets: tuple[SearchCorpusAsset, ...]) -> np.ndarray:
+    ranks = np.empty(len(assets), dtype=np.int32)
+    for rank, asset in enumerate(
+        sorted(assets, key=lambda item: item.relative_path.casefold())
+    ):
+        ranks[asset.asset_index] = rank
+    return ranks
+
+
+def _count_array_to_dict(
+    counts: np.ndarray,
+    keys: tuple[tuple[str, str], ...],
+) -> dict[tuple[str, str], int]:
+    return {
+        keys[index]: count
+        for index, raw_count in enumerate(counts)
+        if (count := int(raw_count)) > 0
+    }
 
 
 def _effective_folder_quality(
@@ -1333,182 +1611,13 @@ def _folder_quality_adjustment(quality: int) -> float:
     return (quality - DEFAULT_FOLDER_QUALITY) * FOLDER_QUALITY_WEIGHT
 
 
-def _strict_candidates(
-    corpus_or_assets: Iterable[SearchCorpusAsset] | SearchCorpus,
-    query_tokens: tuple[str, ...],
-    query: str,
-    *,
-    require_all_terms: bool,
-    control: SearchControl | None = None,
-) -> list[_Candidate]:
-    corpus = (
-        corpus_or_assets
-        if isinstance(corpus_or_assets, SearchCorpus)
-        else SearchCorpus.from_assets(corpus_or_assets)
-    )
-    assets = corpus.assets
-    candidate_matches = (
-        corpus.lexical_index.candidates_with_scores(query_tokens)
-        if corpus.lexical_index is not None
-        else tuple((asset_index, 0.0) for asset_index in range(len(assets)))
-    )
-    candidates = []
-    for index, (asset_index, lexical_score) in enumerate(candidate_matches, start=1):
-        if control:
-            control.check(index)
-        asset = assets[asset_index]
-        _fallback_score, matched = _strict_score(asset, query_tokens)
-        score = _strict_tantivy_raw_score(lexical_score, query_tokens)
-        if score <= 0:
-            continue
-        if require_all_terms and set(matched) != set(query_tokens):
-            continue
-        candidates.append(
-            _Candidate(
-                asset=asset,
-                lane="strict",
-                raw_score=score,
-                matched_terms=matched,
-                query_variant=query,
-            )
-        )
-    return sorted(candidates, key=_candidate_lane_sort_key)
-
-
-def _fuzzy_candidates(
-    corpus: SearchCorpus,
-    query_tokens: tuple[str, ...],
-    query: str,
-    *,
-    control: SearchControl | None = None,
-) -> list[_Candidate]:
-    token_matches = _fuzzy_token_matches(corpus, query_tokens)
-    if not token_matches:
-        return []
-
-    matching_indexes = set(token_matches[0])
-    for matches in token_matches[1:]:
-        matching_indexes.intersection_update(matches)
-        if not matching_indexes:
-            return []
-
-    candidates = []
-    for asset_index in matching_indexes:
-        index = asset_index + 1
-        if control:
-            control.check(index)
-        asset = corpus.assets[asset_index]
-        matched = query_tokens
-        candidates.append(
-            _Candidate(
-                asset=asset,
-                lane="fuzzy",
-                raw_score=_fuzzy_raw_score(
-                    asset,
-                    query_tokens,
-                    query,
-                    tuple(
-                        token_matches_by_index[asset_index]
-                        for token_matches_by_index in token_matches
-                    ),
-                ),
-                matched_terms=matched,
-                query_variant=query,
-            )
-        )
-    return sorted(candidates, key=_candidate_lane_sort_key)
-
-
-def _domain_candidates(
-    corpus_or_assets: Iterable[SearchCorpusAsset] | SearchCorpus,
-    query_tokens: tuple[str, ...],
-    query: str,
-    domain_vocabulary: DomainVocabulary,
-    *,
-    control: SearchControl | None = None,
-) -> list[_Candidate]:
-    expanded_terms = _expanded_terms(query_tokens, domain_vocabulary)
-    if not expanded_terms:
-        return []
-    corpus = (
-        corpus_or_assets
-        if isinstance(corpus_or_assets, SearchCorpus)
-        else SearchCorpus.from_assets(corpus_or_assets)
-    )
-    assets = corpus.assets
-    candidates = []
-    candidate_indexes = _domain_candidate_indexes(corpus, expanded_terms)
-    for index, asset_index in enumerate(candidate_indexes, start=1):
-        if control:
-            control.check(index)
-        asset = assets[asset_index]
-        score, matched = _domain_score(asset, expanded_terms)
-        if score <= 0:
-            continue
-        candidates.append(
-            _Candidate(
-                asset=asset,
-                lane="domain",
-                raw_score=score,
-                matched_terms=matched,
-                query_variant=", ".join(expanded_terms),
-            )
-        )
-    return sorted(candidates, key=_candidate_lane_sort_key)
-
-
-def _rank_candidates(
-    candidates: list[_Candidate],
-    *,
-    preference_adjustment: Callable[[SearchCorpusAsset], float] = _no_preference_adjustment,
-    control: SearchControl | None = None,
-) -> list[_RankedCandidate]:
-    by_asset: dict[str, list[tuple[int, _Candidate]]] = defaultdict(list)
-    for lane in ("strict", "fuzzy", "domain"):
-        if control:
-            control.check(0)
-        lane_candidates = [
-            candidate for candidate in candidates if candidate.lane == lane
-        ]
-        lane_candidates.sort(key=_candidate_lane_sort_key)
-        for rank, candidate in enumerate(lane_candidates, start=1):
-            if control:
-                control.check(rank)
-            by_asset[candidate.asset.asset_id].append((rank, candidate))
-
-    ranked = []
-    for index, lane_matches in enumerate(by_asset.values(), start=1):
-        if control:
-            control.check(index)
-        asset = lane_matches[0][1].asset
-        score = sum(
-            _lane_contribution(rank, candidate) for rank, candidate in lane_matches
-        )
-        score += preference_adjustment(asset)
-        ranked.append(_RankedCandidate(asset=asset, score=score))
-    return sorted(
-        ranked,
-        key=lambda candidate: (
-            -candidate.score,
-            candidate.asset.relative_path.casefold(),
-        ),
-    )
-
-
-def _lane_contribution(rank: int, candidate: _Candidate) -> float:
+def _lane_score(lane: str, raw_score: float, rank: int) -> float:
     lane_weight = {
         "strict": 1000.0,
         "fuzzy": 500.0,
         "domain": 300.0,
-    }[candidate.lane]
-    return lane_weight + candidate.raw_score + (100.0 / rank)
-
-
-def _candidate_lane_sort_key(candidate: _Candidate) -> tuple[float, str]:
-    return (
-        -candidate.raw_score,
-        candidate.asset.relative_path.casefold(),
-    )
+    }[lane]
+    return lane_weight + raw_score + (100.0 / rank)
 
 
 def _strict_score(
@@ -1583,15 +1692,6 @@ def _field_token_score(
     return best
 
 
-def _strict_tantivy_raw_score(
-    lexical_score: float,
-    query_tokens: tuple[str, ...],
-) -> float:
-    if lexical_score <= 0:
-        return 0.0
-    return lexical_score * max(len(query_tokens), 1)
-
-
 def _fuzzy_token_matches(
     corpus: SearchCorpus,
     query_tokens: tuple[str, ...],
@@ -1626,14 +1726,13 @@ def _fuzzy_raw_score(
     return score
 
 
-def _domain_score(
+def _domain_score_from_tokenized_terms(
     asset: SearchCorpusAsset,
-    expanded_terms: tuple[str, ...],
+    tokenized_terms: tuple[tuple[str, ...], ...],
 ) -> tuple[float, tuple[str, ...]]:
     matched = []
     score = 0.0
-    for term in expanded_terms:
-        term_tokens = tokenize_search_text(term)
+    for term_tokens in tokenized_terms:
         term_score, term_matches = _strict_score(asset, term_tokens)
         if term_score <= 0:
             continue
