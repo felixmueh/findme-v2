@@ -15,7 +15,13 @@ def _stable_directory(directory: dict[str, object]) -> dict[str, object]:
     return {
         key: value
         for key, value in directory.items()
-        if key not in {"included_asset_count", "selection_state", "selection_effective"}
+        if key
+        not in {
+            "included_asset_count",
+            "selection_state",
+            "selection_effective",
+            "profile_dirty",
+        }
     }
 
 

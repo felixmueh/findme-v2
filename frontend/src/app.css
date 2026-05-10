@@ -832,7 +832,7 @@ button.folder-row.retained {
   background: var(--surface-alt);
 }
 
-.folder-control > button.has-descendant-settings {
+.folder-control > button.has-dirty-profile-change {
   border-right-width: 3px;
   border-right-color: #7fa8b2;
 }

@@ -41,7 +41,8 @@ function sampleDirectory(
   quality = 4,
   qualityOverride: number | null = null,
   selectionState: FilterRuleState | null = null,
-  selectionEffective = true
+  selectionEffective = true,
+  profileDirty = false
 ) {
   return {
     source_id: 'sample',
@@ -55,6 +56,7 @@ function sampleDirectory(
     quality_override: qualityOverride,
     selection_state: selectionState,
     selection_effective: selectionEffective,
+    profile_dirty: profileDirty,
   }
 }
 
@@ -71,6 +73,7 @@ function sampleRootDirectory() {
     quality_override: null,
     selection_state: null,
     selection_effective: true,
+    profile_dirty: false,
   }
 }
 
@@ -322,15 +325,15 @@ test('shows superseded whitelist state in the folder control', async ({ page }) 
   await expect(page.getByRole('group', { name: 'maps folder' })).toHaveClass(/whitelist-superseded/)
 })
 
-test('marks folders that contain custom descendant folder settings', async ({ page }) => {
+test('marks folders that contain unsaved profile changes', async ({ page }) => {
   await page.route('**/api/search-with-directory-counts?*', async (route) => {
     await route.fulfill({
       json: {
         total: 1,
         cards: [{ kind: 'asset', asset: sampleAsset }],
         directories: [
-          sampleRootDirectory(),
-          sampleDirectory(),
+          { ...sampleRootDirectory(), profile_dirty: true },
+          sampleDirectory(4, null, null, true, true),
           {
             source_id: 'sample',
             path: 'maps/sub',
@@ -342,6 +345,22 @@ test('marks folders that contain custom descendant folder settings', async ({ pa
             quality: 8,
             quality_override: 8,
             selection_state: null,
+            selection_effective: true,
+            profile_dirty: true,
+          },
+          {
+            source_id: 'sample',
+            path: 'maps/saved',
+            name: 'saved',
+            depth: 2,
+            asset_count: 1,
+            matched_asset_count: 1,
+            included_asset_count: 1,
+            quality: 7,
+            quality_override: 7,
+            selection_state: null,
+            selection_effective: true,
+            profile_dirty: false,
           },
         ],
       },
@@ -353,16 +372,19 @@ test('marks folders that contain custom descendant folder settings', async ({ pa
 
   await expect(
     page.getByRole('group', { name: 'Sample Assets folder' }).getByRole('button', { name: /quality 5/ })
-  ).toHaveAttribute('title', 'Contains custom folder settings')
+  ).toHaveAttribute('title', 'Unsaved profile change in this folder subtree')
 
   await revealSampleFolder(page)
 
   await expect(
     page.getByRole('group', { name: 'maps folder' }).getByRole('button', { name: /quality 4/ })
-  ).toHaveAttribute('title', 'Contains custom folder settings')
+  ).toHaveAttribute('title', 'Unsaved profile change in this folder subtree')
   await expect(
     page.getByRole('group', { name: 'sub folder' }).getByRole('button', { name: /quality 8/ })
-  ).not.toHaveAttribute('title', 'Contains custom folder settings')
+  ).toHaveAttribute('title', 'Unsaved profile change in this folder subtree')
+  await expect(
+    page.getByRole('group', { name: 'saved folder' }).getByRole('button', { name: /quality 7/ })
+  ).not.toHaveAttribute('title', 'Unsaved profile change in this folder subtree')
 })
 
 test('folder quality button shortcuts toggle folder rules without opening the menu', async ({ page }) => {

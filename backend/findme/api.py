@@ -372,7 +372,11 @@ def create_app(
         search_revision: int | None = None,
     ) -> object:
         with connect(database_path) as db:
-            preferences = profile_sessions.preferences(db, search_session)
+            profile_session = profile_sessions.session(db, search_session)
+            preferences = profile_session.preferences
+            dirty_folder_subtree_keys = profile_sessions.dirty_folder_subtree_keys(
+                profile_session
+            )
         control = search_revisions.control(search_session, search_revision)
         if control and control.is_cancelled():
             return Response(status_code=204)
@@ -400,7 +404,11 @@ def create_app(
                     "cards": cards,
                     "total": total,
                     "directories": [
-                        _directory_response(directory) for directory in directories
+                        _directory_response(
+                            directory,
+                            dirty_folder_subtree_keys=dirty_folder_subtree_keys,
+                        )
+                        for directory in directories
                     ],
                 }
             )
@@ -442,7 +450,11 @@ def create_app(
                 "cards": cards,
                 "total": total,
                 "directories": [
-                    _directory_response(directory) for directory in directories
+                    _directory_response(
+                        directory,
+                        dirty_folder_subtree_keys=dirty_folder_subtree_keys,
+                    )
+                    for directory in directories
                 ],
             }
         )
@@ -565,7 +577,11 @@ def _load_asset_or_404(db: sqlite3.Connection, config: AppConfig, asset_id: str)
         raise HTTPException(status_code=500, detail="asset path is outside source root") from exc
 
 
-def _directory_response(directory: DirectoryMatch) -> dict[str, object]:
+def _directory_response(
+    directory: DirectoryMatch,
+    *,
+    dirty_folder_subtree_keys: frozenset[tuple[str, str]] = frozenset(),
+) -> dict[str, object]:
     return {
         "source_id": directory.source_id,
         "path": directory.path,
@@ -578,6 +594,8 @@ def _directory_response(directory: DirectoryMatch) -> dict[str, object]:
         "quality_override": directory.quality_override,
         "selection_state": directory.selection_state,
         "selection_effective": directory.selection_effective,
+        "profile_dirty": (directory.source_id, directory.path)
+        in dirty_folder_subtree_keys,
     }
 
 

@@ -260,6 +260,79 @@ def test_api_updates_profile_quality_and_applies_it_to_current_ranking(
     ] == 10
 
 
+def test_api_marks_directory_subtrees_with_unsaved_profile_changes(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "assets"
+    write_image(source_root / "Maps" / "Nested" / "Castle.png")
+    write_image(source_root / "Maps" / "Other" / "Cave.png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+    rebuild_search_corpus(config, db_path)
+    client = TestClient(create_app(config, db_path))
+
+    response = client.patch(
+        "/api/search-profile/settings",
+        json={
+            "search_session": "tab-1",
+            "source_id": "dnd",
+            "directory": "Maps/Nested",
+            "quality_override": 8,
+        },
+    )
+    assert response.status_code == 200
+
+    dirty_body = client.get(
+        "/api/search-with-directory-counts",
+        params={"source_id": "dnd", "search_session": "tab-1"},
+    ).json()
+    dirty_directories = {
+        directory["path"]: directory["profile_dirty"]
+        for directory in dirty_body["directories"]
+    }
+
+    assert dirty_directories == {
+        "": True,
+        "Maps": True,
+        "Maps/Nested": True,
+        "Maps/Other": False,
+    }
+
+    save_response = client.post(
+        "/api/search-profile/save",
+        json={"search_session": "tab-1"},
+    )
+    assert save_response.status_code == 200
+
+    saved_body = client.get(
+        "/api/search-with-directory-counts",
+        params={"source_id": "dnd", "search_session": "tab-1"},
+    ).json()
+    assert {
+        directory["path"]: directory["profile_dirty"]
+        for directory in saved_body["directories"]
+    } == {
+        "": False,
+        "Maps": False,
+        "Maps/Nested": False,
+        "Maps/Other": False,
+    }
+
+
 def test_api_groups_numbered_variants_with_accidental_embedded_image_extension(
     tmp_path: Path,
 ) -> None:

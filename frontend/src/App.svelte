@@ -44,6 +44,7 @@
     quality_override: number | null
     selection_state: FilterRuleState | null
     selection_effective: boolean
+    profile_dirty: boolean
   }
 
   type FilterRuleState = 'whitelist' | 'blacklist'
@@ -159,14 +160,6 @@
   )
   const resultLabel = $derived(`${resultTotal} ${resultTotal === 1 ? 'card' : 'cards'}`)
   const visibleDirectories = $derived(directories.filter((directory) => isDirectoryVisible(directory)))
-  const filterRules = $derived.by(
-    () =>
-      new Map(
-        directories
-          .filter((directory) => directory.selection_state !== null)
-          .map((directory) => [directoryKey(directory), directory.selection_state as FilterRuleState])
-      )
-  )
   const hoveredAssetAncestorKeys = $derived.by(() => {
     const asset = hoverPreviewAsset
     const keys = new Set<string>()
@@ -190,10 +183,6 @@
       ) ?? null
   )
   const directoryPathsWithChildren = $derived.by(() => directoryParentKeys(directories))
-  const directoriesWithDescendantFolderSettings = $derived.by(() =>
-    descendantFolderSettingKeys(directories, filterRules)
-  )
-
   void loadSearchProfiles()
 
   $effect(() => {
@@ -697,33 +686,6 @@
     )
   }
 
-  function descendantFolderSettingKeys(directoryList: DirectoryNode[], rules: Map<string, FilterRuleState>) {
-    const keys = new Set<string>()
-    for (const directory of directoryList) {
-      if (directory.quality_override === null) continue
-      for (const key of directoryAncestorKeys(directory)) {
-        keys.add(key)
-      }
-    }
-    for (const key of rules.keys()) {
-      const directory = nodeKeyParts(key)
-      for (const ancestorKey of directoryAncestorKeys({ source_id: directory.sourceId, path: directory.path })) {
-        keys.add(ancestorKey)
-      }
-    }
-    return keys
-  }
-
-  function directoryAncestorKeys(directory: Pick<DirectoryNode, 'source_id' | 'path'>) {
-    if (!directory.path) return []
-    const keys = [directoryKey({ source_id: directory.source_id, path: '' })]
-    const parts = directory.path.split('/')
-    for (let index = 1; index < parts.length; index += 1) {
-      keys.push(directoryKey({ source_id: directory.source_id, path: parts.slice(0, index).join('/') }))
-    }
-    return keys
-  }
-
   function directoryRuleState(directory: DirectoryNode) {
     return directory.selection_state
   }
@@ -735,14 +697,6 @@
         ? 'blocked, '
         : ''
     return `Folder controls for ${directory.name}, ${state}quality ${directory.quality}`
-  }
-
-  function nodeKeyParts(key: string) {
-    const separatorIndex = key.indexOf('\u0000')
-    return {
-      sourceId: key.slice(0, separatorIndex),
-      path: key.slice(separatorIndex + 1),
-    }
   }
 
   async function toggleDirectoryRule(directory: DirectoryNode, state: FilterRuleState) {
@@ -1442,12 +1396,12 @@
               class:focused={ruleState === 'whitelist' && directory.selection_effective}
               class:superseded={ruleState === 'whitelist' && !directory.selection_effective}
               class:override={directory.quality_override !== null}
-              class:has-descendant-settings={directoriesWithDescendantFolderSettings.has(directoryKey(directory))}
+              class:has-dirty-profile-change={directory.profile_dirty}
               type="button"
               aria-label={folderControlLabel(directory, ruleState)}
               aria-expanded={qualityTargetKey === directoryKey(directory)}
-              title={directoriesWithDescendantFolderSettings.has(directoryKey(directory))
-                ? 'Contains custom folder settings'
+              title={directory.profile_dirty
+                ? 'Unsaved profile change in this folder subtree'
                 : undefined}
               onfocus={() => setQualityHover(directory)}
               onclick={(event) => toggleQualityPicker(event, directory)}

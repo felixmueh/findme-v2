@@ -75,6 +75,10 @@ class SearchProfileSession:
     def dirty(self) -> bool:
         return self.dirty_scoring or self.dirty_selection
 
+    @property
+    def dirty_folder_keys(self) -> frozenset[tuple[str, str]]:
+        return _dirty_folder_keys(self.working_settings, self.persisted_settings)
+
 
 class SearchProfileConflict(RuntimeError):
     pass
@@ -529,6 +533,11 @@ class SearchProfileSessionManager:
             "settings_fingerprint": session.preferences.settings_fingerprint,
         }
 
+    def dirty_folder_subtree_keys(
+        self, session: SearchProfileSession
+    ) -> frozenset[tuple[str, str]]:
+        return _folder_subtree_keys(session.dirty_folder_keys)
+
     def _new_session_from_profile(
         self,
         db: sqlite3.Connection,
@@ -654,6 +663,32 @@ def _selection_settings(
             if setting.selection_state is not None
         )
     )
+
+
+def _dirty_folder_keys(
+    working_settings: dict[tuple[str, str], FolderSetting],
+    persisted_settings: dict[tuple[str, str], FolderSetting],
+) -> frozenset[tuple[str, str]]:
+    keys = set(working_settings) | set(persisted_settings)
+    return frozenset(
+        key
+        for key in keys
+        if working_settings.get(key) != persisted_settings.get(key)
+    )
+
+
+def _folder_subtree_keys(
+    folder_keys: frozenset[tuple[str, str]],
+) -> frozenset[tuple[str, str]]:
+    subtree_keys: set[tuple[str, str]] = set()
+    for source_id, directory in folder_keys:
+        subtree_keys.add((source_id, ""))
+        if not directory:
+            continue
+        parts = directory.split("/")
+        for index in range(1, len(parts) + 1):
+            subtree_keys.add((source_id, "/".join(parts[:index])))
+    return frozenset(subtree_keys)
 
 
 def _validate_selection_rules(

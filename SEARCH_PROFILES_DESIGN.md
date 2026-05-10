@@ -75,6 +75,7 @@ The session runtime tracks:
 - working folder settings
 - `dirty_scoring`
 - `dirty_selection`
+- folder subtrees containing unsaved changes, for sidebar dirty indicators
 
 The aggregate dirty state is:
 
