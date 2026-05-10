@@ -425,6 +425,13 @@ test('previews audio on hover and shows playback controls when selected', async 
     directory: 'sounds',
     media_type: 'audio',
   }
+  const secondAudioAsset = {
+    ...audioAsset,
+    asset_id: 'asset-rain',
+    relative_path: 'sounds/rain.mp3',
+    filename: 'rain.mp3',
+    stem: 'rain',
+  }
 
   await page.addInitScript(() => {
     Object.defineProperty(window, '__audioEvents', {
@@ -454,8 +461,11 @@ test('previews audio on hover and shows playback controls when selected', async 
   await page.route('**/api/search-with-directory-counts?*', async (route) => {
     await route.fulfill({
       json: {
-        total: 1,
-        cards: [{ kind: 'asset', asset: audioAsset }],
+        total: 2,
+        cards: [
+          { kind: 'asset', asset: audioAsset },
+          { kind: 'asset', asset: secondAudioAsset },
+        ],
         directories: [
           sampleRootDirectory(),
           {
@@ -473,7 +483,15 @@ test('previews audio on hover and shows playback controls when selected', async 
     })
   })
   await page.route('**/api/search?*', async (route) => {
-    await route.fulfill({ json: { total: 1, cards: [{ kind: 'asset', asset: audioAsset }] } })
+    await route.fulfill({
+      json: {
+        total: 2,
+        cards: [
+          { kind: 'asset', asset: audioAsset },
+          { kind: 'asset', asset: secondAudioAsset },
+        ],
+      },
+    })
   })
   await page.route('**/api/assets/asset-thunder', async (route) => {
     await route.fulfill({
@@ -489,6 +507,12 @@ test('previews audio on hover and shows playback controls when selected', async 
       body: Buffer.from('audio'),
     })
   })
+  await page.route('**/api/assets/asset-rain/file', async (route) => {
+    await route.fulfill({
+      contentType: 'audio/mpeg',
+      body: Buffer.from('audio'),
+    })
+  })
 
   await page.goto('/')
   const tile = page.getByRole('button', { name: /thunder\.mp3/i })
@@ -498,10 +522,14 @@ test('previews audio on hover and shows playback controls when selected', async 
   await expect.poll(() => page.evaluate(() => (window as unknown as { __audioEvents: string[] }).__audioEvents)).toContain(
     'play:/api/assets/asset-thunder/file:muted=true:volume=0.35'
   )
-  const audioCard = page.locator('.audio-asset-card')
+  const audioCard = page.getByRole('group', { name: 'Audio asset card for thunder.mp3' })
   await expect(audioCard.getByRole('button', { name: 'Unmute preview' })).toBeVisible()
-  await expect(audioCard.getByRole('slider', { name: 'Preview volume' })).toHaveValue('35')
+  await expect(audioCard.getByRole('slider', { name: 'Preview volume' })).toBeHidden()
   await expect(page.getByLabel('Hovered asset preview').getByRole('button', { name: 'Unmute preview' })).toHaveCount(0)
+
+  await audioCard.getByRole('button', { name: 'Unmute preview' }).hover()
+  await expect(audioCard.getByRole('slider', { name: 'Preview volume' })).toBeVisible()
+  await expect(audioCard.getByRole('slider', { name: 'Preview volume' })).toHaveValue('35')
 
   await audioCard.getByRole('button', { name: 'Unmute preview' }).click()
   await expect(audioCard.getByRole('button', { name: 'Mute preview' })).toBeVisible()
@@ -513,6 +541,11 @@ test('previews audio on hover and shows playback controls when selected', async 
   await expect
     .poll(() => page.locator('audio').first().evaluate((audio) => (audio as HTMLAudioElement).volume))
     .toBe(0.7)
+
+  const secondCard = page.getByRole('group', { name: 'Audio asset card for rain.mp3' })
+  await secondCard.hover()
+  await expect(audioCard.getByRole('button', { name: 'Mute preview' })).toBeHidden()
+  await expect(secondCard.getByRole('button', { name: 'Mute preview' })).toBeVisible()
 
   await page.mouse.move(0, 0)
   await expect.poll(() => page.evaluate(() => (window as unknown as { __audioEvents: string[] }).__audioEvents)).toContain(

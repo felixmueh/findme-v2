@@ -1042,7 +1042,6 @@
                     {/if}
                   </button>
                   <label class="preview-volume-control">
-                    <span>Volume</span>
                     <input
                       type="range"
                       min="0"
@@ -1052,7 +1051,6 @@
                       oninput={setHoverPreviewVolume}
                       aria-label="Preview volume"
                     />
-                    <span>{Math.round(hoverPreviewVolume * 100)}%</span>
                   </label>
                 </div>
               </div>

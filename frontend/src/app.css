@@ -196,7 +196,8 @@ a:focus-visible {
 }
 
 .asset-card {
-  grid-template-rows: auto 30px;
+  position: relative;
+  grid-template-rows: auto;
 }
 
 .asset-card-main {
@@ -214,15 +215,13 @@ a:focus-visible {
 .asset-tile:hover,
 .asset-tile.selected,
 .asset-card:hover,
-.asset-card.selected,
-.asset-card:focus-within {
+.asset-card.selected {
   border-color: var(--border-strong);
 }
 
 .asset-tile:hover,
 .asset-tile:focus-visible,
-.asset-card:hover,
-.asset-card:focus-within {
+.asset-card:hover {
   outline: 1px solid #a99f94;
   outline-offset: -1px;
   box-shadow: 0 2px 10px rgba(28, 25, 23, 0.14);
@@ -272,8 +271,7 @@ a:focus-visible {
 .asset-tile.collection-header:focus-visible,
 .asset-tile.collection-member:hover,
 .asset-tile.collection-member:focus-visible,
-.asset-card.collection-member:hover,
-.asset-card.collection-member:focus-within {
+.asset-card.collection-member:hover {
   box-shadow:
     0 0 0 5px color-mix(in srgb, var(--collection-color), transparent 88%),
     0 2px 10px rgba(28, 25, 23, 0.14);
@@ -286,29 +284,32 @@ a:focus-visible {
 }
 
 .card-audio-controls {
-  min-width: 0;
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 2;
   display: grid;
-  grid-template-columns: 30px minmax(0, 1fr);
-  gap: 7px;
-  align-items: center;
+  justify-items: end;
+  gap: 5px;
   opacity: 0;
+  visibility: hidden;
   pointer-events: none;
 }
 
-.audio-asset-card:hover .card-audio-controls,
-.audio-asset-card:focus-within .card-audio-controls {
+.audio-asset-card:hover .card-audio-controls {
   opacity: 1;
+  visibility: visible;
   pointer-events: auto;
 }
 
 .preview-mute-button {
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   display: grid;
   place-items: center;
   border: 1px solid var(--border-strong);
   border-radius: 6px;
-  background: var(--surface-alt);
+  background: color-mix(in srgb, var(--surface), transparent 8%);
   color: var(--text);
 }
 
@@ -317,22 +318,29 @@ a:focus-visible {
 }
 
 .preview-volume-control {
-  min-width: 0;
+  width: 32px;
+  height: 104px;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) 34px;
-  gap: 6px;
-  align-items: center;
-  color: var(--muted);
-  font-size: 12px;
+  place-items: center;
+  padding: 8px 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.card-audio-controls:hover .preview-volume-control {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .preview-volume-control input {
-  min-width: 0;
+  width: 84px;
   accent-color: var(--accent);
-}
-
-.preview-volume-control span:last-child {
-  text-align: right;
+  transform: rotate(-90deg);
 }
 
 .tile-thumb {
