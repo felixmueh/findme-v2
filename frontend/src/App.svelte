@@ -99,6 +99,9 @@
   const directorySearchSessionId = `${searchSessionId}:directories`
 
   const selectedAssetId = $derived(selected?.asset.asset_id ?? '')
+  const selectedDirectoryKey = $derived(
+    selected ? directoryKey({ source_id: selected.asset.source_id, path: selected.asset.directory }) : ''
+  )
   const visibleEntries = $derived.by(() => visibleEntriesForCards(cards, expandedCollections))
   const selectedIndex = $derived(
     visibleEntries.findIndex((entry) => entry.kind === 'asset' && entry.asset.asset_id === selectedAssetId)
@@ -920,6 +923,7 @@
           class:whitelist={ruleState === 'whitelist'}
           class:blacklist={ruleState === 'blacklist'}
           class:source-root={directory.depth === 0}
+          class:selected-folder={selectedDirectoryKey === directoryKey(directory)}
           class:collapsed={children && isCollapsed(directory)}
           class:leaf={!children}
           class="folder-row"
@@ -1015,6 +1019,18 @@
             {/if}
           </span>
         </div>
+        {#if selected && selectedDirectoryKey === directoryKey(directory)}
+          {@const SelectedPathIcon = assetIcon(selected.asset)}
+          <div
+            class="selected-path-row"
+            role="note"
+            aria-label="Current selection path"
+            style={`--depth: ${directory.depth + 2}`}
+          >
+            <SelectedPathIcon size={13} />
+            <span>{selected.asset.filename}</span>
+          </div>
+        {/if}
       {/each}
     </aside>
   </section>

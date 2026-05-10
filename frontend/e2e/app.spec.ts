@@ -441,6 +441,8 @@ test('copies the selected asset primary path', async ({ page }) => {
 
   await page.getByRole('button', { name: /castle\.png/i }).click()
   await expect(page.getByLabel('Selected asset')).toContainText('maps/castle.png')
+  await expect(page.getByRole('group', { name: 'maps folder' })).toHaveClass(/selected-folder/)
+  await expect(page.getByRole('note', { name: 'Current selection path' })).toHaveText('castle.png')
 
   await page.getByRole('button', { name: 'Copy' }).click()
 

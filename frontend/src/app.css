@@ -530,6 +530,17 @@ button.folder-row.retained {
   background: #e5ddcf;
 }
 
+.folder-row.selected-folder,
+.folder-row.selected-folder .folder-main {
+  background: #e8f6f8;
+  color: var(--text);
+}
+
+.folder-row.source-root.selected-folder,
+.folder-row.source-root.selected-folder .folder-main {
+  background: #e4f2f4;
+}
+
 .folder-row.whitelist {
   box-shadow: inset 3px 0 0 #15803d;
 }
@@ -578,6 +589,30 @@ button.folder-row.retained {
 .folder-row em b {
   color: var(--danger);
   font-weight: 700;
+}
+
+.selected-path-row {
+  min-height: 24px;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 6px;
+  align-items: center;
+  padding: 0 9px 0 calc(9px + var(--depth, 0) * 14px);
+  background: #f4fbfc;
+  border-left: 3px solid var(--accent);
+  color: var(--accent-hover);
+  font-size: 11px;
+}
+
+.selected-path-row svg {
+  color: var(--accent);
+}
+
+.selected-path-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .folder-control {
