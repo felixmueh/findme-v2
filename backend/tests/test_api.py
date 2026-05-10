@@ -743,6 +743,112 @@ def test_api_applies_profile_selection_before_pagination(tmp_path: Path) -> None
     ]
 
 
+def test_api_profile_blacklisted_folder_remains_visible_for_unblocking(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "assets"
+    write_image(source_root / "Maps" / "Keep.png")
+    write_image(source_root / "Maps" / "Unused" / "Skip.png")
+    write_image(source_root / "Tokens" / "Goblin.png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+    rebuild_search_corpus(config, db_path)
+
+    client = TestClient(create_app(config, db_path))
+
+    assert client.patch(
+        "/api/search-profile/settings",
+        json={
+            "search_session": "tab-1",
+            "source_id": "dnd",
+            "directory": "Maps/Unused",
+            "selection_state": "blacklist",
+        },
+    ).status_code == 200
+
+    body = client.get(
+        "/api/search-with-directory-counts",
+        params={"search_session": "tab-1"},
+    ).json()
+    directories = {
+        (directory["source_id"], directory["path"]): directory
+        for directory in body["directories"]
+    }
+
+    assert body["total"] == 2
+    blocked = directories[("dnd", "Maps/Unused")]
+    assert blocked["asset_count"] == 1
+    assert blocked["matched_asset_count"] == 1
+    assert blocked["included_asset_count"] == 0
+    assert blocked["selection_state"] == "blacklist"
+
+
+def test_api_profile_blacklisted_search_match_keeps_directory_match_count(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "assets"
+    write_image(source_root / "Maps" / "Unused" / "Skip.png")
+    write_image(source_root / "Tokens" / "Goblin.png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+    rebuild_search_corpus(config, db_path)
+
+    client = TestClient(create_app(config, db_path))
+
+    assert client.patch(
+        "/api/search-profile/settings",
+        json={
+            "search_session": "tab-1",
+            "source_id": "dnd",
+            "directory": "Maps/Unused",
+            "selection_state": "blacklist",
+        },
+    ).status_code == 200
+
+    body = client.get(
+        "/api/search-with-directory-counts",
+        params={"q": "skip", "search_session": "tab-1"},
+    ).json()
+    directories = {
+        (directory["source_id"], directory["path"]): directory
+        for directory in body["directories"]
+    }
+
+    assert body["total"] == 0
+    blocked = directories[("dnd", "Maps/Unused")]
+    assert blocked["matched_asset_count"] == 1
+    assert blocked["included_asset_count"] == 0
+    assert blocked["selection_state"] == "blacklist"
+
+
 def test_api_profile_selection_browse_does_not_rebuild_search_corpus(
     tmp_path: Path,
     monkeypatch,
@@ -1084,7 +1190,7 @@ def test_api_search_with_directory_counts_rejects_superseded_directory_counts(
     def supersede_directory_counts(*_args, **_kwargs):
         raise SearchSuperseded
 
-    monkeypatch.setattr(SearchIndex, "directories_for_matches", supersede_directory_counts)
+    monkeypatch.setattr(SearchIndex, "directories_for_search", supersede_directory_counts)
 
     response = client.get(
         "/api/search-with-directory-counts",

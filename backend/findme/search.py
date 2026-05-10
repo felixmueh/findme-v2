@@ -282,6 +282,7 @@ class SearchIndex:
             mode=mode,
             control=control,
         )
+        ranked = _filter_ranked_candidates(ranked, preferences)
         return SearchResultsPage(
             assets=[
                 _record_to_result(candidate.asset, candidate.score)
@@ -305,28 +306,36 @@ class SearchIndex:
         results = []
         total = 0
         end = offset + limit
-        asset_indexes = preferences.included_asset_index_order
-        assets = (
-            self.assets
-            if asset_indexes is None
-            else (self.assets[asset_index] for asset_index in asset_indexes)
-        )
-        scope_preferences = None if asset_indexes is not None else preferences
-        for index, asset in enumerate(assets, start=1):
-            if control:
-                control.check(index)
-            if not _asset_in_scope(
-                asset,
-                source_id=source_id,
-                directory=directory,
-                directory_prefix=directory_prefix,
-                preferences=scope_preferences,
-            ):
-                continue
+        for asset in self._browse_assets(
+            source_id=source_id,
+            directory=directory,
+            directory_prefix=directory_prefix,
+            preferences=preferences,
+            control=control,
+        ):
             if offset <= total < end:
                 results.append(_record_to_result(asset, 0))
             total += 1
         return SearchResultsPage(assets=results, total=total)
+
+    def browse_asset_ids(
+        self,
+        *,
+        source_id: str | None = None,
+        directory: str | None = None,
+        directory_prefix: str | None = None,
+        preferences: SearchPreferences | None = None,
+        control: SearchControl | None = None,
+    ) -> Iterable[str]:
+        preferences = preferences or empty_search_preferences(self.assets)
+        for asset in self._browse_assets(
+            source_id=source_id,
+            directory=directory,
+            directory_prefix=directory_prefix,
+            preferences=preferences,
+            control=control,
+        ):
+            yield asset.asset_id
 
     def all_asset_results(self) -> list[SearchResult]:
         return [_record_to_result(asset, 0) for asset in self.assets]
@@ -451,31 +460,126 @@ class SearchIndex:
         control: SearchControl | None = None,
     ) -> list[DirectoryMatch]:
         preferences = preferences or empty_search_preferences(self.assets)
-        if (
-            directory is None
-            and directory_prefix is None
-            and preferences.included_asset_indexes is None
-        ):
-            total_counts = _filter_directory_counts(self.directory_counts, source_id)
-            return self._directory_matches_from_counts(
-                total_counts,
-                total_counts,
-                total_counts,
-                preferences=preferences,
+        total_counts = _filter_directory_counts(self.directory_counts, source_id)
+        if directory is None and directory_prefix is None:
+            match_counts = total_counts
+        else:
+            match_counts = self._directory_counts_for_scope(
+                source_id=source_id,
+                directory=directory,
+                directory_prefix=directory_prefix,
+                preferences=empty_search_preferences(self.assets),
+                control=control,
             )
+        included_counts = (
+            match_counts
+            if preferences.included_asset_indexes is None
+            else self._directory_counts_for_scope(
+                source_id=source_id,
+                directory=directory,
+                directory_prefix=directory_prefix,
+                preferences=preferences,
+                control=control,
+            )
+        )
+        return self._directory_matches_from_counts(
+            total_counts,
+            match_counts,
+            included_counts,
+            preferences=preferences,
+        )
 
-        page = self.browse(
+    def directories_for_search(
+        self,
+        query: str,
+        *,
+        source_id: str | None = None,
+        directory: str | None = None,
+        directory_prefix: str | None = None,
+        preferences: SearchPreferences | None = None,
+        domain_vocabulary: DomainVocabulary | None = None,
+        mode: SearchMode = "strict",
+        control: SearchControl | None = None,
+    ) -> list[DirectoryMatch]:
+        preferences = preferences or empty_search_preferences(self.assets)
+        ranked = self._ranked_search(
+            query,
             source_id=source_id,
             directory=directory,
             directory_prefix=directory_prefix,
             preferences=preferences,
-            limit=len(self.assets),
+            domain_vocabulary=domain_vocabulary or DEFAULT_DOMAIN_VOCABULARY,
+            mode=mode,
             control=control,
         )
-        return self.directories_for_matches(
-            page.assets,
-            source_id=source_id,
+        total_counts = _filter_directory_counts(self.directory_counts, source_id)
+        match_counts = count_asset_directories(
+            (candidate.asset.source_id, candidate.asset.directory)
+            for candidate in ranked
+        )
+        included_counts = (
+            match_counts
+            if preferences.included_asset_indexes is None
+            else count_asset_directories(
+                (candidate.asset.source_id, candidate.asset.directory)
+                for candidate in ranked
+                if preferences.includes(candidate.asset)
+            )
+        )
+        return self._directory_matches_from_counts(
+            total_counts,
+            match_counts,
+            included_counts,
             preferences=preferences,
+        )
+
+    def _browse_assets(
+        self,
+        *,
+        source_id: str | None,
+        directory: str | None,
+        directory_prefix: str | None,
+        preferences: SearchPreferences,
+        control: SearchControl | None = None,
+    ) -> Iterable[SearchCorpusAsset]:
+        asset_indexes = preferences.included_asset_index_order
+        assets = (
+            self.assets
+            if asset_indexes is None
+            else (self.assets[asset_index] for asset_index in asset_indexes)
+        )
+        scope_preferences = None if asset_indexes is not None else preferences
+        for index, asset in enumerate(assets, start=1):
+            if control:
+                control.check(index)
+            if not _asset_in_scope(
+                asset,
+                source_id=source_id,
+                directory=directory,
+                directory_prefix=directory_prefix,
+                preferences=scope_preferences,
+            ):
+                continue
+            yield asset
+
+    def _directory_counts_for_scope(
+        self,
+        *,
+        source_id: str | None,
+        directory: str | None,
+        directory_prefix: str | None,
+        preferences: SearchPreferences,
+        control: SearchControl | None = None,
+    ) -> dict[tuple[str, str], int]:
+        return count_asset_directories(
+            (asset.source_id, asset.directory)
+            for asset in self._browse_assets(
+                source_id=source_id,
+                directory=directory,
+                directory_prefix=directory_prefix,
+                preferences=preferences,
+                control=control,
+            )
         )
 
     def _directory_matches_from_counts(
@@ -486,7 +590,8 @@ class SearchIndex:
         preferences: SearchPreferences | None = None,
     ) -> list[DirectoryMatch]:
         preferences = preferences or empty_search_preferences(self.assets)
-        included_counts = included_counts or match_counts
+        if included_counts is None:
+            included_counts = match_counts
         directories = []
         for (source, path), total_count in total_counts.items():
             matched_count = match_counts.get((source, path), 0)
@@ -540,10 +645,12 @@ class SearchIndex:
             source_id=source_id,
             directory=directory,
             directory_prefix=directory_prefix,
-            directory_filter=preferences.directory_filter,
             domain_vocabulary=domain_vocabulary,
             mode=mode,
-            profile_fingerprint=preferences.settings_fingerprint,
+            profile_fingerprint=folder_settings_fingerprint(
+                DirectoryFilter(),
+                preferences.quality_overrides,
+            ),
         )
         cached = self._cache_get(key)
         if cached is not None:
@@ -593,7 +700,7 @@ class SearchIndex:
                         source_id=source_id,
                         directory=directory,
                         directory_prefix=directory_prefix,
-                        preferences=preferences,
+                        preferences=None,
                     ),
                     control=control,
                 )
@@ -1030,7 +1137,6 @@ def _search_cache_key(
     source_id: str | None,
     directory: str | None,
     directory_prefix: str | None,
-    directory_filter: DirectoryFilter | None,
     domain_vocabulary: DomainVocabulary,
     mode: SearchMode,
     profile_fingerprint: str,
@@ -1041,13 +1147,19 @@ def _search_cache_key(
         source_id,
         directory,
         directory_prefix,
-        tuple(
-            sorted((rule.source_id, rule.path, rule.state) for rule in directory_filter.rules)
-        )
-        if directory_filter
-        else (),
         tuple(sorted(domain_vocabulary.expansions.items())),
         profile_fingerprint,
+    )
+
+
+def _filter_ranked_candidates(
+    ranked: tuple[_RankedCandidate, ...],
+    preferences: SearchPreferences,
+) -> tuple[_RankedCandidate, ...]:
+    if preferences.included_asset_indexes is None:
+        return ranked
+    return tuple(
+        candidate for candidate in ranked if preferences.includes(candidate.asset)
     )
 
 

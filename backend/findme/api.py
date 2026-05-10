@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections import OrderedDict
 from pathlib import Path
 import sqlite3
 import threading
@@ -94,10 +93,6 @@ def create_app(
         card_metadata_by_asset_id=card_metadata_by_asset_id,
     )
     search_revisions = _SearchRevisionRegistry()
-    scoped_browse_results = _ScopedValueCache[tuple[SearchResult, ...]](max_size=8)
-    scoped_browse_cards = _ScopedValueCache[tuple[dict[str, object], ...]](max_size=16)
-    browse_directory_matches = _ScopedValueCache[list[DirectoryMatch]](max_size=16)
-
     def needs_scoped_scope(
         *,
         preferences,
@@ -112,55 +107,6 @@ def create_app(
             or directory_prefix is not None
         )
 
-    def asset_ids_for_scope(
-        *,
-        preferences,
-        source_id: str | None,
-        directory: str | None,
-        directory_prefix: str | None,
-    ) -> tuple[str, ...] | None:
-        if not needs_scoped_scope(
-            preferences=preferences,
-            source_id=source_id,
-            directory=directory,
-            directory_prefix=directory_prefix,
-        ):
-            return None
-        return tuple(
-            result.asset_id
-            for result in browse_results_for_scope(
-                preferences=preferences,
-                source_id=source_id,
-                directory=directory,
-                directory_prefix=directory_prefix,
-            )
-        )
-
-    def browse_results_for_scope(
-        *,
-        preferences,
-        source_id: str | None,
-        directory: str | None,
-        directory_prefix: str | None,
-    ) -> tuple[SearchResult, ...]:
-        return scoped_browse_results.get_or_build(
-            _scope_cache_key(
-                preferences=preferences,
-                source_id=source_id,
-                directory=directory,
-                directory_prefix=directory_prefix,
-            ),
-            lambda: tuple(
-                search_index.browse(
-                    source_id=source_id,
-                    directory=directory,
-                    directory_prefix=directory_prefix,
-                    preferences=preferences,
-                    limit=len(search_index.assets),
-                ).assets
-            ),
-        )
-
     def directories_for_browse_scope(
         *,
         preferences,
@@ -169,37 +115,12 @@ def create_app(
         directory_prefix: str | None,
         control: SearchControl | None = None,
     ) -> list[DirectoryMatch]:
-        return browse_directory_matches.get_or_build(
-            _scope_cache_key(
-                preferences=preferences,
-                source_id=source_id,
-                directory=directory,
-                directory_prefix=directory_prefix,
-            ),
-            lambda: (
-                search_index.directories_for_scope(
-                    source_id=source_id,
-                    directory=directory,
-                    directory_prefix=directory_prefix,
-                    preferences=preferences,
-                    control=control,
-                )
-                if (
-                    preferences.included_asset_indexes is None
-                    and directory is None
-                    and directory_prefix is None
-                )
-                else search_index.directories_for_matches(
-                    browse_results_for_scope(
-                        preferences=preferences,
-                        source_id=source_id,
-                        directory=directory,
-                        directory_prefix=directory_prefix,
-                    ),
-                    source_id=source_id,
-                    preferences=preferences,
-                )
-            ),
+        return search_index.directories_for_scope(
+            source_id=source_id,
+            directory=directory,
+            directory_prefix=directory_prefix,
+            preferences=preferences,
+            control=control,
         )
 
     def card_page_for_browse_scope(
@@ -211,30 +132,23 @@ def create_app(
         offset: int,
         limit: int,
     ) -> tuple[list[dict[str, object]], int]:
-        asset_ids = asset_ids_for_scope(
+        if not needs_scoped_scope(
             preferences=preferences,
             source_id=source_id,
             directory=directory,
             directory_prefix=directory_prefix,
-        )
-        if asset_ids is None:
+        ):
             return card_resolver.browse_page(offset=offset, limit=limit)
-        cards = scoped_browse_cards.get_or_build(
-            _scope_cache_key(
-                preferences=preferences,
+        return card_resolver.browse_page(
+            offset=offset,
+            limit=limit,
+            asset_ids=search_index.browse_asset_ids(
                 source_id=source_id,
                 directory=directory,
                 directory_prefix=directory_prefix,
-            ),
-            lambda: tuple(
-                card_resolver.browse_page(
-                    offset=0,
-                    limit=None,
-                    asset_ids=asset_ids,
-                )[0]
+                preferences=preferences,
             ),
         )
-        return list(cards[offset : offset + limit]), len(cards)
 
     app = FastAPI(title="Findme V2")
 
@@ -511,10 +425,15 @@ def create_app(
             limit=limit,
         )
         try:
-            directories = search_index.directories_for_matches(
-                matched_assets,
+            directories = search_index.directories_for_search(
+                _trimmed_query(q),
                 source_id=source_id,
+                directory=directory,
+                directory_prefix=directory_prefix,
                 preferences=preferences,
+                domain_vocabulary=domain_vocabulary,
+                mode=mode,
+                control=control,
             )
         except SearchSuperseded:
             return Response(status_code=204)
@@ -589,42 +508,6 @@ class _SearchRevisionRegistry:
         with self._lock:
             current = self._latest_by_session.get(session)
             return current is not None and current[0] == revision
-
-
-class _ScopedValueCache[T]:
-    def __init__(self, max_size: int = 64) -> None:
-        self._max_size = max_size
-        self._lock = threading.Lock()
-        self._values: OrderedDict[tuple[object, ...], T] = OrderedDict()
-
-    def get_or_build(self, key: tuple[object, ...], build) -> T:
-        with self._lock:
-            cached = self._values.get(key)
-            if cached is not None:
-                self._values.move_to_end(key)
-                return cached
-        value = build()
-        with self._lock:
-            self._values[key] = value
-            self._values.move_to_end(key)
-            while len(self._values) > self._max_size:
-                self._values.popitem(last=False)
-        return value
-
-
-def _scope_cache_key(
-    *,
-    preferences,
-    source_id: str | None,
-    directory: str | None,
-    directory_prefix: str | None,
-) -> tuple[object, ...]:
-    return (
-        preferences.settings_fingerprint,
-        source_id,
-        directory,
-        directory_prefix,
-    )
 
 
 def _load_domain_vocabulary(config: AppConfig):
