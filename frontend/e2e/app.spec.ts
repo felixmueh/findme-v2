@@ -540,6 +540,34 @@ test('copies the selected asset FoundryVTT path', async ({ page }) => {
     .toBe('library/Sample Assets/maps/castle.png')
 })
 
+test('copies paths with the legacy clipboard fallback', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: undefined,
+    })
+    document.execCommand = (command: string) => {
+      if (command !== 'copy') return false
+      const selected = document.activeElement
+      if (selected instanceof HTMLTextAreaElement) {
+        ;(window as unknown as { __copiedText?: string }).__copiedText = selected.value
+        return true
+      }
+      return false
+    }
+  })
+
+  await page.goto('/')
+  await page.getByRole('button', { name: /castle\.png/i }).click()
+
+  await page.getByRole('button', { name: 'Copy path' }).click()
+
+  await expect(page.getByRole('button', { name: 'Copied' })).toBeVisible()
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as { __copiedText?: string }).__copiedText))
+    .toBe('/tmp/sample-assets/maps/castle.png')
+})
+
 test('updates folder quality through the picker and refreshes ranked search results', async ({ page }) => {
   let directoryQuality = 4
 

@@ -344,14 +344,26 @@
   }
 
   async function copyValueAction(action: ValueAction) {
-    await navigator.clipboard.writeText(action.value)
-    markCopied(action.id)
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(action.value)
+      } else if (!legacyCopyText(action.value)) {
+        throw new Error('legacy copy failed')
+      }
+      markCopied(action.id)
+    } catch {
+      if (legacyCopyText(action.value)) {
+        markCopied(action.id)
+      } else {
+        error = 'Text clipboard is not available'
+      }
+    }
   }
 
   async function copyUrlAction(action: ClipboardUrlAction) {
     if (!action.enabled || !action.url) return
     if (!navigator.clipboard?.write || typeof ClipboardItem === 'undefined') {
-      error = 'Image clipboard is not available'
+      error = 'Image clipboard requires HTTPS or localhost'
       return
     }
     try {
@@ -364,6 +376,30 @@
     } catch {
       error = 'Could not copy image'
     }
+  }
+
+  function legacyCopyText(value: string) {
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const textarea = document.createElement('textarea')
+    textarea.value = value
+    textarea.setAttribute('readonly', '')
+    textarea.style.position = 'fixed'
+    textarea.style.top = '0'
+    textarea.style.left = '0'
+    textarea.style.width = '1px'
+    textarea.style.height = '1px'
+    textarea.style.opacity = '0'
+    document.body.append(textarea)
+    textarea.focus()
+    textarea.select()
+    let copiedText = false
+    try {
+      copiedText = document.execCommand('copy')
+    } finally {
+      textarea.remove()
+      previousFocus?.focus()
+    }
+    return copiedText
   }
 
   function markCopied(actionId: string) {
