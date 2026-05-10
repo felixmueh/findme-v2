@@ -12,6 +12,16 @@
     LoaderCircle,
     Search,
   } from 'lucide-svelte'
+  import {
+    type Asset,
+    type CollectionCard,
+    type ResultCard,
+    type VisibleEntry,
+    cardContainsAsset,
+    collectionColor,
+    visibleEntriesForCards,
+  } from './lib/result-cards'
+  import SearchLaneTabs, { type SearchMode } from './lib/SearchLaneTabs.svelte'
 
   type Source = {
     id: string
@@ -31,43 +41,6 @@
     quality_override: number | null
   }
 
-  type Asset = {
-    asset_id: string
-    source_id: string
-    source_display_name: string
-    relative_path: string
-    filename: string
-    stem: string
-    extension: string
-    directory: string
-    size_bytes: number
-    media_type: string
-    thumbnail_url?: string
-    thumbnail_width?: number
-    thumbnail_height?: number
-    score?: number
-  }
-
-  type AssetCard = {
-    kind: 'asset'
-    asset: Asset
-  }
-
-  type CollectionCard = {
-    kind: 'collection'
-    collection_key: string
-    representative: Asset
-    variants: Asset[]
-    count: number
-  }
-
-  type ResultCard = AssetCard | CollectionCard
-
-  type VisibleEntry =
-    | { kind: 'asset'; asset: Asset; collection_key?: string }
-    | { kind: 'collection'; collection: CollectionCard }
-    | { kind: 'collection-header'; collection: CollectionCard }
-
   type ActionProfile = {
     id: string
     label: string
@@ -85,8 +58,6 @@
       download_url: string
     }
   }
-
-  type SearchMode = 'strict' | 'fuzzy' | 'domain'
 
   let query = $state('')
   let searchMode = $state<SearchMode>('strict')
@@ -589,29 +560,6 @@
     openAsset(asset)
   }
 
-  function visibleEntriesForCards(resultCards: ResultCard[], expanded: Set<string>) {
-    const entries: VisibleEntry[] = []
-    for (const card of resultCards) {
-      if (card.kind === 'asset') {
-        entries.push({ kind: 'asset', asset: card.asset })
-        continue
-      }
-      if (!expanded.has(card.collection_key)) {
-        entries.push({ kind: 'collection', collection: card })
-        continue
-      }
-      entries.push({ kind: 'collection-header', collection: card })
-      for (const asset of card.variants) {
-        entries.push({
-          kind: 'asset',
-          asset,
-          collection_key: card.collection_key,
-        })
-      }
-    }
-    return entries
-  }
-
   function entryAsset(entry: VisibleEntry) {
     return entry.kind === 'asset' ? entry.asset : entry.collection.representative
   }
@@ -620,11 +568,6 @@
     if (entry.kind === 'collection') return `collection:${entry.collection.collection_key}`
     if (entry.kind === 'collection-header') return `collection-header:${entry.collection.collection_key}`
     return `${entry.collection_key ?? 'asset'}:${entry.asset.asset_id}`
-  }
-
-  function cardContainsAsset(card: ResultCard, assetId: string) {
-    if (card.kind === 'asset') return card.asset.asset_id === assetId
-    return card.variants.some((asset) => asset.asset_id === assetId)
   }
 
   function expandCollection(collection: CollectionCard) {
@@ -669,14 +612,6 @@
     cyclingVariantIndex = 0
   }
 
-  function collectionColor(collectionKey: string) {
-    const colors = ['#c2410c', '#0f766e', '#7c3aed', '#b45309', '#be123c', '#4d7c0f']
-    let hash = 0
-    for (let index = 0; index < collectionKey.length; index += 1) {
-      hash = (hash * 31 + collectionKey.charCodeAt(index)) >>> 0
-    }
-    return colors[hash % colors.length]
-  }
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -687,38 +622,17 @@
 
     <label class="search-field">
       <Search size={17} />
-      <input bind:this={searchInput} bind:value={query} type="search" autocomplete="off" placeholder="Search assets" />
+      <input
+        bind:this={searchInput}
+        bind:value={query}
+        type="search"
+        autocomplete="off"
+        aria-label="Search assets"
+        placeholder="Search assets"
+      />
     </label>
 
-    <div class="lane-tabs" role="tablist" aria-label="Search lane">
-      <button
-        class:active={searchMode === 'strict'}
-        type="button"
-        role="tab"
-        aria-selected={searchMode === 'strict'}
-        onclick={() => setSearchMode('strict')}
-      >
-        Exact
-      </button>
-      <button
-        class:active={searchMode === 'fuzzy'}
-        type="button"
-        role="tab"
-        aria-selected={searchMode === 'fuzzy'}
-        onclick={() => setSearchMode('fuzzy')}
-      >
-        Fuzzy
-      </button>
-      <button
-        class:active={searchMode === 'domain'}
-        type="button"
-        role="tab"
-        aria-selected={searchMode === 'domain'}
-        onclick={() => setSearchMode('domain')}
-      >
-        Domain
-      </button>
-    </div>
+    <SearchLaneTabs value={searchMode} onSelect={setSearchMode} />
 
     <select value={sourceId} aria-label="Source" onchange={changeSource}>
       <option value="">All sources</option>
