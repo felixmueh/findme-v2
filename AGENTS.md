@@ -46,6 +46,8 @@ Use the `tdd` skill for implementation work. Core behavior should be developed t
 
 When working on search behavior, ranking, indexing signals, domain vocabulary, or search evaluation, run the local DND search benchmark/evaluation command before considering the work complete. The benchmark is allowed to depend on the local DND source mount and does not need to run in generic CI.
 
+For search/profile performance work, keep the main path numeric and simple rather than preserving old object paths or compatibility layers. See `docs/SEARCH.md` and `SEARCH_PROFILES_DESIGN.md` for the detailed hot-path and profile-runtime decisions.
+
 ## Environments
 
 This project is used from exactly four environments:

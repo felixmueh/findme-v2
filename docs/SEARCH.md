@@ -73,13 +73,47 @@ Domain vocabulary changes are applied at query time and do not require re-indexi
 
 ## Runtime Performance
 
-The API keeps a bounded process-local LRU cache of preference-adjusted
-results for query/scope/mode/vocabulary/profile combinations.
+Search-serving performance is built around a single numeric hot path. The data
+needed for interactive search is simple: asset indexes, lane scores, profile
+inclusion, folder quality adjustments, asset directory ids, and directory parent
+ids. Hot-path code should keep that data in arrays and avoid creating per-match
+Python objects.
 
-Concurrent identical searches are coalesced in process: the first request owns
-the ranking work, and later identical requests wait for the same result unless
-they are superseded. This is an optimization only; SQLite remains the durable
-source and the in-memory cache can be discarded at any time.
+The normal serving shape is:
+
+```text
+retrieval lane -> asset_indexes + raw_scores arrays
+profile mask -> filter included assets
+importance array -> add score adjustment
+top-k page -> only materialize returned assets
+directory ids -> bincount + parent rollup
+API directory rows -> build response dicts directly
+```
+
+Strict, fuzzy, and domain search all feed this same shape. Their semantic
+difference is retrieval, not separate ranking/paging/directory-count machinery.
+
+Keep the code simple by removing old hot-path contracts instead of preserving
+parallel implementations. Normal API search should not build full ranked
+candidate objects, should not materialize the whole corpus just to return one
+page, and should not convert through intermediate directory match objects before
+building JSON rows. Result-card paging should use asset indexes directly.
+
+Directory counts should use numeric directory ids and parent rollup. For scoped
+browse/view requests, derive the scoped asset-index array first, then use the
+same count-array response path as unscoped browse/search. Do not keep a second
+dict/string-tuple aggregation path unless a concrete new requirement makes the
+numeric path unsuitable.
+
+The remaining broad-query cost is expected to be dominated by retrieval,
+building thousands of directory response dictionaries, JSON serialization, and
+network transfer. Optimize those only when it also simplifies the main path or
+when measurements show they are the bottleneck for an actual workflow.
+
+Concurrent identical strict searches are coalesced in process: the first request
+owns the retrieval work, and later identical requests wait for the same result
+unless they are superseded. This is an optimization only; SQLite remains the
+durable source and the in-memory cache can be discarded at any time.
 
 The frontend sends monotonically increasing search revisions per browser session.
 When a newer request supersedes an older one, backend ranking loops check
@@ -101,9 +135,14 @@ fastest/highest-precision evidence to drive initial interaction latency.
 
 ## Candidate Interface
 
-Retrieval lanes should return normalized candidate data.
+Normal retrieval lanes should return numeric candidate arrays:
 
-Conceptually, a candidate includes:
+- asset indexes
+- lane-native scores
+
+Workbench/debug paths may enrich those candidates with diagnostic metadata.
+
+Conceptually, diagnostic candidate metadata can include:
 
 - asset id
 - lane name
@@ -245,6 +284,25 @@ It should allow:
 - inspecting why good/bad results appeared
 
 The workbench exists because ranking quality will be tuned against real crawl data.
+
+## Measured Baseline
+
+The real DND corpus used during the numeric refactor had about 258k assets and
+5.5k directory rows. A broad strict `map` query matched more than 200k assets.
+
+After the numeric refactor, representative warm timings were:
+
+- empty profile compile: under 1 ms
+- large whitelist profile compile: about 8-11 ms
+- browse directory response for all 5.5k rows: about 12-13 ms internally
+- strict `map` page plus directory rows: about 20-30 ms internally
+- typical strict page plus directory rows: about 6-10 ms internally
+- fuzzy page plus directory rows: about 18-20 ms for typo-style queries
+- domain `adventurer` page plus directory rows: about 155-225 ms
+
+The 8-11 ms large-whitelist compile cost is acceptable. Do not add caches,
+preprocessing, or compatibility scaffolding just to chase it unless the change
+also simplifies the runtime model.
 
 ## Evaluation Set
 

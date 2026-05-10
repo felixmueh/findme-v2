@@ -21,6 +21,11 @@ This is personal-use software. It should be optimized for this server, this asse
 
 The implementation should stay small, maintainable, and tested. It should not carry fallback mechanisms for unknown environments. If this server is missing a required tool, directory, or dependency, the app should fail with a clear actionable error rather than silently degrading into a weaker generic path.
 
+Performance work should simplify the actual data path. When a faster approach
+introduces parallel contracts, compatibility layers, or speculative caches,
+prefer reshaping callers around the simpler path unless the extra structure is
+measured and still needed.
+
 ## Product Surface
 
 The v1 product surface is a standalone browser web app served by the asset server.
@@ -225,6 +230,9 @@ Settled design constraints:
 
 - search reads indexed data only
 - no live filesystem walking during search
+- the hot path is numeric: retrieval lanes return asset indexes and scores,
+  profile preferences are arrays, paging materializes only returned assets, and
+  directory counts roll up numeric directory ids
 - search lanes are directly requestable user-facing modes
 - each lane may use its engine's own ranking when that is faster and good enough
 - selected source/directory filters should be hard filters
