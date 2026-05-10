@@ -214,6 +214,7 @@ Settled design constraints:
 - fused ranking is optional and should not block fast exact-lane interaction
 - source priority should be a ranking signal or tiebreaker, not a hard ordering rule
 - selected source/directory filters should be hard filters
+- result cards and matched directory counts should come from the same search scope; clients should use a combined search response when both are needed
 - ranking explainability is optional; ranking quality and tunability matter more
 
 Initial search lanes should include strict lexical evidence, fuzzy lexical evidence, and domain-expanded evidence. Future semantic/image-text evidence should fit the same lane model. Strict and fuzzy lexical search may share implementation machinery, but they should remain separate logical lanes because they have different precision, recall, and ranking weight expectations.

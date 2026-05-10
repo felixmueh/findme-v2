@@ -83,12 +83,10 @@
   let error = $state('')
   let copied = $state('')
   let debounceTimer: number | undefined
-  let directoryDebounceTimer: number | undefined
   let requestId = 0
   let searchRevision = 0
   let collectionCycleTimer: number | undefined
   let assetRequestController: AbortController | undefined
-  let directoryRequestController: AbortController | undefined
   let searchInput: HTMLInputElement
   let tileGridElement = $state<HTMLDivElement>()
   let loadMoreTrigger = $state<HTMLDivElement>()
@@ -98,7 +96,6 @@
     typeof crypto !== 'undefined' && 'randomUUID' in crypto
       ? crypto.randomUUID()
       : `${Date.now()}-${Math.random()}`
-  const directorySearchSessionId = `${searchSessionId}:directories`
 
   const selectedAssetId = $derived(selected?.asset.asset_id ?? '')
   const visibleEntries = $derived.by(() => visibleEntriesForCards(cards, expandedCollections))
@@ -136,10 +133,6 @@
   })
 
   $effect(() => {
-    void loadDirectories()
-  })
-
-  $effect(() => {
     query
     searchMode
     sourceId
@@ -149,17 +142,6 @@
     window.clearTimeout(debounceTimer)
     debounceTimer = window.setTimeout(() => {
       void loadAssets(revision)
-    }, 150)
-  })
-
-  $effect(() => {
-    query
-    searchMode
-    sourceId
-    const revision = searchRevision
-    window.clearTimeout(directoryDebounceTimer)
-    directoryDebounceTimer = window.setTimeout(() => {
-      void loadDirectories(revision)
     }, 150)
   })
 
@@ -185,7 +167,6 @@
     }
     const body = await response.json()
     sources = body.sources
-    await loadDirectories()
   }
 
   function changeSource(event: Event) {
@@ -197,40 +178,6 @@
 
   function setSearchMode(mode: SearchMode) {
     searchMode = mode
-  }
-
-  async function loadDirectories(revision?: number) {
-    directoryRequestController?.abort()
-    const controller = new AbortController()
-    directoryRequestController = controller
-    const params = new URLSearchParams()
-    if (sourceId) params.set('source_id', sourceId)
-    const trimmed = query.trim()
-    if (trimmed) {
-      params.set('q', trimmed)
-      params.set('mode', searchMode)
-      if (revision !== undefined) {
-        params.set('search_session', directorySearchSessionId)
-        params.set('search_revision', String(revision))
-      }
-    }
-    try {
-      const response = await fetch(`/api/directories?${params}`, { signal: controller.signal })
-      if (response.status === 204) return
-      if (!response.ok) throw new Error(`HTTP ${response.status}`)
-      const body = await response.json()
-      if (directoryRequestController === controller) {
-        directories = body.directories
-      }
-    } catch (caught) {
-      if (!isAbortError(caught) && directoryRequestController === controller) {
-        error = 'Could not load folders'
-      }
-    } finally {
-      if (directoryRequestController === controller) {
-        directoryRequestController = undefined
-      }
-    }
   }
 
   async function loadAssets(revision = searchRevision) {
@@ -254,7 +201,8 @@
     if (effectiveSourceId) params.set('source_id', effectiveSourceId)
     if (selectedDirectory) params.set('directory_prefix', selectedDirectory)
     const trimmed = query.trim()
-    const path = trimmed ? '/api/search' : '/api/assets'
+    const includeDirectoryCounts = !append && offset === 0
+    const path = includeDirectoryCounts ? '/api/search-with-directory-counts' : '/api/search'
     if (trimmed) {
       params.set('q', trimmed)
       params.set('mode', searchMode)
@@ -279,6 +227,9 @@
       const nextCards = body.cards as ResultCard[]
       resultTotal = Number(body.total ?? nextCards.length)
       cards = append ? [...cards, ...nextCards] : nextCards
+      if (includeDirectoryCounts && Array.isArray(body.directories)) {
+        directories = body.directories
+      }
       hasMoreAssets = cards.length < resultTotal
       if (!append) {
         expandedCollections = new Set()
@@ -503,7 +454,6 @@
       return
     }
     const revision = ++searchRevision
-    await loadDirectories(revision)
     await loadAssetPage({ offset: 0, append: false, revision })
   }
 

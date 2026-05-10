@@ -186,7 +186,7 @@ Unspecified nodes should be omitted from the serialized rule list.
 
 ## API Shape
 
-Because rule state is temporary client state, the client sends the current rule set with result and directory-count requests. The backend does not persist these rules.
+Because rule state is temporary client state, the client sends the current rule set with search requests. The backend does not persist these rules.
 
 Recommended request representation:
 
@@ -206,9 +206,8 @@ Notes:
 
 The same parameter should be accepted by:
 
-- `GET /api/assets`
 - `GET /api/search`
-- `GET /api/directories`
+- `GET /api/search-with-directory-counts`
 
 The older `directory_prefix` and exact `directory` parameters become implementation details or compatibility-only paths once the sidebar rule model is built.
 

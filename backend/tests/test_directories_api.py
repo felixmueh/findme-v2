@@ -33,7 +33,7 @@ def test_api_lists_indexed_directory_tree(tmp_path: Path) -> None:
         index_sources(db, config)
 
     client = TestClient(create_app(config, db_path))
-    body = client.get("/api/directories", params={"source_id": "dnd"}).json()
+    body = client.get("/api/search-with-directory-counts", params={"source_id": "dnd"}).json()
 
     assert body["directories"] == [
         {
@@ -112,7 +112,7 @@ def test_api_lists_only_directories_with_search_matches(tmp_path: Path) -> None:
         index_sources(db, config)
 
     client = TestClient(create_app(config, db_path))
-    body = client.get("/api/directories", params={"source_id": "dnd", "q": "goblin"}).json()
+    body = client.get("/api/search-with-directory-counts", params={"source_id": "dnd", "q": "goblin"}).json()
 
     assert body["directories"] == [
         {
@@ -188,7 +188,7 @@ def test_api_directory_rows_are_source_scoped_for_all_sources(tmp_path: Path) ->
         index_sources(db, config)
 
     client = TestClient(create_app(config, db_path))
-    body = client.get("/api/directories").json()
+    body = client.get("/api/search-with-directory-counts").json()
 
     assert body["directories"] == [
         {

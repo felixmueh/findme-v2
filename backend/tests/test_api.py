@@ -48,7 +48,7 @@ def test_api_lists_sources_and_current_assets(tmp_path: Path) -> None:
             "root": str(source_root),
         }
     ]
-    body = client.get("/api/assets").json()
+    body = client.get("/api/search").json()
     assert body["total"] == 1
     cards = body["cards"]
     assert len(cards) == 1
@@ -89,7 +89,7 @@ def test_api_lists_numbered_variants_as_collection_cards(tmp_path: Path) -> None
 
     client = TestClient(create_app(config, db_path))
 
-    body = client.get("/api/assets").json()
+    body = client.get("/api/search").json()
 
     assert body["total"] == 3
     cards = body["cards"]
@@ -173,7 +173,7 @@ def test_api_updates_folder_quality_and_applies_it_to_current_ranking(
 
     persisted_client = TestClient(create_app(config, db_path))
     directories = persisted_client.get(
-        "/api/directories", params={"source_id": "dnd"}
+        "/api/search-with-directory-counts", params={"source_id": "dnd"}
     ).json()["directories"]
 
     assert next(directory for directory in directories if directory["path"] == "Good")[
@@ -207,7 +207,7 @@ def test_api_groups_numbered_variants_with_accidental_embedded_image_extension(
 
     client = TestClient(create_app(config, db_path))
 
-    body = client.get("/api/assets").json()
+    body = client.get("/api/search").json()
 
     assert body["total"] == 1
     card = body["cards"][0]
@@ -246,7 +246,7 @@ def test_api_groups_numeric_letter_variants_as_collection_cards(
 
     client = TestClient(create_app(config, db_path))
 
-    body = client.get("/api/assets").json()
+    body = client.get("/api/search").json()
 
     assert body["total"] == 1
     card = body["cards"][0]
@@ -284,7 +284,7 @@ def test_api_groups_color_variants_inside_filename_stems(tmp_path: Path) -> None
 
     client = TestClient(create_app(config, db_path))
 
-    body = client.get("/api/assets").json()
+    body = client.get("/api/search").json()
 
     assert body["total"] == 1
     card = body["cards"][0]
@@ -321,7 +321,7 @@ def test_api_groups_letter_variants_inside_filename_stems(tmp_path: Path) -> Non
 
     client = TestClient(create_app(config, db_path))
 
-    body = client.get("/api/assets").json()
+    body = client.get("/api/search").json()
 
     assert body["total"] == 1
     card = body["cards"][0]
@@ -359,7 +359,7 @@ def test_api_groups_multiple_variant_positions_inside_filename_stems(
 
     client = TestClient(create_app(config, db_path))
 
-    body = client.get("/api/assets").json()
+    body = client.get("/api/search").json()
 
     assert body["total"] == 1
     card = body["cards"][0]
@@ -482,6 +482,58 @@ def test_api_search_accepts_search_mode(tmp_path: Path) -> None:
     assert _card_asset(fuzzy_body["cards"][0])["relative_path"] == "Goblin Warrior.png"
 
 
+def test_api_search_with_directory_counts_uses_one_search_scope(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "assets"
+    write_image(source_root / "Tokens" / "Goblin Warrior.png")
+    write_image(source_root / "Maps" / "Goblin Cave.png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+
+    client = TestClient(create_app(config, db_path))
+
+    strict_body = client.get(
+        "/api/search-with-directory-counts",
+        params={"q": "goblin warror", "mode": "strict"},
+    ).json()
+    fuzzy_body = client.get(
+        "/api/search-with-directory-counts",
+        params={
+            "q": "goblin warror",
+            "mode": "fuzzy",
+            "directory_prefix": "Tokens",
+        },
+    ).json()
+
+    assert strict_body["total"] == 0
+    assert strict_body["directories"] == []
+    assert fuzzy_body["total"] == 1
+    assert [
+        _card_asset(card)["relative_path"] for card in fuzzy_body["cards"]
+    ] == ["Tokens/Goblin Warrior.png"]
+    directories = {
+        (directory["source_id"], directory["path"]): directory
+        for directory in fuzzy_body["directories"]
+    }
+    assert directories[("dnd", "")]["matched_asset_count"] == 1
+    assert directories[("dnd", "Tokens")]["matched_asset_count"] == 1
+
+
 def test_api_domain_search_uses_configured_vocabulary(tmp_path: Path) -> None:
     source_root = tmp_path / "assets"
     source_root.mkdir()
@@ -547,7 +599,7 @@ def test_api_result_totals_ignore_limit_and_offset(tmp_path: Path) -> None:
 
     client = TestClient(create_app(config, db_path))
 
-    assets_body = client.get("/api/assets", params={"limit": 1, "offset": 1}).json()
+    assets_body = client.get("/api/search", params={"limit": 1, "offset": 1}).json()
     search_body = client.get("/api/search", params={"q": "goblin", "limit": 1, "offset": 1}).json()
 
     assert assets_body["total"] == 3
@@ -619,7 +671,7 @@ def test_api_directories_use_startup_search_index_until_app_restart(tmp_path: Pa
         )
         db.execute("DELETE FROM asset_search WHERE filename = ?", ("Goblin.png",))
 
-    body = client.get("/api/directories", params={"q": "goblin"}).json()
+    body = client.get("/api/search-with-directory-counts", params={"q": "goblin"}).json()
 
     directories = {(item["source_id"], item["path"]): item for item in body["directories"]}
     assert directories[("dnd", "")]["asset_count"] == 1
@@ -688,11 +740,11 @@ def test_api_directories_reject_superseded_search_revision(tmp_path: Path) -> No
     client = TestClient(create_app(config, db_path))
 
     current = client.get(
-        "/api/directories",
+        "/api/search-with-directory-counts",
         params={"q": "goblin", "search_session": "tab-1", "search_revision": 2},
     )
     superseded = client.get(
-        "/api/directories",
+        "/api/search-with-directory-counts",
         params={"q": "goblin", "search_session": "tab-1", "search_revision": 1},
     )
 
@@ -731,7 +783,7 @@ def test_api_requests_do_not_initialize_database(
         "findme.api.initialize_database", fail_request_time_initialization
     )
 
-    response = client.get("/api/assets")
+    response = client.get("/api/search")
 
     assert response.status_code == 200
     assert response.json()["total"] == 0

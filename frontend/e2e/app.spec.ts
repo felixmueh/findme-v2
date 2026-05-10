@@ -34,14 +34,6 @@ test.beforeEach(async ({ page }) => {
     })
   })
 
-  await page.route('**/api/directories?*', async (route) => {
-    await route.fulfill({
-      json: {
-        directories: [sampleDirectory()],
-      },
-    })
-  })
-
   await page.route('**/api/assets/asset-castle', async (route) => {
     await route.fulfill({
       json: {
@@ -65,8 +57,14 @@ test.beforeEach(async ({ page }) => {
     })
   })
 
-  await page.route('**/api/assets?*', async (route) => {
-    await route.fulfill({ json: { total: 1, cards: [{ kind: 'asset', asset: sampleAsset }] } })
+  await page.route('**/api/search-with-directory-counts?*', async (route) => {
+    await route.fulfill({
+      json: {
+        total: 1,
+        cards: [{ kind: 'asset', asset: sampleAsset }],
+        directories: [sampleDirectory()],
+      },
+    })
   })
 
   await page.route('**/api/search?*', async (route) => {
@@ -82,7 +80,7 @@ test('searches through the real browser UI', async ({ page }) => {
 
   const searchRequest = page.waitForRequest((request) => {
     const url = new URL(request.url())
-    return url.pathname === '/api/search' && url.searchParams.get('q') === 'castle'
+    return url.pathname === '/api/search-with-directory-counts' && url.searchParams.get('q') === 'castle'
   })
 
   await page.getByRole('searchbox', { name: 'Search assets' }).fill('castle')
@@ -100,7 +98,7 @@ test('searches with the selected lane mode', async ({ page }) => {
   const domainSearchRequest = page.waitForRequest((request) => {
     const url = new URL(request.url())
     return (
-      url.pathname === '/api/search' &&
+      url.pathname === '/api/search-with-directory-counts' &&
       url.searchParams.get('q') === 'castle' &&
       url.searchParams.get('mode') === 'domain'
     )
@@ -119,7 +117,7 @@ test('filters asset requests by selected source', async ({ page }) => {
 
   const filteredAssetsRequest = page.waitForRequest((request) => {
     const url = new URL(request.url())
-    return url.pathname === '/api/assets' && url.searchParams.get('source_id') === 'sample'
+    return url.pathname === '/api/search-with-directory-counts' && url.searchParams.get('source_id') === 'sample'
   })
 
   await page.getByLabel('Source').selectOption('sample')
@@ -155,9 +153,11 @@ test('copies the selected asset primary path', async ({ page }) => {
 test('updates folder quality through the picker and refreshes ranked search results', async ({ page }) => {
   let directoryQuality = 4
 
-  await page.route('**/api/directories?*', async (route) => {
+  await page.route('**/api/search-with-directory-counts?*', async (route) => {
     await route.fulfill({
       json: {
+        total: 1,
+        cards: [{ kind: 'asset', asset: sampleAsset }],
         directories: [
           sampleDirectory(directoryQuality, directoryQuality === 4 ? null : directoryQuality),
         ],
@@ -178,7 +178,7 @@ test('updates folder quality through the picker and refreshes ranked search resu
 
   const initialSearchRequest = page.waitForRequest((request) => {
     const url = new URL(request.url())
-    return url.pathname === '/api/search' && url.searchParams.get('q') === 'castle'
+    return url.pathname === '/api/search-with-directory-counts' && url.searchParams.get('q') === 'castle'
   })
   await page.getByRole('searchbox', { name: 'Search assets' }).fill('castle')
   await initialSearchRequest
@@ -189,7 +189,7 @@ test('updates folder quality through the picker and refreshes ranked search resu
   })
   const refreshedSearchRequest = page.waitForRequest((request) => {
     const url = new URL(request.url())
-    return url.pathname === '/api/search' && url.searchParams.get('q') === 'castle'
+    return url.pathname === '/api/search-with-directory-counts' && url.searchParams.get('q') === 'castle'
   })
 
   await page.getByRole('button', { name: 'Quality 4 for maps' }).click()
@@ -211,9 +211,11 @@ test('updates folder quality through the picker and refreshes ranked search resu
 test('adjusts the focused folder quality with keyboard shortcuts', async ({ page }) => {
   let directoryQuality = 4
 
-  await page.route('**/api/directories?*', async (route) => {
+  await page.route('**/api/search-with-directory-counts?*', async (route) => {
     await route.fulfill({
       json: {
+        total: 1,
+        cards: [{ kind: 'asset', asset: sampleAsset }],
         directories: [
           sampleDirectory(directoryQuality, directoryQuality === 4 ? null : directoryQuality),
         ],

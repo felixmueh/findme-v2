@@ -319,51 +319,23 @@ class SearchIndex:
     def _preference_adjustment(self, asset: _AssetRecord) -> float:
         return self.preference_adjustments[asset.asset_index]
 
-    def directory_matches(
+    def directories_for_matches(
         self,
-        query: str | None = None,
+        matches: Iterable[SearchResult],
         *,
         source_id: str | None = None,
-        domain_vocabulary: DomainVocabulary | None = None,
-        mode: SearchMode = "combined",
-        control: SearchControl | None = None,
     ) -> list[DirectoryMatch]:
         total_counts = _filter_directory_counts(self.directory_counts, source_id)
-        match_counts = total_counts
-        if query and query.strip():
-            if mode == "strict":
-                corpus = _filter_corpus(
-                    _SearchCorpus(
-                        self.assets,
-                        self.fuzzy_tokens,
-                        self.fuzzy_token_asset_indexes,
-                        self.lexical_index,
-                    ),
-                    source_id=source_id,
-                    directory=None,
-                    directory_prefix=None,
-                    control=control,
-                )
-                match_counts = _counts_from_asset_directories(
-                    _strict_match_directories(corpus, query, control=control)
-                )
-            else:
-                ranked = self._ranked_search(
-                    query,
-                    source_id=source_id,
-                    directory=None,
-                    directory_prefix=None,
-                    domain_vocabulary=domain_vocabulary or DEFAULT_DOMAIN_VOCABULARY,
-                    mode=mode,
-                    control=control,
-                )
-                match_counts = _counts_from_asset_directories(
-                    [
-                        (candidate.asset.source_id, candidate.asset.directory)
-                        for candidate in ranked
-                    ]
-                )
+        match_counts = _counts_from_asset_directories(
+            (match.source_id, match.directory) for match in matches
+        )
+        return self._directory_matches_from_counts(total_counts, match_counts)
 
+    def _directory_matches_from_counts(
+        self,
+        total_counts: dict[tuple[str, str], int],
+        match_counts: dict[tuple[str, str], int],
+    ) -> list[DirectoryMatch]:
         directories = []
         for (source, path), total_count in total_counts.items():
             matched_count = match_counts.get((source, path), 0)

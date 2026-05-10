@@ -252,7 +252,7 @@ def test_search_index_applies_folder_quality_to_combined_and_strict_ranking(
     ]
 
 
-def test_directory_matches_keep_each_source_subtree_together(tmp_path: Path) -> None:
+def test_directories_for_matches_keep_each_source_subtree_together(tmp_path: Path) -> None:
     dnd_root = tmp_path / "dnd"
     maps_root = tmp_path / "maps"
     write_image(dnd_root / "Tokens" / "Goblin.png")
@@ -284,7 +284,9 @@ def test_directory_matches_keep_each_source_subtree_together(tmp_path: Path) -> 
 
     assert [
         (directory.source_id, directory.path)
-        for directory in search_index.directory_matches()
+        for directory in search_index.directories_for_matches(
+            search_index.scoped_assets()
+        )
     ] == [
         ("dnd", ""),
         ("dnd", "Tokens"),
@@ -315,7 +317,7 @@ def test_search_index_stops_when_control_is_cancelled(tmp_path: Path) -> None:
         raise AssertionError("search did not stop after cancellation")
 
 
-def test_search_index_reuses_ranked_result_for_directory_matches(
+def test_search_index_builds_directories_from_existing_ranked_results(
     tmp_path: Path, monkeypatch
 ) -> None:
     source_root = tmp_path / "assets"
@@ -338,8 +340,8 @@ def test_search_index_reuses_ranked_result_for_directory_matches(
 
     monkeypatch.setattr(search_module, "_rank_search_assets", count_rank_calls)
 
-    search_index.search("goblin")
-    directories = search_index.directory_matches("goblin")
+    page = search_index.search("goblin")
+    directories = search_index.directories_for_matches(page.assets)
 
     assert calls == 1
     assert [(directory.path, directory.matched_asset_count) for directory in directories] == [
@@ -382,14 +384,14 @@ def test_search_index_coalesces_concurrent_identical_queries(
         except Exception as exc:
             errors.append(exc)
 
-    def run_directories() -> None:
+    def run_second_search() -> None:
         try:
             barrier.wait()
-            search_index.directory_matches("goblin")
+            search_index.search("goblin")
         except Exception as exc:
             errors.append(exc)
 
-    threads = [threading.Thread(target=run_search), threading.Thread(target=run_directories)]
+    threads = [threading.Thread(target=run_search), threading.Thread(target=run_second_search)]
     for thread in threads:
         thread.start()
     for thread in threads:

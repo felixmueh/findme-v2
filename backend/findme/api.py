@@ -23,6 +23,7 @@ from findme.db import connect, initialize_database
 from findme.result_cards import ResultCardResolver
 from findme.search import (
     DirectoryMatch,
+    DomainVocabulary,
     SearchIndex,
     SearchMode,
     SearchResult,
@@ -70,48 +71,6 @@ def create_app(
         ]
         return {"sources": sources}
 
-    @app.get("/api/assets")
-    def list_assets(
-        source_id: str | None = None,
-        directory: str | None = None,
-        directory_prefix: str | None = None,
-        limit: int = Query(default=100, ge=1, le=500),
-        offset: int = Query(default=0, ge=0),
-    ) -> dict[str, object]:
-        scoped_assets = search_index.scoped_assets(
-            source_id=source_id,
-            directory=directory,
-            directory_prefix=directory_prefix,
-        )
-        cards, total = card_resolver.page_for(
-            [_search_response(result) for result in scoped_assets],
-            offset=offset,
-            limit=limit,
-        )
-        return JSONResponse({"cards": cards, "total": total})
-
-    @app.get("/api/directories")
-    def list_directories(
-        source_id: str | None = None,
-        q: str | None = None,
-        search_session: str | None = None,
-        search_revision: int | None = None,
-    ) -> object:
-        control = search_revisions.control(search_session, search_revision)
-        if control and control.is_cancelled():
-            return Response(status_code=204)
-        domain_vocabulary = _load_domain_vocabulary(config)
-        try:
-            directories = search_index.directory_matches(
-                q,
-                source_id=source_id,
-                domain_vocabulary=domain_vocabulary,
-                control=control,
-            )
-        except SearchSuperseded:
-            return Response(status_code=204)
-        return {"directories": [_directory_response(directory) for directory in directories]}
-
     @app.put("/api/folder-quality")
     def set_folder_quality(request: FolderQualityRequest) -> dict[str, object]:
         if (request.source_id, request.directory) not in search_index.directory_counts:
@@ -141,7 +100,7 @@ def create_app(
 
     @app.get("/api/search")
     def search(
-        q: str = Query(min_length=1),
+        q: str | None = None,
         mode: SearchMode = "combined",
         source_id: str | None = None,
         directory: str | None = None,
@@ -156,25 +115,78 @@ def create_app(
             return Response(status_code=204)
         domain_vocabulary = _load_domain_vocabulary(config)
         try:
-            page = search_index.search(
+            matched_assets = _matched_assets(
+                search_index,
                 q,
                 source_id=source_id,
-                directory=directory,
-                directory_prefix=directory_prefix,
                 domain_vocabulary=domain_vocabulary,
                 mode=mode,
-                limit=len(search_index.assets),
-                offset=0,
                 control=control,
+            )
+            result_assets = _filter_results(
+                matched_assets,
+                directory=directory,
+                directory_prefix=directory_prefix,
             )
         except SearchSuperseded:
             return Response(status_code=204)
         cards, total = card_resolver.page_for(
-            [_search_response(result) for result in page.assets],
+            [_search_response(result) for result in result_assets],
             offset=offset,
             limit=limit,
         )
         return JSONResponse({"cards": cards, "total": total})
+
+    @app.get("/api/search-with-directory-counts")
+    def search_with_directory_counts(
+        q: str | None = None,
+        mode: SearchMode = "combined",
+        source_id: str | None = None,
+        directory: str | None = None,
+        directory_prefix: str | None = None,
+        limit: int = Query(default=100, ge=1, le=500),
+        offset: int = Query(default=0, ge=0),
+        search_session: str | None = None,
+        search_revision: int | None = None,
+    ) -> object:
+        control = search_revisions.control(search_session, search_revision)
+        if control and control.is_cancelled():
+            return Response(status_code=204)
+        domain_vocabulary = _load_domain_vocabulary(config)
+        try:
+            matched_assets = _matched_assets(
+                search_index,
+                q,
+                source_id=source_id,
+                domain_vocabulary=domain_vocabulary,
+                mode=mode,
+                control=control,
+            )
+            result_assets = _filter_results(
+                matched_assets,
+                directory=directory,
+                directory_prefix=directory_prefix,
+            )
+        except SearchSuperseded:
+            return Response(status_code=204)
+        cards, total = card_resolver.page_for(
+            [_search_response(result) for result in result_assets],
+            offset=offset,
+            limit=limit,
+        )
+        directories = search_index.directories_for_matches(
+            matched_assets,
+            source_id=source_id,
+        )
+        return JSONResponse(
+            {
+                "cards": cards,
+                "total": total,
+                "directories": [
+                    _directory_response(directory) for directory in directories
+                ],
+            }
+        )
 
     @app.get("/api/assets/{asset_id}")
     def asset_detail(asset_id: str) -> dict[str, object]:
@@ -243,6 +255,50 @@ def _load_domain_vocabulary(config: AppConfig):
     if config.domain_vocabulary_path is None:
         return None
     return load_domain_vocabulary(config.domain_vocabulary_path)
+
+
+def _matched_assets(
+    search_index: SearchIndex,
+    query: str | None,
+    *,
+    source_id: str | None,
+    domain_vocabulary: DomainVocabulary | None,
+    mode: SearchMode,
+    control: SearchControl | None,
+) -> list[SearchResult]:
+    trimmed = query.strip() if query is not None else ""
+    if not trimmed:
+        return search_index.scoped_assets(source_id=source_id, control=control)
+    return search_index.search(
+        trimmed,
+        source_id=source_id,
+        domain_vocabulary=domain_vocabulary,
+        mode=mode,
+        limit=len(search_index.assets),
+        offset=0,
+        control=control,
+    ).assets
+
+
+def _filter_results(
+    results: list[SearchResult],
+    *,
+    directory: str | None,
+    directory_prefix: str | None,
+) -> list[SearchResult]:
+    if directory is None and not directory_prefix:
+        return results
+    filtered = []
+    for result in results:
+        if directory is not None and result.directory != directory:
+            continue
+        if directory_prefix and not (
+            result.directory == directory_prefix
+            or result.directory.startswith(f"{directory_prefix}/")
+        ):
+            continue
+        filtered.append(result)
+    return filtered
 
 
 def _load_asset_or_404(db: sqlite3.Connection, config: AppConfig, asset_id: str):
