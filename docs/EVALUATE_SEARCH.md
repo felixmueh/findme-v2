@@ -31,7 +31,6 @@ Expectations are scoped to user-observable search behaviors:
 - `strict`: literal/token-accurate matching.
 - `fuzzy`: typo, separator, plural, or order-tolerant matching.
 - `domain`: conceptual or vocabulary-driven matching.
-- `combined`: normal product search behavior.
 
 These scopes are benchmark vocabulary. They do not require a one-to-one mapping with code modules or search engines.
 
@@ -104,20 +103,20 @@ queries:
     text: dragon green
     intent: Find green dragon assets; avoid color-only green matches on unrelated creatures.
     expectations:
-      - scope: combined
+      - scope: strict
         assert: findable
         target: green_dragons
         importance: 1.0
         gate: true
 
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: green_dragons
         worse: green_goblins
         rule: majority
         importance: 0.8
 
-      - scope: combined
+      - scope: strict
         assert: not_findable
         target: green_goblins
         importance: 0.6
@@ -174,7 +173,7 @@ Use `not_findable` when a misleading result should be outside the useful result 
 Example:
 
 ```yaml
-- scope: combined
+- scope: strict
   assert: group_ranks_above
   better: green_dragons
   worse: green_goblins
@@ -212,10 +211,10 @@ The report should help tune search behavior. It should not only print a single p
 
 ## Current Command
 
-The CLI evaluator can run the implemented `strict`, `fuzzy`, `domain`, and `combined` benchmark scopes:
+The CLI evaluator can run the implemented `strict`, `fuzzy`, and `domain` benchmark scopes:
 
 ```bash
-uv run findme search-eval --config config/findme.server.toml --eval search-eval/dnd.yaml --scope combined
+uv run findme search-eval --config config/findme.server.toml --eval search-eval/dnd.yaml --scope strict --scope fuzzy --scope domain
 ```
 
 The configured data root must be writable and already indexed. Repeat `--scope` to evaluate multiple scopes in one run.

@@ -176,7 +176,7 @@ def test_api_lists_numbered_variants_as_collection_cards(tmp_path: Path) -> None
     assert asset_paths == ["Portraits/Goblin4.png", "Tokens/Orc.png"]
 
 
-def test_api_updates_folder_quality_and_applies_it_to_current_ranking(
+def test_api_updates_profile_quality_and_applies_it_to_current_ranking(
     tmp_path: Path,
 ) -> None:
     source_root = tmp_path / "assets"
@@ -209,21 +209,25 @@ def test_api_updates_folder_quality_and_applies_it_to_current_ranking(
         "Good/Goblin.png",
     ]
 
-    response = client.put(
-        "/api/folder-quality",
-        json={"source_id": "dnd", "directory": "Good", "quality": 10},
+    response = client.patch(
+        "/api/search-profile/settings",
+        json={
+            "search_session": "tab-1",
+            "source_id": "dnd",
+            "directory": "Good",
+            "quality_override": 10,
+        },
     )
 
     assert response.status_code == 200
-    assert response.json() == {
-        "source_id": "dnd",
-        "directory": "Good",
-        "quality": 10,
-        "quality_override": 10,
-    }
-    after = client.get("/api/search", params={"q": "goblin"}).json()
+    assert response.json()["session"]["dirty_scoring"] is True
+    after = client.get(
+        "/api/search",
+        params={"q": "goblin", "search_session": "tab-1"},
+    ).json()
     strict_after = client.get(
-        "/api/search", params={"q": "goblin", "mode": "strict"}
+        "/api/search",
+        params={"q": "goblin", "mode": "strict", "search_session": "tab-1"},
     ).json()
 
     assert [
@@ -238,6 +242,12 @@ def test_api_updates_folder_quality_and_applies_it_to_current_ranking(
         "Good/Goblin.png",
         "Bad/Goblin.png",
     ]
+
+    save_response = client.post(
+        "/api/search-profile/save",
+        json={"search_session": "tab-1"},
+    )
+    assert save_response.status_code == 200
 
     persisted_client = TestClient(create_app(config, db_path))
     directories = persisted_client.get(
@@ -677,7 +687,7 @@ def test_api_result_totals_ignore_limit_and_offset(tmp_path: Path) -> None:
     assert len(search_body["cards"]) == 1
 
 
-def test_api_applies_sidebar_filter_rules_before_pagination(tmp_path: Path) -> None:
+def test_api_applies_profile_selection_before_pagination(tmp_path: Path) -> None:
     source_root = tmp_path / "assets"
     write_image(source_root / "Maps" / "Keep.png")
     write_image(source_root / "Maps" / "Unused" / "Skip.png")
@@ -702,16 +712,28 @@ def test_api_applies_sidebar_filter_rules_before_pagination(tmp_path: Path) -> N
 
     client = TestClient(create_app(config, db_path))
 
+    assert client.patch(
+        "/api/search-profile/settings",
+        json={
+            "search_session": "tab-1",
+            "source_id": "dnd",
+            "directory": "Maps",
+            "selection_state": "whitelist",
+        },
+    ).status_code == 200
+    assert client.patch(
+        "/api/search-profile/settings",
+        json={
+            "search_session": "tab-1",
+            "source_id": "dnd",
+            "directory": "Maps/Unused",
+            "selection_state": "blacklist",
+        },
+    ).status_code == 200
+
     body = client.get(
         "/api/assets",
-        params=[
-            ("limit", "1"),
-            ("filter_rule", '{"source_id":"dnd","path":"Maps","state":"whitelist"}'),
-            (
-                "filter_rule",
-                '{"source_id":"dnd","path":"Maps/Unused","state":"blacklist"}',
-            ),
-        ],
+        params={"limit": 1, "search_session": "tab-1"},
     ).json()
 
     assert body["total"] == 1
@@ -720,7 +742,7 @@ def test_api_applies_sidebar_filter_rules_before_pagination(tmp_path: Path) -> N
     ]
 
 
-def test_api_rejects_malformed_sidebar_filter_rules(tmp_path: Path) -> None:
+def test_api_rejects_malformed_profile_selection_rules(tmp_path: Path) -> None:
     source_root = tmp_path / "assets"
     write_image(source_root / "Maps" / "Keep.png")
     write_image(source_root / "Maps" / "Nested" / "Keep.png")
@@ -745,25 +767,36 @@ def test_api_rejects_malformed_sidebar_filter_rules(tmp_path: Path) -> None:
     client = TestClient(create_app(config, db_path))
 
     invalid_requests = [
-        {"filter_rule": "not-json"},
-        {"filter_rule": '{"source_id":"missing","path":"Maps","state":"whitelist"}'},
-        {"filter_rule": '{"source_id":"dnd","path":"../Maps","state":"whitelist"}'},
-        {"filter_rule": '{"source_id":"dnd","path":"Maps","state":"include"}'},
-        [
-            ("filter_rule", '{"source_id":"dnd","path":"Maps","state":"whitelist"}'),
-            ("filter_rule", '{"source_id":"dnd","path":"Maps","state":"blacklist"}'),
-        ],
-        [
-            ("filter_rule", '{"source_id":"dnd","path":"Maps","state":"whitelist"}'),
-            ("filter_rule", '{"source_id":"dnd","path":"Maps/Nested","state":"whitelist"}'),
-        ],
+        {"search_session": "tab-1", "source_id": "missing", "directory": "Maps", "selection_state": "whitelist"},
+        {"search_session": "tab-1", "source_id": "dnd", "directory": "../Maps", "selection_state": "whitelist"},
+        {"search_session": "tab-1", "source_id": "dnd", "directory": "Maps", "selection_state": "include"},
     ]
 
-    for params in invalid_requests:
-        response = client.get("/api/assets", params=params)
+    for payload in invalid_requests:
+        response = client.patch("/api/search-profile/settings", json=payload)
 
         assert response.status_code == 400
         assert response.json()["detail"]
+
+    assert client.patch(
+        "/api/search-profile/settings",
+        json={
+            "search_session": "tab-2",
+            "source_id": "dnd",
+            "directory": "Maps",
+            "selection_state": "whitelist",
+        },
+    ).status_code == 200
+    response = client.patch(
+        "/api/search-profile/settings",
+        json={
+            "search_session": "tab-2",
+            "source_id": "dnd",
+            "directory": "Maps/Nested",
+            "selection_state": "whitelist",
+        },
+    )
+    assert response.status_code == 400
 
 
 def test_api_search_uses_startup_search_index_until_app_restart(tmp_path: Path) -> None:
@@ -938,7 +971,7 @@ def test_api_search_with_directory_counts_rejects_superseded_directory_counts(
     def supersede_directory_counts(*_args, **_kwargs):
         raise SearchSuperseded
 
-    monkeypatch.setattr(SearchIndex, "directory_matches", supersede_directory_counts)
+    monkeypatch.setattr(SearchIndex, "directories_for_matches", supersede_directory_counts)
 
     response = client.get(
         "/api/search-with-directory-counts",
@@ -946,7 +979,6 @@ def test_api_search_with_directory_counts_rejects_superseded_directory_counts(
             ("q", "goblin"),
             ("search_session", "tab-1"),
             ("search_revision", "1"),
-            ("filter_rule", '{"source_id":"dnd","path":"Maps","state":"whitelist"}'),
         ],
     )
 

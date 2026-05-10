@@ -14,6 +14,10 @@
     Layers2,
     LoaderCircle,
     Search,
+    Plus,
+    RotateCcw,
+    Save,
+    Trash2,
   } from 'lucide-svelte'
   import {
     type Asset,
@@ -33,11 +37,31 @@
     depth: number
     asset_count: number
     matched_asset_count: number
+    included_asset_count: number
     quality: number
     quality_override: number | null
+    selection_state: FilterRuleState | null
   }
 
   type FilterRuleState = 'whitelist' | 'blacklist'
+
+  type SearchProfile = {
+    id: string
+    name: string
+    kind: 'none' | 'default' | 'custom'
+    version: number
+    sort_order: number
+  }
+
+  type SearchProfileSession = {
+    search_session: string
+    active_profile_id: string | null
+    active_profile_name: string | null
+    active_profile_kind: 'none' | 'default' | 'custom' | null
+    dirty_scoring: boolean
+    dirty_selection: boolean
+    dirty: boolean
+  }
 
   type UrlAction = {
     id: string
@@ -72,7 +96,8 @@
 
   let query = $state('')
   let searchMode = $state<SearchMode>('strict')
-  let filterRules = $state<Map<string, FilterRuleState>>(new Map())
+  let profiles = $state<SearchProfile[]>([])
+  let profileSession = $state<SearchProfileSession | null>(null)
   let directories = $state<DirectoryNode[]>([])
   let collapsedDirectories = $state<Set<string>>(new Set())
   let cards = $state<ResultCard[]>([])
@@ -122,13 +147,13 @@
   )
   const resultLabel = $derived(`${resultTotal} ${resultTotal === 1 ? 'card' : 'cards'}`)
   const visibleDirectories = $derived(directories.filter((directory) => isDirectoryVisible(directory)))
-  const serializedFilterRules = $derived.by(() =>
-    Array.from(filterRules.entries()).map(([key, state]) => {
-      const separatorIndex = key.indexOf('\u0000')
-      const source_id = key.slice(0, separatorIndex)
-      const path = key.slice(separatorIndex + 1)
-      return { source_id, path, state }
-    })
+  const filterRules = $derived.by(
+    () =>
+      new Map(
+        directories
+          .filter((directory) => directory.selection_state !== null)
+          .map((directory) => [directoryKey(directory), directory.selection_state as FilterRuleState])
+      )
   )
   const hoveredAssetAncestorKeys = $derived.by(() => {
     const asset = hoverPreviewAsset
@@ -157,10 +182,13 @@
     descendantFolderSettingKeys(directories, filterRules)
   )
 
+  void loadSearchProfiles()
+
   $effect(() => {
     query
     searchMode
-    filterRules
+    profileSession?.active_profile_id
+    profileSession?.dirty
     const revision = ++searchRevision
     window.clearTimeout(debounceTimer)
     debounceTimer = window.setTimeout(() => {
@@ -217,14 +245,13 @@
     const params = new URLSearchParams()
     params.set('limit', String(pageSize))
     params.set('offset', String(offset))
-    appendFilterRules(params)
+    params.set('search_session', searchSessionId)
     const trimmed = query.trim()
     const includeDirectoryCounts = !append && offset === 0
     const path = includeDirectoryCounts ? '/api/search-with-directory-counts' : '/api/search'
     if (trimmed) {
       params.set('q', trimmed)
       params.set('mode', searchMode)
-      params.set('search_session', searchSessionId)
       params.set('search_revision', String(revision))
     }
 
@@ -590,14 +617,8 @@
     return keys
   }
 
-  function appendFilterRules(params: URLSearchParams) {
-    for (const rule of serializedFilterRules) {
-      params.append('filter_rule', JSON.stringify(rule))
-    }
-  }
-
   function directoryRuleState(directory: DirectoryNode) {
-    return filterRules.get(directoryKey(directory)) ?? null
+    return directory.selection_state
   }
 
   function folderControlLabel(directory: DirectoryNode, ruleState: FilterRuleState | null) {
@@ -613,42 +634,14 @@
     }
   }
 
-  function pathsShareSubtree(first: string, second: string) {
-    return first === second || isPathAncestor(first, second) || isPathAncestor(second, first)
-  }
-
-  function isPathAncestor(ancestor: string, path: string) {
-    return ancestor === '' ? path !== '' : path.startsWith(`${ancestor}/`)
-  }
-
-  function toggleDirectoryRule(directory: DirectoryNode, state: FilterRuleState) {
-    const key = directoryKey(directory)
-    const next = new Map(filterRules)
-    if (next.get(key) === state) {
-      next.delete(key)
-    } else {
-      if (state === 'whitelist') {
-        const target = nodeKeyParts(key)
-        for (const [existingKey, existingState] of next) {
-          if (existingState !== 'whitelist') continue
-          const existing = nodeKeyParts(existingKey)
-          if (existing.sourceId === target.sourceId && pathsShareSubtree(existing.path, target.path)) {
-            next.delete(existingKey)
-          }
-        }
-      }
-      next.set(key, state)
-    }
-    filterRules = next
+  async function toggleDirectoryRule(directory: DirectoryNode, state: FilterRuleState) {
+    const nextState = directory.selection_state === state ? null : state
+    await updateFolderSetting(directory, { selection_state: nextState })
   }
 
   function setDirectoryRule(event: MouseEvent, directory: DirectoryNode, state: FilterRuleState) {
     event.stopPropagation()
-    toggleDirectoryRule(directory, state)
-  }
-
-  function clearFilterRules() {
-    filterRules = new Map()
+    void toggleDirectoryRule(directory, state)
   }
 
   function hasChildren(directory: DirectoryNode) {
@@ -679,7 +672,7 @@
     if (event.shiftKey || event.altKey) {
       event.preventDefault()
       event.stopPropagation()
-      toggleDirectoryRule(directory, event.shiftKey ? 'whitelist' : 'blacklist')
+      void toggleDirectoryRule(directory, event.shiftKey ? 'whitelist' : 'blacklist')
       return
     }
     if (!hasChildren(directory)) return
@@ -693,24 +686,36 @@
     collapsedDirectories = next
   }
 
-  async function setFolderQuality(directory: DirectoryNode, quality: number) {
-    const nextQuality = Math.max(0, Math.min(10, quality))
-    if (nextQuality === directory.quality && directory.quality_override === null) return
-    const response = await fetch('/api/folder-quality', {
-      method: 'PUT',
+  async function updateFolderSetting(
+    directory: DirectoryNode,
+    patch: { quality_override?: number | null; selection_state?: FilterRuleState | null }
+  ) {
+    const response = await fetch('/api/search-profile/settings', {
+      method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        search_session: searchSessionId,
         source_id: directory.source_id,
         directory: directory.path,
-        quality: nextQuality,
+        ...patch,
       }),
     })
     if (!response.ok) {
-      showError('Could not update folder quality')
+      showError('Could not update profile')
       return
     }
+    const body = (await response.json()) as { session: SearchProfileSession }
+    profileSession = body.session
     const revision = ++searchRevision
     await loadAssetPage({ offset: 0, append: false, revision })
+  }
+
+  async function setFolderQuality(directory: DirectoryNode, quality: number) {
+    const nextQuality = Math.max(0, Math.min(10, quality))
+    if (nextQuality === directory.quality && directory.quality_override === null) return
+    await updateFolderSetting(directory, {
+      quality_override: nextQuality === 5 ? null : nextQuality,
+    })
   }
 
   function changeFolderQuality(event: MouseEvent, directory: DirectoryNode, quality: number) {
@@ -749,7 +754,7 @@
     event.stopPropagation()
     if (event.shiftKey || event.altKey) {
       event.preventDefault()
-      toggleDirectoryRule(directory, event.shiftKey ? 'whitelist' : 'blacklist')
+      void toggleDirectoryRule(directory, event.shiftKey ? 'whitelist' : 'blacklist')
       qualityTargetKey = ''
       return
     }
@@ -819,6 +824,126 @@
     cyclingVariantIndex = 0
   }
 
+  async function loadSearchProfiles() {
+    const response = await fetch(`/api/search-profiles?search_session=${encodeURIComponent(searchSessionId)}`)
+    if (!response.ok) {
+      showError('Could not load profiles')
+      return
+    }
+    const body = (await response.json()) as { profiles: SearchProfile[]; session: SearchProfileSession }
+    profiles = body.profiles
+    profileSession = body.session
+  }
+
+  async function selectProfile(event: Event) {
+    const profileId = (event.currentTarget as HTMLSelectElement).value
+    const response = await fetch('/api/search-profiles/select', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ search_session: searchSessionId, profile_id: profileId }),
+    })
+    if (response.status === 409 && window.confirm('Discard unsaved profile changes?')) {
+      await selectProfileById(profileId, true)
+      return
+    }
+    if (!response.ok) {
+      showError('Could not select profile')
+      return
+    }
+    const body = (await response.json()) as { session: SearchProfileSession }
+    profileSession = body.session
+    const revision = ++searchRevision
+    await loadAssetPage({ offset: 0, append: false, revision })
+  }
+
+  async function selectProfileById(profileId: string, discard = false) {
+    const response = await fetch('/api/search-profiles/select', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ search_session: searchSessionId, profile_id: profileId, discard }),
+    })
+    if (!response.ok) {
+      showError('Could not select profile')
+      return
+    }
+    const body = (await response.json()) as { session: SearchProfileSession }
+    profileSession = body.session
+    const revision = ++searchRevision
+    await loadAssetPage({ offset: 0, append: false, revision })
+  }
+
+  async function saveProfile() {
+    const name = profileSession?.active_profile_id ? undefined : window.prompt('Profile name')?.trim()
+    if (profileSession?.active_profile_id === null && !name) return
+    const response = await fetch('/api/search-profile/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ search_session: searchSessionId, name }),
+    })
+    if (!response.ok) {
+      showError(response.status === 409 ? 'Profile changed elsewhere' : 'Could not save profile')
+      return
+    }
+    await loadSearchProfiles()
+    const revision = ++searchRevision
+    await loadAssetPage({ offset: 0, append: false, revision })
+  }
+
+  async function createProfile() {
+    const name = window.prompt('Profile name')?.trim()
+    if (!name) return
+    const response = await fetch('/api/search-profiles', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ search_session: searchSessionId, name }),
+    })
+    if (!response.ok) {
+      showError('Could not create profile')
+      return
+    }
+    await loadSearchProfiles()
+  }
+
+  async function resetScoring() {
+    await profileCommand('/api/search-profile/reset-scoring')
+  }
+
+  async function resetSelection() {
+    await profileCommand('/api/search-profile/reset-selection')
+  }
+
+  async function deleteProfile() {
+    if (!profileSession?.active_profile_id || profileSession.active_profile_kind !== 'custom') return
+    if (!window.confirm(`Delete ${profileSession.active_profile_name}?`)) return
+    const response = await fetch(
+      `/api/search-profiles/${encodeURIComponent(profileSession.active_profile_id)}?search_session=${encodeURIComponent(searchSessionId)}`,
+      { method: 'DELETE' }
+    )
+    if (!response.ok) {
+      showError('Could not delete profile')
+      return
+    }
+    await loadSearchProfiles()
+    const revision = ++searchRevision
+    await loadAssetPage({ offset: 0, append: false, revision })
+  }
+
+  async function profileCommand(path: string) {
+    const response = await fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ search_session: searchSessionId }),
+    })
+    if (!response.ok) {
+      showError('Could not update profile')
+      return
+    }
+    const body = (await response.json()) as { session: SearchProfileSession }
+    profileSession = body.session
+    const revision = ++searchRevision
+    await loadAssetPage({ offset: 0, append: false, revision })
+  }
+
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -840,6 +965,34 @@
     </label>
 
     <SearchLaneTabs value={searchMode} onSelect={setSearchMode} />
+
+    <div class="profile-controls" role="group" aria-label="Search profile">
+      <select aria-label="Search profile" value={profileSession?.active_profile_id ?? ''} onchange={selectProfile}>
+        {#each profiles as profile}
+          <option value={profile.id}>{profile.name}</option>
+        {/each}
+      </select>
+      <button type="button" title="Save profile" onclick={saveProfile} disabled={!profileSession?.dirty}>
+        <Save size={15} />
+      </button>
+      <button type="button" title="Create profile" onclick={createProfile}>
+        <Plus size={15} />
+      </button>
+      <button type="button" title="Reset scoring" onclick={resetScoring} disabled={!profileSession?.dirty_scoring}>
+        <RotateCcw size={15} />
+      </button>
+      <button type="button" title="Reset selection" onclick={resetSelection} disabled={!profileSession?.dirty_selection}>
+        <Ban size={15} />
+      </button>
+      <button
+        type="button"
+        title="Delete profile"
+        onclick={deleteProfile}
+        disabled={profileSession?.active_profile_kind !== 'custom'}
+      >
+        <Trash2 size={15} />
+      </button>
+    </div>
 
     <div class="status" class:busy={loading} class:error={error}>
       {#if loading}
@@ -1025,11 +1178,11 @@
       <button
         class="folder-row"
         type="button"
-        disabled={filterRules.size === 0}
-        onclick={clearFilterRules}
+        disabled={!profileSession?.dirty_selection}
+        onclick={resetSelection}
       >
         <Folder size={15} />
-        <span>Clear rules</span>
+        <span>Reset selection</span>
       </button>
       {#each visibleDirectories as directory (directoryKey(directory))}
         {@const children = hasChildren(directory)}

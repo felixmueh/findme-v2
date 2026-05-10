@@ -11,6 +11,14 @@ from findme.search_corpus import rebuild_search_corpus
 from helpers import write_image
 
 
+def _stable_directory(directory: dict[str, object]) -> dict[str, object]:
+    return {
+        key: value
+        for key, value in directory.items()
+        if key not in {"included_asset_count", "selection_state"}
+    }
+
+
 def test_api_lists_indexed_directory_tree(tmp_path: Path) -> None:
     source_root = tmp_path / "assets"
     write_image(source_root / "Tokens" / "Goblins" / "Goblin.png")
@@ -36,7 +44,7 @@ def test_api_lists_indexed_directory_tree(tmp_path: Path) -> None:
     client = TestClient(create_app(config, db_path))
     body = client.get("/api/search-with-directory-counts", params={"source_id": "dnd"}).json()
 
-    assert body["directories"] == [
+    assert [_stable_directory(directory) for directory in body["directories"]] == [
         {
             "source_id": "dnd",
             "path": "",
@@ -115,7 +123,7 @@ def test_api_lists_only_directories_with_search_matches(tmp_path: Path) -> None:
     client = TestClient(create_app(config, db_path))
     body = client.get("/api/search-with-directory-counts", params={"source_id": "dnd", "q": "goblin"}).json()
 
-    assert body["directories"] == [
+    assert [_stable_directory(directory) for directory in body["directories"]] == [
         {
             "source_id": "dnd",
             "path": "",
@@ -191,7 +199,7 @@ def test_api_directory_rows_are_source_scoped_for_all_sources(tmp_path: Path) ->
     client = TestClient(create_app(config, db_path))
     body = client.get("/api/search-with-directory-counts").json()
 
-    assert body["directories"] == [
+    assert [_stable_directory(directory) for directory in body["directories"]] == [
         {
             "source_id": "dnd",
             "path": "",

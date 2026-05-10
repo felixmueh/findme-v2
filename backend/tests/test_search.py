@@ -12,10 +12,12 @@ from findme.search import (
     DomainVocabulary,
     SearchControl,
     SearchIndex,
+    SearchPreferences,
     SearchSuperseded,
+    folder_settings_fingerprint,
     includes_asset,
+    preference_adjustments,
     search_assets,
-    upsert_folder_quality,
 )
 
 from helpers import write_image
@@ -33,13 +35,13 @@ def test_search_assets_matches_filename_and_path_tokens(tmp_path: Path) -> None:
     with connect(tmp_path / "findme.sqlite3") as db:
         initialize_database(db)
         index_sources(db, config)
-        results = search_assets(db, "goblin warrior")
+        results = search_assets(db, "goblin")
 
     assert [result.relative_path for result in results] == [
         "Tokens/Goblins/Goblin Warrior.png",
         "Maps/Goblin Cave.jpg",
     ]
-    assert results[0].score > results[1].score
+    assert all(result.score > 0 for result in results)
 
 
 def test_search_assets_applies_source_and_directory_filters(tmp_path: Path) -> None:
@@ -194,7 +196,7 @@ def test_strict_search_uses_source_name_as_indexed_evidence(tmp_path: Path) -> N
     assert [result.relative_path for result in results] == ["combat_standard/Training.mp3"]
 
 
-def test_combined_search_penalizes_audio_sources_for_visual_object_queries(
+def test_search_ranking_does_not_apply_media_intent_penalty(
     tmp_path: Path,
 ) -> None:
     visual_root = tmp_path / "mapmaking"
@@ -226,15 +228,14 @@ def test_combined_search_penalizes_audio_sources_for_visual_object_queries(
     with connect(tmp_path / "findme.sqlite3") as db:
         initialize_database(db)
         index_sources(db, config)
-        results = search_assets(db, "door")
+        visual_result = search_assets(db, "door", source_id="mapmaking")[0]
+        audio_result = search_assets(db, "door", source_id="sounds")[0]
 
-    assert [result.relative_path for result in results] == [
-        "StoneDoor.png",
-        "door_big_close.mp3",
-    ]
+    assert audio_result.score > 0
+    assert visual_result.score > 0
 
 
-def test_search_index_applies_folder_quality_to_combined_and_strict_ranking(
+def test_search_index_applies_profile_quality_to_strict_ranking(
     tmp_path: Path,
 ) -> None:
     source_root = tmp_path / "assets"
@@ -252,79 +253,59 @@ def test_search_index_applies_folder_quality_to_combined_and_strict_ranking(
             "Good/Goblin.png",
         ]
 
-        upsert_folder_quality(db, source_id="dnd", directory="Good", quality=10)
-        search_index.set_folder_quality("dnd", "Good", 10)
+        preferences = SearchPreferences(
+            preference_adjustments=preference_adjustments(
+                search_index.assets,
+                {("dnd", "Good"): 10},
+            ),
+            quality_overrides={("dnd", "Good"): 10},
+            settings_fingerprint=folder_settings_fingerprint(
+                DirectoryFilter(),
+                {("dnd", "Good"): 10},
+            ),
+        )
 
-        combined = search_index.search("goblin").assets
-        strict = search_index.search("goblin", mode="strict").assets
+        strict = search_index.search("goblin", mode="strict", preferences=preferences).assets
 
-    assert [result.relative_path for result in combined] == [
-        "Good/Goblin.png",
-        "Bad/Goblin.png",
-    ]
     assert [result.relative_path for result in strict] == [
         "Good/Goblin.png",
         "Bad/Goblin.png",
     ]
 
-    with connect(tmp_path / "findme.sqlite3") as db:
-        reloaded = SearchIndex.load(db)
 
-    assert [result.relative_path for result in reloaded.search("goblin").assets] == [
-        "Good/Goblin.png",
-        "Bad/Goblin.png",
-    ]
-
-    with connect(tmp_path / "findme.sqlite3") as db:
-        upsert_folder_quality(db, source_id="dnd", directory="Good", quality=5)
-        reloaded.set_folder_quality("dnd", "Good", 5)
-        assert reloaded.folder_quality("dnd", "Good") == (5, None)
-        stored_overrides = db.execute(
-            "SELECT quality FROM folder_quality_overrides WHERE source_id = ? AND directory = ?",
-            ("dnd", "Good"),
-        ).fetchall()
-
-    assert stored_overrides == []
-    assert [result.relative_path for result in reloaded.search("goblin").assets] == [
-        "Bad/Goblin.png",
-        "Good/Goblin.png",
-    ]
+def test_profile_fingerprint_normalizes_equivalent_empty_settings() -> None:
+    assert (
+        folder_settings_fingerprint(DirectoryFilter(), {})
+        == folder_settings_fingerprint(DirectoryFilter(), {("dnd", "Good"): 5})
+        == "empty"
+    )
 
 
-def test_search_index_updates_only_assets_with_changed_effective_folder_quality(
-    tmp_path: Path, monkeypatch
+def test_search_index_applies_profile_selection_as_hard_filter(
+    tmp_path: Path,
 ) -> None:
     source_root = tmp_path / "assets"
-    write_image(source_root / "Parent" / "Inherited" / "Goblin.png")
-    write_image(source_root / "Parent" / "Overridden" / "Goblin.png")
-    write_image(source_root / "Other" / "Goblin.png")
+    write_image(source_root / "Maps" / "Goblin.png")
+    write_image(source_root / "Tokens" / "Goblin.png")
     config = _config(tmp_path, source_root)
 
     with connect(tmp_path / "findme.sqlite3") as db:
         initialize_database(db)
         index_sources(db, config)
-        upsert_folder_quality(
-            db,
-            source_id="dnd",
-            directory="Parent/Overridden",
-            quality=0,
-        )
         search_index = SearchIndex.load(db)
 
-    def fail_full_recompute(*_args, **_kwargs):
-        raise AssertionError("folder quality update rebuilt all preferences")
+    preferences = SearchPreferences(
+        preference_adjustments=preference_adjustments(search_index.assets, {}),
+        directory_filter=DirectoryFilter(
+            (DirectoryFilterRule("dnd", "Maps", "whitelist"),)
+        ),
+        settings_fingerprint="maps-only",
+    )
 
-    monkeypatch.setattr(search_module, "_preference_adjustments", fail_full_recompute)
-
-    search_index.set_folder_quality("dnd", "Parent", 10)
-
-    assert search_index.folder_quality("dnd", "Parent/Inherited") == (10, None)
-    assert search_index.folder_quality("dnd", "Parent/Overridden") == (0, 0)
-    assert [result.relative_path for result in search_index.search("goblin").assets] == [
-        "Parent/Inherited/Goblin.png",
-        "Other/Goblin.png",
-        "Parent/Overridden/Goblin.png",
-    ]
+    assert [
+        result.relative_path
+        for result in search_index.search("goblin", preferences=preferences).assets
+    ] == ["Maps/Goblin.png"]
 
 
 def test_directories_for_matches_keep_each_source_subtree_together(tmp_path: Path) -> None:

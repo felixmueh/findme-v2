@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 import sqlite3
 import threading
@@ -23,8 +22,6 @@ from findme.config import AppConfig
 from findme.db import connect
 from findme.result_cards import ResultCardResolver
 from findme.search import (
-    DirectoryFilter,
-    DirectoryFilterRule,
     DirectoryMatch,
     DomainVocabulary,
     SearchIndex,
@@ -33,7 +30,11 @@ from findme.search import (
     SearchControl,
     SearchSuperseded,
     load_domain_vocabulary,
-    upsert_folder_quality,
+)
+from findme.search_profiles import (
+    SearchProfileConflict,
+    SearchProfileSessionManager,
+    SearchProfileValidationError,
 )
 from findme.search_corpus import (
     SEARCH_CORPUS_VERSION,
@@ -43,10 +44,32 @@ from findme.search_corpus import (
 )
 
 
-class FolderQualityRequest(BaseModel):
+class SearchProfileSelectRequest(BaseModel):
+    search_session: str | None = None
+    profile_id: str
+    discard: bool = False
+
+
+class SearchProfileSettingsRequest(BaseModel):
+    search_session: str | None = None
     source_id: str
     directory: str = ""
-    quality: int = Field(ge=0, le=10)
+    quality_override: int | None = Field(default=None, ge=0, le=10)
+    selection_state: str | None = None
+
+
+class SearchProfileSaveRequest(BaseModel):
+    search_session: str | None = None
+    name: str | None = None
+    overwrite: bool = False
+
+
+class SearchProfileSessionRequest(BaseModel):
+    search_session: str | None = None
+
+
+class SearchProfileDeleteRequest(BaseModel):
+    discard: bool = False
 
 
 def create_app(
@@ -62,8 +85,9 @@ def create_app(
             snapshot,
             expected_version=SEARCH_CORPUS_VERSION,
             lexical_index_path=lexical_path,
-        )
+    )
     card_metadata_by_asset_id = snapshot.card_metadata_by_asset_id()
+    profile_sessions = SearchProfileSessionManager(search_index)
     card_resolver = ResultCardResolver.from_assets(
         [_search_response(result) for result in search_index.scoped_assets()],
         card_metadata_by_asset_id=card_metadata_by_asset_id,
@@ -94,23 +118,24 @@ def create_app(
         source_id: str | None = None,
         directory: str | None = None,
         directory_prefix: str | None = None,
-        filter_rule: list[str] = Query(default_factory=list),
+        search_session: str | None = None,
         limit: int = Query(default=100, ge=1, le=500),
         offset: int = Query(default=0, ge=0),
     ) -> dict[str, object]:
-        directory_filter = _parse_directory_filter(filter_rule, config, search_index)
+        with connect(database_path) as db:
+            preferences = profile_sessions.preferences(db, search_session)
         scoped_assets = search_index.scoped_assets(
             source_id=source_id,
             directory=directory,
             directory_prefix=directory_prefix,
-            directory_filter=directory_filter,
+            preferences=preferences,
         )
         scoped_card_resolver = (
             ResultCardResolver.from_assets(
                 [_search_response(result) for result in scoped_assets],
                 card_metadata_by_asset_id=card_metadata_by_asset_id,
             )
-            if directory_filter or source_id or directory is not None or directory_prefix
+            if preferences.directory_filter.rules or source_id or directory is not None or directory_prefix
             else card_resolver
         )
         cards, total = scoped_card_resolver.page_for(
@@ -120,74 +145,140 @@ def create_app(
         )
         return JSONResponse({"cards": cards, "total": total})
 
-    @app.get("/api/directories")
-    def list_directories(
-        source_id: str | None = None,
-        q: str | None = None,
-        mode: SearchMode = "combined",
-        filter_rule: list[str] = Query(default_factory=list),
-        search_session: str | None = None,
-        search_revision: int | None = None,
-    ) -> object:
-        directory_filter = _parse_directory_filter(filter_rule, config, search_index)
-        control = search_revisions.control(search_session, search_revision)
-        if control and control.is_cancelled():
-            return Response(status_code=204)
-        domain_vocabulary = _load_domain_vocabulary(config)
-        try:
-            directories = search_index.directory_matches(
-                q,
-                source_id=source_id,
-                directory_filter=directory_filter,
-                domain_vocabulary=domain_vocabulary,
-                mode=mode,
-                control=control,
-            )
-        except SearchSuperseded:
-            return Response(status_code=204)
-        return {"directories": [_directory_response(directory) for directory in directories]}
-
-    @app.put("/api/folder-quality")
-    def set_folder_quality(request: FolderQualityRequest) -> dict[str, object]:
-        if (request.source_id, request.directory) not in search_index.directory_counts:
-            raise HTTPException(status_code=404, detail="indexed folder was not found") from None
+    @app.get("/api/search-profiles")
+    def list_search_profiles(search_session: str | None = None) -> dict[str, object]:
         with connect(database_path) as db:
-            upsert_folder_quality(
+            return profile_sessions.profiles_response(db, search_session)
+
+    @app.post("/api/search-profiles/select")
+    def select_search_profile(request: SearchProfileSelectRequest) -> dict[str, object]:
+        try:
+            with connect(database_path) as db:
+                session = profile_sessions.select_profile(
+                    db,
+                    search_session=request.search_session,
+                    profile_id=request.profile_id,
+                    discard=request.discard,
+                )
+                return {"session": profile_sessions.session_response(session)}
+        except SearchProfileConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="search profile was not found") from exc
+
+    @app.post("/api/search-profiles")
+    def create_search_profile(request: SearchProfileSaveRequest) -> dict[str, object]:
+        try:
+            with connect(database_path) as db:
+                session = profile_sessions.create_profile(
+                    db,
+                    search_session=request.search_session,
+                    name=request.name or "",
+                )
+                return profile_sessions.profiles_response(db, session.search_session)
+        except SearchProfileValidationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.delete("/api/search-profiles/{profile_id}")
+    def delete_search_profile(
+        profile_id: str,
+        search_session: str | None = None,
+        discard: bool = False,
+    ) -> dict[str, object]:
+        try:
+            with connect(database_path) as db:
+                session = profile_sessions.delete_profile(
+                    db,
+                    search_session=search_session,
+                    profile_id=profile_id,
+                    discard=discard,
+                )
+                return {"session": profile_sessions.session_response(session)}
+        except SearchProfileConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except SearchProfileValidationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="search profile was not found") from exc
+
+    @app.patch("/api/search-profile/settings")
+    def update_search_profile_settings(
+        request: SearchProfileSettingsRequest,
+    ) -> dict[str, object]:
+        try:
+            with connect(database_path) as db:
+                update_kwargs = {}
+                fields_set = request.model_fields_set
+                if "quality_override" in fields_set:
+                    update_kwargs["quality_override"] = request.quality_override
+                if "selection_state" in fields_set:
+                    update_kwargs["selection_state"] = request.selection_state
+                session = profile_sessions.update_setting(
+                    db,
+                    search_session=request.search_session,
+                    source_id=request.source_id,
+                    directory=request.directory,
+                    **update_kwargs,  # type: ignore[arg-type]
+                )
+                return {"session": profile_sessions.session_response(session)}
+        except SearchProfileValidationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/search-profile/save")
+    def save_search_profile(request: SearchProfileSaveRequest) -> dict[str, object]:
+        try:
+            with connect(database_path) as db:
+                session = profile_sessions.save(
+                    db,
+                    search_session=request.search_session,
+                    name=request.name,
+                    overwrite=request.overwrite,
+                )
+                return {
+                    "session": profile_sessions.session_response(session),
+                    **profile_sessions.profiles_response(db, request.search_session),
+                }
+        except SearchProfileConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except SearchProfileValidationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/search-profile/reset-scoring")
+    def reset_search_profile_scoring(
+        request: SearchProfileSessionRequest,
+    ) -> dict[str, object]:
+        with connect(database_path) as db:
+            session = profile_sessions.reset_scoring(
                 db,
-                source_id=request.source_id,
-                directory=request.directory,
-                quality=request.quality,
+                search_session=request.search_session,
             )
-        search_index.set_folder_quality(
-            request.source_id,
-            request.directory,
-            request.quality,
-        )
-        quality, quality_override = search_index.folder_quality(
-            request.source_id,
-            request.directory,
-        )
-        return {
-            "source_id": request.source_id,
-            "directory": request.directory,
-            "quality": quality,
-            "quality_override": quality_override,
-        }
+            return {"session": profile_sessions.session_response(session)}
+
+    @app.post("/api/search-profile/reset-selection")
+    def reset_search_profile_selection(
+        request: SearchProfileSessionRequest,
+    ) -> dict[str, object]:
+        with connect(database_path) as db:
+            session = profile_sessions.reset_selection(
+                db,
+                search_session=request.search_session,
+            )
+            return {"session": profile_sessions.session_response(session)}
 
     @app.get("/api/search")
     def search(
         q: str | None = None,
-        mode: SearchMode = "combined",
+        mode: SearchMode = "strict",
         source_id: str | None = None,
         directory: str | None = None,
         directory_prefix: str | None = None,
-        filter_rule: list[str] = Query(default_factory=list),
         limit: int = Query(default=100, ge=1, le=500),
         offset: int = Query(default=0, ge=0),
         search_session: str | None = None,
         search_revision: int | None = None,
     ) -> object:
-        directory_filter = _parse_directory_filter(filter_rule, config, search_index)
+        with connect(database_path) as db:
+            preferences = profile_sessions.preferences(db, search_session)
         control = search_revisions.control(search_session, search_revision)
         if control and control.is_cancelled():
             return Response(status_code=204)
@@ -199,7 +290,7 @@ def create_app(
                 source_id=source_id,
                 directory=directory,
                 directory_prefix=directory_prefix,
-                directory_filter=directory_filter,
+                preferences=preferences,
                 domain_vocabulary=domain_vocabulary,
                 mode=mode,
                 control=control,
@@ -214,12 +305,12 @@ def create_app(
                         source_id=source_id,
                         directory=directory,
                         directory_prefix=directory_prefix,
-                        directory_filter=directory_filter,
+                        preferences=preferences,
                     )
                 ],
                 card_metadata_by_asset_id=card_metadata_by_asset_id,
             )
-            if directory_filter or source_id or directory is not None or directory_prefix
+            if preferences.directory_filter.rules or source_id or directory is not None or directory_prefix
             else card_resolver
         )
         cards, total = scoped_card_resolver.page_for(
@@ -232,17 +323,17 @@ def create_app(
     @app.get("/api/search-with-directory-counts")
     def search_with_directory_counts(
         q: str | None = None,
-        mode: SearchMode = "combined",
+        mode: SearchMode = "strict",
         source_id: str | None = None,
         directory: str | None = None,
         directory_prefix: str | None = None,
-        filter_rule: list[str] = Query(default_factory=list),
         limit: int = Query(default=100, ge=1, le=500),
         offset: int = Query(default=0, ge=0),
         search_session: str | None = None,
         search_revision: int | None = None,
     ) -> object:
-        directory_filter = _parse_directory_filter(filter_rule, config, search_index)
+        with connect(database_path) as db:
+            preferences = profile_sessions.preferences(db, search_session)
         control = search_revisions.control(search_session, search_revision)
         if control and control.is_cancelled():
             return Response(status_code=204)
@@ -254,7 +345,7 @@ def create_app(
                 source_id=source_id,
                 directory=directory,
                 directory_prefix=directory_prefix,
-                directory_filter=directory_filter,
+                preferences=preferences,
                 domain_vocabulary=domain_vocabulary,
                 mode=mode,
                 control=control,
@@ -269,12 +360,12 @@ def create_app(
                         source_id=source_id,
                         directory=directory,
                         directory_prefix=directory_prefix,
-                        directory_filter=directory_filter,
+                        preferences=preferences,
                     )
                 ],
                 card_metadata_by_asset_id=card_metadata_by_asset_id,
             )
-            if directory_filter or source_id or directory is not None or directory_prefix
+            if preferences.directory_filter.rules or source_id or directory is not None or directory_prefix
             else card_resolver
         )
         cards, total = scoped_card_resolver.page_for(
@@ -283,13 +374,10 @@ def create_app(
             limit=limit,
         )
         try:
-            directories = search_index.directory_matches(
-                q,
+            directories = search_index.directories_for_matches(
+                matched_assets,
                 source_id=source_id,
-                directory_filter=directory_filter,
-                domain_vocabulary=domain_vocabulary,
-                mode=mode,
-                control=control,
+                preferences=preferences,
             )
         except SearchSuperseded:
             return Response(status_code=204)
@@ -379,7 +467,7 @@ def _matched_assets(
     source_id: str | None,
     directory: str | None,
     directory_prefix: str | None,
-    directory_filter: DirectoryFilter | None,
+    preferences,
     domain_vocabulary: DomainVocabulary | None,
     mode: SearchMode,
     control: SearchControl | None,
@@ -390,7 +478,7 @@ def _matched_assets(
             source_id=source_id,
             directory=directory,
             directory_prefix=directory_prefix,
-            directory_filter=directory_filter,
+            preferences=preferences,
             control=control,
         )
     return search_index.search(
@@ -398,93 +486,13 @@ def _matched_assets(
         source_id=source_id,
         directory=directory,
         directory_prefix=directory_prefix,
-        directory_filter=directory_filter,
+        preferences=preferences,
         domain_vocabulary=domain_vocabulary,
         mode=mode,
         limit=len(search_index.assets),
         offset=0,
         control=control,
     ).assets
-
-
-def _parse_directory_filter(
-    raw_rules: list[str],
-    config: AppConfig,
-    search_index: SearchIndex,
-) -> DirectoryFilter | None:
-    if not raw_rules:
-        return None
-    source_ids = {source.id for source in config.sources}
-    rules = []
-    seen_nodes: set[tuple[str, str]] = set()
-    whitelist_nodes: set[tuple[str, str]] = set()
-    for raw_rule in raw_rules:
-        try:
-            payload = json.loads(raw_rule)
-        except json.JSONDecodeError as exc:
-            raise HTTPException(
-                status_code=400,
-                detail="filter_rule must be a JSON object",
-            ) from exc
-        if not isinstance(payload, dict):
-            raise HTTPException(status_code=400, detail="filter_rule must be a JSON object")
-        source_id = payload.get("source_id")
-        path = payload.get("path")
-        state = payload.get("state")
-        if not isinstance(source_id, str) or not source_id:
-            raise HTTPException(
-                status_code=400,
-                detail="filter_rule.source_id must be a non-empty string",
-            )
-        if source_id not in source_ids:
-            raise HTTPException(status_code=400, detail=f"unknown filter_rule source: {source_id}")
-        if not isinstance(path, str):
-            raise HTTPException(status_code=400, detail="filter_rule.path must be a string")
-        if not _is_normalized_directory_path(path):
-            raise HTTPException(
-                status_code=400,
-                detail="filter_rule.path must be a normalized source-relative directory path",
-            )
-        if state not in {"whitelist", "blacklist"}:
-            raise HTTPException(
-                status_code=400,
-                detail="filter_rule.state must be whitelist or blacklist",
-            )
-        node = (source_id, path)
-        if node in seen_nodes:
-            raise HTTPException(status_code=400, detail="duplicate filter_rule node")
-        seen_nodes.add(node)
-        if node not in search_index.directory_counts:
-            raise HTTPException(status_code=400, detail="filter_rule directory was not found")
-        if state == "whitelist":
-            for whitelist_source_id, whitelist_path in whitelist_nodes:
-                if source_id == whitelist_source_id and _paths_share_subtree(
-                    whitelist_path,
-                    path,
-                ):
-                    raise HTTPException(
-                        status_code=400,
-                        detail="whitelist filter_rules must not overlap in the same subtree",
-                    )
-            whitelist_nodes.add(node)
-        rules.append(DirectoryFilterRule(source_id=source_id, path=path, state=state))
-    return DirectoryFilter(tuple(rules))
-
-
-def _paths_share_subtree(first: str, second: str) -> bool:
-    return first == second or _is_path_ancestor(first, second) or _is_path_ancestor(second, first)
-
-
-def _is_path_ancestor(ancestor: str, path: str) -> bool:
-    return path != "" if ancestor == "" else path.startswith(f"{ancestor}/")
-
-
-def _is_normalized_directory_path(path: str) -> bool:
-    if path == "":
-        return True
-    if path.startswith("/") or path.endswith("/") or "\\" in path or "//" in path:
-        return False
-    return all(part not in {"", ".", ".."} for part in path.split("/"))
 
 
 def _load_asset_or_404(db: sqlite3.Connection, config: AppConfig, asset_id: str):
@@ -504,8 +512,10 @@ def _directory_response(directory: DirectoryMatch) -> dict[str, object]:
         "depth": directory.depth,
         "asset_count": directory.asset_count,
         "matched_asset_count": directory.matched_asset_count,
+        "included_asset_count": directory.included_asset_count,
         "quality": directory.quality,
         "quality_override": directory.quality_override,
+        "selection_state": directory.selection_state,
     }
 
 

@@ -43,8 +43,10 @@ function sampleDirectory(quality = 4, qualityOverride: number | null = null) {
     depth: 1,
     asset_count: 1,
     matched_asset_count: 1,
+    included_asset_count: 1,
     quality,
     quality_override: qualityOverride,
+    selection_state: null,
   }
 }
 
@@ -56,14 +58,16 @@ function sampleRootDirectory() {
     depth: 0,
     asset_count: 1,
     matched_asset_count: 1,
+    included_asset_count: 1,
     quality: 5,
     quality_override: null,
+    selection_state: null,
   }
 }
 
 function filterRulesFromRequest(request: { url: () => string }) {
   const url = new URL(request.url())
-  return url.searchParams.getAll('filter_rule').map((rule) => JSON.parse(rule))
+  return url.searchParams.getAll('search_session').map((rule) => JSON.parse(rule))
 }
 
 async function revealSampleFolder(page: Page) {
@@ -72,6 +76,43 @@ async function revealSampleFolder(page: Page) {
 }
 
 test.beforeEach(async ({ page }) => {
+  await page.route('**/api/search-profiles?*', async (route) => {
+    await route.fulfill({
+      json: {
+        profiles: [
+          { id: 'none', name: 'None', kind: 'none', version: 1, sort_order: 0 },
+          { id: 'default', name: 'Default', kind: 'default', version: 1, sort_order: 1 },
+        ],
+        session: {
+          search_session: 'test-session',
+          active_profile_id: 'default',
+          active_profile_name: 'Default',
+          active_profile_kind: 'default',
+          dirty_scoring: false,
+          dirty_selection: false,
+          dirty: false,
+        },
+        settings: [],
+      },
+    })
+  })
+
+  await page.route('**/api/search-profile/settings', async (route) => {
+    await route.fulfill({
+      json: {
+        session: {
+          search_session: 'test-session',
+          active_profile_id: 'default',
+          active_profile_name: 'Default',
+          active_profile_kind: 'default',
+          dirty_scoring: true,
+          dirty_selection: true,
+          dirty: true,
+        },
+      },
+    })
+  })
+
   await page.route('**/api/assets/asset-castle', async (route) => {
     await route.fulfill({
       json: {
@@ -154,7 +195,7 @@ test('sends sidebar whitelist and blacklist rules with folder shortcuts', async 
     const url = new URL(request.url())
     return (
       url.pathname === '/api/search-with-directory-counts' &&
-      url.searchParams.getAll('filter_rule').some((rule) => rule.includes('"state":"whitelist"'))
+      url.searchParams.getAll('search_session').some((rule) => rule.includes('"state":"whitelist"'))
     )
   })
   await page.getByRole('group', { name: 'maps folder' }).getByRole('button', { name: 'maps', exact: true }).click({
@@ -172,7 +213,7 @@ test('sends sidebar whitelist and blacklist rules with folder shortcuts', async 
     const url = new URL(request.url())
     return (
       url.pathname === '/api/search-with-directory-counts' &&
-      url.searchParams.getAll('filter_rule').some((rule) => rule.includes('"state":"blacklist"'))
+      url.searchParams.getAll('search_session').some((rule) => rule.includes('"state":"blacklist"'))
     )
   })
   await page.getByRole('group', { name: 'maps folder' }).getByRole('button', { name: 'maps', exact: true }).click({
@@ -197,7 +238,7 @@ test('combines folder filtering and quality in one control popover', async ({ pa
     const url = new URL(request.url())
     return (
       url.pathname === '/api/search-with-directory-counts' &&
-      url.searchParams.getAll('filter_rule').some((rule) => rule.includes('"state":"whitelist"'))
+      url.searchParams.getAll('search_session').some((rule) => rule.includes('"state":"whitelist"'))
     )
   })
   await page.getByRole('button', { name: 'Focus maps' }).click()
@@ -223,7 +264,7 @@ test('marks folders that contain custom descendant folder settings', async ({ pa
             depth: 2,
             asset_count: 1,
             matched_asset_count: 1,
-            quality: 8,
+            quality_override: 8,
             quality_override: 8,
           },
         ],
@@ -257,7 +298,7 @@ test('folder quality button shortcuts toggle folder rules without opening the me
     const url = new URL(request.url())
     return (
       url.pathname === '/api/search-with-directory-counts' &&
-      url.searchParams.getAll('filter_rule').some((rule) => rule.includes('"state":"whitelist"'))
+      url.searchParams.getAll('search_session').some((rule) => rule.includes('"state":"whitelist"'))
     )
   })
   await page.getByRole('button', { name: 'Folder controls for maps, quality 4' }).click({ modifiers: ['Shift'] })
@@ -271,7 +312,7 @@ test('folder quality button shortcuts toggle folder rules without opening the me
     const url = new URL(request.url())
     return (
       url.pathname === '/api/search-with-directory-counts' &&
-      url.searchParams.getAll('filter_rule').some((rule) => rule.includes('"state":"blacklist"'))
+      url.searchParams.getAll('search_session').some((rule) => rule.includes('"state":"blacklist"'))
     )
   })
   await page.getByRole('button', { name: 'Folder controls for maps, focused, quality 4' }).click({
@@ -297,7 +338,7 @@ test('keeps sidebar rules across search text and lane changes', async ({ page })
     return (
       url.pathname === '/api/search-with-directory-counts' &&
       url.searchParams.get('q') === 'castle' &&
-      url.searchParams.getAll('filter_rule').length === 1
+      url.searchParams.getAll('search_session').length === 1
     )
   })
   await page.getByRole('searchbox', { name: 'Search assets' }).fill('castle')
@@ -311,7 +352,7 @@ test('keeps sidebar rules across search text and lane changes', async ({ page })
       url.pathname === '/api/search-with-directory-counts' &&
       url.searchParams.get('q') === 'castle' &&
       url.searchParams.get('mode') === 'domain' &&
-      url.searchParams.getAll('filter_rule').length === 1
+      url.searchParams.getAll('search_session').length === 1
     )
   })
   await page.getByRole('tab', { name: 'Domain' }).click()
@@ -337,7 +378,7 @@ test('moves whitelist focus within the same subtree', async ({ page }) => {
             depth: 2,
             asset_count: 1,
             matched_asset_count: 1,
-            quality: 5,
+            quality_override: null,
             quality_override: null,
           },
           {
@@ -347,7 +388,7 @@ test('moves whitelist focus within the same subtree', async ({ page }) => {
             depth: 1,
             asset_count: 1,
             matched_asset_count: 1,
-            quality: 5,
+            quality_override: null,
             quality_override: null,
           },
         ],
@@ -365,7 +406,7 @@ test('moves whitelist focus within the same subtree', async ({ page }) => {
 
   const childWhitelistRequest = page.waitForRequest((request) => {
     const url = new URL(request.url())
-    const rules = url.searchParams.getAll('filter_rule')
+    const rules = url.searchParams.getAll('search_session')
     return (
       url.pathname === '/api/search-with-directory-counts' &&
       rules.length === 1 &&
@@ -390,7 +431,7 @@ test('moves whitelist focus within the same subtree', async ({ page }) => {
     const url = new URL(request.url())
     return (
       url.pathname === '/api/search-with-directory-counts' &&
-      url.searchParams.getAll('filter_rule').some((rule) => rule.includes('"path":"tokens"'))
+      url.searchParams.getAll('search_session').some((rule) => rule.includes('"path":"tokens"'))
     )
   })
   await page.getByRole('group', { name: 'tokens folder' }).getByRole('button', { name: 'tokens', exact: true }).click({
@@ -432,7 +473,7 @@ test('selecting an asset unfolds and scrolls to its folder path without refoldin
       depth: 1,
       asset_count: 1,
       matched_asset_count: 1,
-      quality: 5,
+      quality_override: null,
       quality_override: null,
     },
     {
@@ -442,7 +483,7 @@ test('selecting an asset unfolds and scrolls to its folder path without refoldin
       depth: 2,
       asset_count: 1,
       matched_asset_count: 1,
-      quality: 5,
+      quality_override: null,
       quality_override: null,
     },
     ...Array.from({ length: 40 }, (_, index) => ({
@@ -452,7 +493,7 @@ test('selecting an asset unfolds and scrolls to its folder path without refoldin
       depth: 1,
       asset_count: 1,
       matched_asset_count: 1,
-      quality: 5,
+      quality_override: null,
       quality_override: null,
     })),
     {
@@ -462,7 +503,7 @@ test('selecting an asset unfolds and scrolls to its folder path without refoldin
       depth: 2,
       asset_count: 1,
       matched_asset_count: 1,
-      quality: 5,
+      quality_override: null,
       quality_override: null,
     },
   ]
@@ -627,9 +668,9 @@ test('updates folder quality through the picker and refreshes ranked search resu
     })
   })
 
-  await page.route('**/api/folder-quality', async (route) => {
-    const body = route.request().postDataJSON() as { quality: number }
-    directoryQuality = body.quality
+  await page.route('**/api/search-profile/settings', async (route) => {
+    const body = route.request().postDataJSON() as { quality_override: number | null }
+    directoryQuality = body.quality_override ?? 5
     await route.fulfill({
       json: { directory: sampleDirectory(directoryQuality, directoryQuality) },
     })
@@ -647,7 +688,7 @@ test('updates folder quality through the picker and refreshes ranked search resu
 
   const qualityUpdateRequest = page.waitForRequest((request) => {
     const url = new URL(request.url())
-    return url.pathname === '/api/folder-quality' && request.method() === 'PUT'
+    return url.pathname === '/api/search-profile/settings' && request.method() === 'PATCH'
   })
   const refreshedSearchRequest = page.waitForRequest((request) => {
     const url = new URL(request.url())
@@ -664,7 +705,7 @@ test('updates folder quality through the picker and refreshes ranked search resu
   expect(request.postDataJSON()).toEqual({
     source_id: 'sample',
     directory: 'maps',
-    quality: 8,
+    quality_override: 8,
   })
   await refreshedSearchRequest
   await expect(page.getByRole('button', { name: 'Folder controls for maps, quality 8' })).toBeVisible()
@@ -685,9 +726,9 @@ test('adjusts the focused folder quality with keyboard shortcuts', async ({ page
     })
   })
 
-  await page.route('**/api/folder-quality', async (route) => {
-    const body = route.request().postDataJSON() as { quality: number }
-    directoryQuality = body.quality
+  await page.route('**/api/search-profile/settings', async (route) => {
+    const body = route.request().postDataJSON() as { quality_override: number | null }
+    directoryQuality = body.quality_override ?? 5
     await route.fulfill({
       json: { directory: sampleDirectory(directoryQuality, directoryQuality) },
     })
@@ -698,7 +739,7 @@ test('adjusts the focused folder quality with keyboard shortcuts', async ({ page
 
   const qualityUpdateRequest = page.waitForRequest((request) => {
     const url = new URL(request.url())
-    return url.pathname === '/api/folder-quality' && request.method() === 'PUT'
+    return url.pathname === '/api/search-profile/settings' && request.method() === 'PATCH'
   })
   await page.keyboard.press('=')
 
@@ -706,7 +747,7 @@ test('adjusts the focused folder quality with keyboard shortcuts', async ({ page
   expect(request.postDataJSON()).toEqual({
     source_id: 'sample',
     directory: 'maps',
-    quality: 5,
+    quality_override: null,
   })
   await expect(page.getByRole('button', { name: 'Folder controls for maps, quality 5' })).toBeVisible()
 })

@@ -20,8 +20,7 @@ The normal UI/API should stay fast and lean. Detailed ranking diagnostics belong
 
 ## Retrieval Lanes
 
-Search is designed as multiple retrieval lanes. A final ranker/fusion layer can
-exist, but it should not be the only user-facing way to consume results.
+Search is designed as multiple retrieval lanes.
 
 Each lane answers: "Which assets match this query by this method?"
 
@@ -43,13 +42,7 @@ Planned lanes:
    - not required for v1
    - architecture should allow adding it later without rewriting search/ranking
 
-4. **Aggregated/fused view**
-   - optional view that combines candidates from all lanes
-   - implementation formula is intentionally not finalized
-   - must be localized in one easy-to-edit function/module
-
-The API and frontend should be able to request and display individual lanes
-directly, not only a fused `combined` result. The UI may expose this as tabs,
+The API and frontend request and display individual lanes directly. The UI may expose this as tabs,
 parallel columns, or an aggregated result stream that is grouped horizontally or
 sequentially by lane. A plausible default result shape is:
 
@@ -63,10 +56,9 @@ without waiting for broader or slower lanes.
 
 Current implementation status:
 
-- `strict`: token-accurate filename/stem/path matching backed by Tantivy. The strict benchmark scope requires every query token to match, and normal strict UI/API results use Tantivy ranking directly instead of the slower Python fusion ranker.
+- `strict`: token-accurate filename/stem/path matching backed by Tantivy. The strict benchmark scope requires every query token to match, and normal strict UI/API results use Tantivy ranking plus profile preferences.
 - `fuzzy`: typo/separator-tolerant matching using RapidFuzz over indexed filename/path data.
 - `domain`: query-time vocabulary expansion from `config/search-vocabulary.yaml` or the configured `[search].domain_vocabulary` path.
-- `combined`: compatibility/workbench search, combining strict, fuzzy, and domain candidates through the Python ranker in `findme.search`.
 
 SQLite is durable storage for indexed assets, not the interactive search path. The
 running app loads the indexed rows into a process-local in-memory search
@@ -81,9 +73,8 @@ Domain vocabulary changes are applied at query time and do not require re-indexi
 
 ## Runtime Performance
 
-The API keeps a bounded process-local LRU cache of fully ranked Python-fusion
-results for query/scope/mode/vocabulary combinations. Strict Tantivy lane
-requests bypass that cache and page directly from the lexical index.
+The API keeps a bounded process-local LRU cache of preference-adjusted
+results for query/scope/mode/vocabulary/profile combinations.
 
 Concurrent identical searches are coalesced in process: the first request owns
 the ranking work, and later identical requests wait for the same result unless
@@ -208,14 +199,13 @@ Hard requirements:
 
 - final ranking logic is centralized and localized
 - changing ranking should not require touching indexing, API, UI, or lane implementations
-- source priority is applied in the final ranker, not inside retrieval lanes
 - user-defined source/directory quality is applied as a final ranking
   adjustment, not inside retrieval lanes
 - selected source/directory scope is a hard filter before or during retrieval
 - stale assets are hidden from normal search
 - diagnostics expose enough signals to tune ranking
 
-A likely starting point is rank fusion plus explicit boosts/penalties, but this remains an implementation detail. Raw scores from different lanes should not be assumed comparable.
+Raw scores from different lanes should not be assumed comparable.
 
 Potential ranking inputs:
 
@@ -224,14 +214,12 @@ Potential ranking inputs:
 - exact token/stem matches
 - prefix/infix/fuzzy match signals
 - domain-expanded match signals
-- source priority
 - user-defined source/directory quality
-- media type
 - recency or other file metadata if useful
 - future semantic similarity
 
-Strict lexical search still uses Tantivy for retrieval, but preference ranking is
-applied after retrieval through a lightweight rerank step:
+Strict lexical search still uses Tantivy for retrieval, but profile preferences
+are applied after retrieval:
 
 ```text
 strict candidates + Tantivy score -> preference adjustment -> sorted results
@@ -253,7 +241,7 @@ It should allow:
 - seeing final ranked results
 - seeing per-lane candidates, ranks, and raw scores
 - seeing domain expansions used
-- seeing source priority and final ranking inputs
+- seeing profile preference and final ranking inputs
 - inspecting why good/bad results appeared
 
 The workbench exists because ranking quality will be tuned against real crawl data.

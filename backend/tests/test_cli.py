@@ -253,7 +253,7 @@ media_extensions = [".png"]
     assert search_rows == 0
 
 
-def test_cli_search_eval_runs_combined_scope(tmp_path: Path, capsys) -> None:
+def test_cli_search_eval_runs_strict_scope(tmp_path: Path, capsys) -> None:
     source_root = tmp_path / "assets"
     source_root.mkdir()
     write_image(source_root / "goblin_warrior.png")
@@ -286,7 +286,7 @@ queries:
   - id: goblin-warrior
     text: goblin warrior
     expectations:
-      - scope: combined
+      - scope: strict
         assert: findable
         target: goblin_warriors
         importance: 1.0
@@ -305,7 +305,7 @@ queries:
                 "--eval",
                 str(eval_path),
                 "--scope",
-                "combined",
+                "strict",
             ]
         )
         == 0

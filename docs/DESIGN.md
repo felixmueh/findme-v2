@@ -227,10 +227,8 @@ Settled design constraints:
 - no live filesystem walking during search
 - search lanes are directly requestable user-facing modes
 - each lane may use its engine's own ranking when that is faster and good enough
-- fused ranking is optional and should not block fast exact-lane interaction
-- source priority should be a ranking signal or tiebreaker, not a hard ordering rule
 - selected source/directory filters should be hard filters
-- result cards and matched directory counts should come from the same search scope; clients should use a combined search response when both are needed
+- result cards and matched directory counts should come from the same search scope; clients should use a search-with-directory-counts response when both are needed
 - ranking explainability is optional; ranking quality and tunability matter more
 
 Initial search lanes should include strict lexical evidence, fuzzy lexical evidence, and domain-expanded evidence. Future semantic/image-text evidence should fit the same lane model. Strict and fuzzy lexical search may share implementation machinery, but they should remain separate logical lanes because they have different precision, recall, and ranking weight expectations.
@@ -238,7 +236,6 @@ Initial search lanes should include strict lexical evidence, fuzzy lexical evide
 Potential ranking inputs:
 
 - text match score
-- source priority
 - user-defined source/directory quality
 - selected source/directory filters
 - media type
@@ -319,25 +316,21 @@ It should:
 - show sources ordered by configured priority/name
 - show expandable indexed directories
 - show asset counts per source/directory
-- act as a hard filter for search and browse through explicit include/exclude subtree rules
+- act as a hard filter for search and browse through active search profile include/exclude subtree rules
 - never perform live filesystem walking from the UI
 - expose a persistent user-defined quality label from 0 to 10 for each indexed
   source/directory
 
-Directory quality is user-edited runtime preference data and lives in the app
-database, not in source folders or server config. It is a ranking signal, not a
-hard filter. Changing quality should update the live search index preferences,
-clear ranked result caches, and make the current query/browse ordering change
-without re-indexing or restarting the app.
+Directory quality and selection are user-edited search profile data and live in
+the app database for persisted profiles, not in source folders or server config.
+Quality is a ranking signal. Selection is a hard filter. Unsaved profile edits
+live in backend memory per browser search session.
 
-Current reranking updates preference scores incrementally and swaps the live
-preference table after the update. A search already in progress while that swap
-happens may observe a mix of old and new preferences. This is acceptable for now
-because subsequent searches see the new preference revision, but future
-performance/concurrency work should make each search use a stable preference
-snapshot for the duration of ranking.
-
-The final sidebar filtering model is tracked in `docs/SIDEBAR_FILTERING.md`. In that model, source roots and directories can be marked as green whitelist or red blacklist rules. The nearest specified ancestor decides whether an asset is included, and the existence of any whitelist rule globally excludes otherwise-unspecified assets. This rule model replaces a single selected-directory hard filter.
+The active sidebar profile model is tracked in `SEARCH_PROFILES_DESIGN.md`.
+Source roots and directories can be marked as green whitelist or red blacklist
+rules. The nearest specified ancestor decides whether an asset is included, and
+the existence of any whitelist rule globally excludes otherwise-unspecified
+assets. This rule model replaces a single selected-directory hard filter.
 
 A row selection can still focus, expand, or provide preview context, but final hard filtering should come from the explicit include/exclude subtree rules. Global empty-query behavior can be conservative, such as showing nothing, recent assets, or preferred assets.
 

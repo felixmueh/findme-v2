@@ -188,21 +188,10 @@ Unspecified nodes should be omitted from the serialized rule list.
 
 ## API Shape
 
-Because rule state is temporary client state, the client sends the current rule set with search requests. The backend does not persist these rules.
-
-Recommended request representation:
-
-```text
-filter_rule={"source_id":"dnd","path":"","state":"whitelist"}
-filter_rule={"source_id":"dnd","path":"Creatures/Unused","state":"blacklist"}
-```
-
-Each `filter_rule` value is a small JSON object encoded through normal URL query encoding. This avoids inventing path separator escaping rules.
-
-Notes:
-
-- `directory_path` may be empty for a source root.
-- The server must validate source IDs, state values, and normalized directory paths.
+This temporary client-owned API shape has been superseded by
+`SEARCH_PROFILES_DESIGN.md`. Folder selection now lives in the backend-owned
+active search profile for the browser search session, and search requests send
+only `search_session`.
 - Unknown sources or malformed rules should produce a clear 400 error.
 - Duplicate rules for the same node should be rejected or last-write-wins consistently; rejecting is preferred because it surfaces client bugs.
 - Multiple whitelist rules in the same source subtree should be rejected because the client is responsible for normalizing whitelist focus before sending rules.
@@ -285,7 +274,7 @@ Frontend behavior tests should cover:
 When this work touches search behavior, run the local DND search benchmark/evaluation command before considering it complete:
 
 ```bash
-uv run findme search-eval --config config/findme.server.toml --eval search-eval/dnd.yaml --scope combined
+uv run findme search-eval --config config/findme.server.toml --eval search-eval/dnd.yaml --scope strict --scope fuzzy --scope domain
 ```
 
 ## Open Non-Blocking Details

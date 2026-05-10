@@ -20,7 +20,7 @@ queries:
   - id: goblin-warrior
     text: goblin warrior
     expectations:
-      - scope: combined
+      - scope: strict
         assert: findable
         target: adventurers
         importance: 1.0
@@ -54,12 +54,12 @@ queries:
   - id: goblin-warrior
     text: goblin warrior
     expectations:
-      - scope: combined
+      - scope: strict
         assert: findable
         target: goblin_warriors
         importance: 1.0
         gate: true
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: goblin_warriors
         worse: generic_goblins
@@ -102,12 +102,12 @@ queries:
   - id: green-dragon
     text: green dragon
     expectations:
-      - scope: combined
+      - scope: strict
         assert: findable
         target: green_dragons
         importance: 1.0
         gate: true
-      - scope: combined
+      - scope: strict
         assert: not_findable
         target: green_goblins
         importance: 0.5
@@ -149,7 +149,7 @@ queries:
   - id: green-dragon
     text: green dragon
     expectations:
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: good
         worse: bad

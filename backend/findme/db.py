@@ -6,7 +6,7 @@ from pathlib import Path
 import sqlite3
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 @contextmanager
@@ -41,12 +41,29 @@ def initialize_database(db: sqlite3.Connection) -> None:
           priority INTEGER NOT NULL
         );
 
-        CREATE TABLE IF NOT EXISTS folder_quality_overrides (
+        CREATE TABLE IF NOT EXISTS search_profiles (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          kind TEXT NOT NULL CHECK (kind IN ('none', 'default', 'custom')),
+          version INTEGER NOT NULL DEFAULT 1,
+          sort_order INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_search_profiles_kind_builtin
+          ON search_profiles(kind)
+          WHERE kind IN ('none', 'default');
+
+        CREATE TABLE IF NOT EXISTS search_profile_folder_settings (
+          profile_id TEXT NOT NULL REFERENCES search_profiles(id) ON DELETE CASCADE,
           source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
           directory TEXT NOT NULL,
-          quality INTEGER NOT NULL CHECK (quality BETWEEN 0 AND 10),
+          quality_override INTEGER CHECK (quality_override BETWEEN 0 AND 10),
+          selection_state TEXT CHECK (selection_state IN ('whitelist', 'blacklist')),
           updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-          PRIMARY KEY (source_id, directory)
+          PRIMARY KEY (profile_id, source_id, directory),
+          CHECK (quality_override IS NOT NULL OR selection_state IS NOT NULL)
         );
 
         CREATE TABLE IF NOT EXISTS assets (
@@ -93,9 +110,57 @@ def initialize_database(db: sqlite3.Connection) -> None:
     _ensure_column(db, "assets", "thumbnail_path", "TEXT")
     _ensure_column(db, "assets", "thumbnail_width", "INTEGER")
     _ensure_column(db, "assets", "thumbnail_height", "INTEGER")
+    _ensure_builtin_search_profiles(db)
+    _migrate_folder_quality_overrides(db)
 
 
 def _ensure_column(db: sqlite3.Connection, table: str, column: str, definition: str) -> None:
     columns = {row["name"] for row in db.execute(f"PRAGMA table_info({table})")}
     if column not in columns:
         db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
+def _ensure_builtin_search_profiles(db: sqlite3.Connection) -> None:
+    db.execute(
+        """
+        INSERT OR IGNORE INTO search_profiles(id, name, kind, version, sort_order)
+        VALUES ('none', 'None', 'none', 1, 0)
+        """
+    )
+    db.execute(
+        """
+        INSERT OR IGNORE INTO search_profiles(id, name, kind, version, sort_order)
+        VALUES ('default', 'Default', 'default', 1, 1)
+        """
+    )
+
+
+def _migrate_folder_quality_overrides(db: sqlite3.Connection) -> None:
+    legacy_exists = db.execute(
+        """
+        SELECT 1
+        FROM sqlite_master
+        WHERE type = 'table' AND name = 'folder_quality_overrides'
+        """
+    ).fetchone()
+    if legacy_exists is None:
+        return
+    db.execute(
+        """
+        INSERT INTO search_profile_folder_settings(
+          profile_id,
+          source_id,
+          directory,
+          quality_override,
+          selection_state,
+          updated_at
+        )
+        SELECT 'default', source_id, directory, quality, NULL, updated_at
+        FROM folder_quality_overrides
+        WHERE quality != 5
+        ON CONFLICT(profile_id, source_id, directory) DO UPDATE SET
+          quality_override = excluded.quality_override,
+          updated_at = excluded.updated_at
+        """
+    )
+    db.execute("DROP TABLE folder_quality_overrides")

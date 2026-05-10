@@ -941,14 +941,14 @@ queries:
         target: goblin_warriors
         importance: 1.0
         gate: true
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: goblin_warriors
         worse: generic_goblins
         rule: majority
         importance: 0.9
         gate: true
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: goblin_warriors
         worse: orc_warriors
@@ -965,7 +965,7 @@ queries:
         target: goblin_warriors
         importance: 1.0
         gate: true
-      - scope: combined
+      - scope: fuzzy
         assert: findable
         target: goblin_warriors
         importance: 1.0
@@ -985,7 +985,7 @@ queries:
         target: human_warriors
         importance: 0.9
         gate: true
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: human_warriors
         worse: goblin_warriors
@@ -1002,14 +1002,14 @@ queries:
         target: green_dragons
         importance: 1.0
         gate: true
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: green_dragons
         worse: green_non_dragons
         rule: majority
         importance: 1.0
         gate: true
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: green_dragons
         worse: non_green_dragons
@@ -1026,7 +1026,7 @@ queries:
         target: pseudo_dragons
         importance: 1.0
         gate: true
-      - scope: combined
+      - scope: fuzzy
         assert: findable
         target: pseudo_dragons
         importance: 1.0
@@ -1042,7 +1042,7 @@ queries:
         target: adventurer_character_classes
         importance: 1.0
         gate: true
-      - scope: combined
+      - scope: domain
         assert: findable
         target: adventurer_character_classes
         importance: 0.9
@@ -1057,11 +1057,11 @@ queries:
         target: tavern_music
         importance: 0.9
         gate: true
-      - scope: combined
+      - scope: strict
         assert: findable
         target: tavern_visuals
         importance: 0.6
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: tavern_music
         worse: non_tavern_music
@@ -1078,7 +1078,7 @@ queries:
         target: combat_music
         importance: 0.9
         gate: true
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: combat_music
         worse: tavern_music
@@ -1097,7 +1097,7 @@ queries:
           relative_path: "animated_dungeon_megapack/secret_door.png"
         importance: 1.0
         gate: true
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better:
           source_id: mapmaking
@@ -1105,7 +1105,7 @@ queries:
         worse: generic_dungeon_doors
         rule: majority
         importance: 0.7
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: generic_dungeon_doors
         worse: generic_door_sounds
@@ -1122,7 +1122,7 @@ queries:
         target: blood_splatters
         importance: 1.0
         gate: true
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: blood_splatters
         worse: blood_tiles
@@ -1141,7 +1141,7 @@ queries:
           relative_path: "ForgottenAdventures/Buildings___Structures/Bridges/Log_Bridge.png"
         importance: 1.0
         gate: true
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: visual_bridges
         worse: bridge_sounds
@@ -1158,7 +1158,7 @@ queries:
         target: rain_thunder_sounds
         importance: 0.9
         gate: true
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: rain_thunder_sounds
         worse: generic_door_sounds
@@ -1175,7 +1175,7 @@ queries:
         target: forest_ambience_sounds
         importance: 0.9
         gate: true
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: forest_ambience_sounds
         worse: generic_door_sounds
@@ -1191,13 +1191,13 @@ queries:
         assert: findable
         target: skeleton_archers
         importance: 0.8
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: skeleton_archers
         worse: skeleton_casters
         rule: majority
         importance: 0.6
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: skeleton_archers
         worse: skeleton_soldiers
@@ -1213,7 +1213,7 @@ queries:
         assert: findable
         target: skeleton_casters
         importance: 0.8
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: skeleton_casters
         worse: skeleton_archers
@@ -1229,7 +1229,7 @@ queries:
         assert: findable
         target: zombies
         importance: 0.8
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: zombies
         worse: skeleton_soldiers
@@ -1245,7 +1245,7 @@ queries:
         assert: findable
         target: liches
         importance: 0.8
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: liches
         worse: zombies
@@ -1261,7 +1261,7 @@ queries:
         assert: findable
         target: werewolves
         importance: 0.8
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: werewolves
         worse: owlbears
@@ -1277,7 +1277,7 @@ queries:
         assert: findable
         target: owlbears
         importance: 0.9
-      - scope: combined
+      - scope: fuzzy
         assert: findable
         target: owlbears
         importance: 0.8
@@ -1291,7 +1291,7 @@ queries:
         assert: findable
         target: gelatinous_cubes
         importance: 0.8
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: gelatinous_cubes
         worse: green_non_dragons
@@ -1307,7 +1307,7 @@ queries:
         assert: findable
         target: beholders
         importance: 0.8
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: beholders
         worse: mind_flayers
@@ -1323,7 +1323,7 @@ queries:
         assert: findable
         target: mind_flayers
         importance: 0.8
-      - scope: combined
+      - scope: fuzzy
         assert: group_ranks_above
         better: mind_flayers
         worse: beholders
@@ -1339,7 +1339,7 @@ queries:
         assert: findable
         target: mind_flayers
         importance: 0.8
-      - scope: combined
+      - scope: fuzzy
         assert: findable
         target: mind_flayers
         importance: 0.7
@@ -1353,7 +1353,7 @@ queries:
         assert: findable
         target: mimics
         importance: 0.8
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: mimics
         worse: dungeon_chests
@@ -1369,7 +1369,7 @@ queries:
         assert: findable
         target: fire_elementals
         importance: 0.8
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: fire_elementals
         worse: water_elementals
@@ -1385,7 +1385,7 @@ queries:
         assert: findable
         target: water_elementals
         importance: 0.8
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: water_elementals
         worse: fire_elementals
@@ -1401,7 +1401,7 @@ queries:
         assert: findable
         target: paladins
         importance: 0.8
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: paladins
         worse: human_warriors
@@ -1417,7 +1417,7 @@ queries:
         assert: findable
         target: warlocks
         importance: 0.8
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: warlocks
         worse: mages
@@ -1433,7 +1433,7 @@ queries:
         assert: findable
         target: dragonborn_heroes
         importance: 0.7
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better:
           source_id: tokens
@@ -1451,7 +1451,7 @@ queries:
         assert: findable
         target: dungeon_chests
         importance: 0.8
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: dungeon_chests
         worse: mimics
@@ -1467,7 +1467,7 @@ queries:
         assert: findable
         target: trap_assets
         importance: 0.7
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: trap_assets
         worse: dungeon_chests
@@ -1483,7 +1483,7 @@ queries:
         assert: findable
         target: magic_portals
         importance: 0.7
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: magic_portals
         worse: magic_spell_sounds
@@ -1499,7 +1499,7 @@ queries:
         assert: findable
         target: stone_wells
         importance: 0.7
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: stone_wells
         worse: dungeon_chests
@@ -1515,7 +1515,7 @@ queries:
         assert: findable
         target: lava_terrain
         importance: 0.7
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: lava_terrain
         worse: forest_ambience_sounds
@@ -1531,7 +1531,7 @@ queries:
         assert: findable
         target: necromancer_altars
         importance: 0.7
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: necromancer_altars
         worse: tavern_visuals
@@ -1547,7 +1547,7 @@ queries:
         assert: findable
         target: coffins
         importance: 0.7
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: coffins
         worse: generic_dungeon_doors
@@ -1563,7 +1563,7 @@ queries:
         assert: findable
         target: curse_of_strahd_death_house_maps
         importance: 0.8
-      - scope: combined
+      - scope: fuzzy
         assert: group_ranks_above
         better: curse_of_strahd_death_house_maps
         worse: coffins
@@ -1579,7 +1579,7 @@ queries:
         assert: findable
         target: castle_ravenloft_maps
         importance: 0.8
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: castle_ravenloft_maps
         worse: curse_of_strahd_death_house_maps
@@ -1595,7 +1595,7 @@ queries:
         assert: findable
         target: curse_of_strahd_werewolf_den_maps
         importance: 0.8
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: curse_of_strahd_werewolf_den_maps
         worse: werewolves
@@ -1611,7 +1611,7 @@ queries:
         assert: findable
         target: horse_sounds
         importance: 0.7
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: horse_sounds
         worse: footstep_sounds
@@ -1627,7 +1627,7 @@ queries:
         assert: findable
         target: footstep_sounds
         importance: 0.7
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: footstep_sounds
         worse: generic_dungeon_doors
@@ -1643,7 +1643,7 @@ queries:
         assert: findable
         target: magic_spell_sounds
         importance: 0.7
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: magic_spell_sounds
         worse: magic_portals
@@ -1659,7 +1659,7 @@ queries:
         assert: findable
         target: cathedral_music
         importance: 0.8
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: cathedral_music
         worse: combat_music
@@ -1675,7 +1675,7 @@ queries:
         assert: findable
         target: chase_music
         importance: 0.8
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: chase_music
         worse: stealth_music
@@ -1691,7 +1691,7 @@ queries:
         assert: findable
         target: stealth_music
         importance: 0.8
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: stealth_music
         worse: chase_music
@@ -1709,7 +1709,7 @@ queries:
           source_id: tokens
           relative_path: "FA_Tokens/Adversaries/Goblins/Goblin_Druid_01.png"
         importance: 0.7
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better:
           source_id: tokens
@@ -1729,7 +1729,7 @@ queries:
           source_id: tokens
           relative_path: "FA_Tokens/Adversaries/Drow/Drow_Cleric_Mace_01.png"
         importance: 0.7
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better:
           source_id: tokens
@@ -1747,7 +1747,7 @@ queries:
         assert: findable
         target: wolf_tokens
         importance: 0.7
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: wolf_tokens
         worse: werewolves
@@ -1765,7 +1765,7 @@ queries:
           source_id: tokens
           relative_path: "devinnight/TP0Freebies/Polarbear_02.png"
         importance: 0.7
-      - scope: combined
+      - scope: fuzzy
         assert: group_ranks_above
         better: bear_tokens
         worse: bugbear_tokens
@@ -1783,7 +1783,7 @@ queries:
           source_id: tokens
           relative_path: "devinnight/TP4Werecreatures/rat_swarm.png"
         importance: 0.8
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: rat_tokens
         worse: bugbear_tokens
@@ -1799,7 +1799,7 @@ queries:
         assert: findable
         target: spider_tokens
         importance: 0.8
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: spider_tokens
         worse: hill_giant_tokens
@@ -1817,7 +1817,7 @@ queries:
           source_id: tokens
           relative_path: "devinnight/TP6Familiars/FS1_Raven.png"
         importance: 0.7
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: familiar_tokens
         worse: dragonborn_heroes
@@ -1833,7 +1833,7 @@ queries:
         assert: findable
         target: marine_rifle_tokens
         importance: 0.7
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: marine_rifle_tokens
         worse: human_warriors
@@ -1849,7 +1849,7 @@ queries:
         assert: findable
         target: swat_tokens
         importance: 0.7
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: swat_tokens
         worse: marine_rifle_tokens
@@ -1865,7 +1865,7 @@ queries:
         assert: findable
         target: alien_bug_gunners
         importance: 0.7
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: alien_bug_gunners
         worse: marine_rifle_tokens
@@ -1881,7 +1881,7 @@ queries:
         assert: findable
         target: hill_giant_tokens
         importance: 0.8
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: hill_giant_tokens
         worse: spider_tokens
@@ -1897,7 +1897,7 @@ queries:
         assert: findable
         target: troll_tokens
         importance: 0.7
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: troll_tokens
         worse: ogre_tokens
@@ -1913,7 +1913,7 @@ queries:
         assert: findable
         target: balor_tokens
         importance: 0.8
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: balor_tokens
         worse: devil_tokens
@@ -1931,7 +1931,7 @@ queries:
           source_id: tokens
           relative_path: "FA_Tokens/Creatures/Fiend/Chain_Devil_Medium_Scale300_Fiend_01.png"
         importance: 0.8
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: devil_tokens
         worse: balor_tokens
@@ -1947,7 +1947,7 @@ queries:
         assert: findable
         target: airship_maps
         importance: 0.7
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: airship_maps
         worse: visual_bridges
@@ -1963,7 +1963,7 @@ queries:
         assert: findable
         target: ancient_ruins_maps
         importance: 0.7
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: ancient_ruins_maps
         worse: dungeon_chests
@@ -1979,7 +1979,7 @@ queries:
         assert: findable
         target: forest_camp_maps
         importance: 0.7
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: forest_camp_maps
         worse: forest_ambience_sounds
@@ -1995,7 +1995,7 @@ queries:
         assert: findable
         target: city_street_maps
         importance: 0.7
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: city_street_maps
         worse: market_crowd_sounds
@@ -2011,7 +2011,7 @@ queries:
         assert: findable
         target: desert_maps
         importance: 0.7
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: desert_maps
         worse: water_sounds
@@ -2027,7 +2027,7 @@ queries:
         assert: findable
         target: cave_maps
         importance: 0.7
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: cave_maps
         worse: generic_goblins
@@ -2043,7 +2043,7 @@ queries:
         assert: findable
         target: sewer_maps
         importance: 0.7
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: sewer_maps
         worse: rat_tokens
@@ -2059,7 +2059,7 @@ queries:
         assert: findable
         target: snow_overlay_assets
         importance: 0.7
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: snow_overlay_assets
         worse: rain_thunder_sounds
@@ -2075,7 +2075,7 @@ queries:
         assert: findable
         target: tent_assets
         importance: 0.7
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: tent_assets
         worse: dungeon_chests
@@ -2091,7 +2091,7 @@ queries:
         assert: findable
         target: tentacle_assets
         importance: 0.7
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: tentacle_assets
         worse: tent_assets
@@ -2107,7 +2107,7 @@ queries:
         assert: findable
         target: fireball_overlays
         importance: 0.7
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: fireball_overlays
         worse: explosion_sounds
@@ -2123,7 +2123,7 @@ queries:
         assert: findable
         target: lightning_overlays
         importance: 0.7
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: lightning_overlays
         worse: magic_spell_sounds
@@ -2139,7 +2139,7 @@ queries:
         assert: findable
         target: magic_circle_overlays
         importance: 0.7
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: magic_circle_overlays
         worse: magic_spell_sounds
@@ -2155,7 +2155,7 @@ queries:
         assert: findable
         target: amber_temple_maps
         importance: 0.8
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: amber_temple_maps
         worse: cathedral_music
@@ -2171,7 +2171,7 @@ queries:
         assert: findable
         target: vallaki_maps
         importance: 0.8
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: vallaki_maps
         worse: city_street_maps
@@ -2187,7 +2187,7 @@ queries:
         assert: findable
         target: wizard_of_wines_maps
         importance: 0.8
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: wizard_of_wines_maps
         worse: tavern_music
@@ -2203,7 +2203,7 @@ queries:
         assert: findable
         target: sword_fight_sounds
         importance: 0.7
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: sword_fight_sounds
         worse: human_warriors
@@ -2219,7 +2219,7 @@ queries:
         assert: findable
         target: explosion_sounds
         importance: 0.7
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: explosion_sounds
         worse: fireball_overlays
@@ -2235,7 +2235,7 @@ queries:
         assert: findable
         target: water_sounds
         importance: 0.7
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: water_sounds
         worse: water_elementals
@@ -2251,7 +2251,7 @@ queries:
         assert: findable
         target: market_crowd_sounds
         importance: 0.7
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: market_crowd_sounds
         worse: city_street_maps
@@ -2267,7 +2267,7 @@ queries:
         assert: findable
         target: gun_sounds
         importance: 0.7
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: gun_sounds
         worse: swat_tokens
@@ -2283,7 +2283,7 @@ queries:
         assert: findable
         target: manor_music
         importance: 0.7
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: manor_music
         worse: castle_ravenloft_maps
@@ -2299,7 +2299,7 @@ queries:
         assert: findable
         target: road_music
         importance: 0.7
-      - scope: combined
+      - scope: strict
         assert: group_ranks_above
         better: road_music
         worse: chase_music

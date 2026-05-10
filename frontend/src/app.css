@@ -55,12 +55,47 @@ button:disabled {
 
 .toolbar {
   display: grid;
-  grid-template-columns: 120px minmax(260px, 1fr) 210px 110px;
+  grid-template-columns: 90px minmax(240px, 1fr) 210px minmax(260px, 360px) 110px;
   gap: 8px;
   align-items: center;
   padding: 7px 10px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
+}
+
+.profile-controls {
+  min-width: 0;
+  height: 36px;
+  display: grid;
+  grid-template-columns: minmax(96px, 1fr) repeat(5, 32px);
+  gap: 4px;
+  align-items: center;
+}
+
+.profile-controls select,
+.profile-controls button {
+  height: 32px;
+  min-width: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface-alt);
+  color: var(--text);
+}
+
+.profile-controls select {
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.profile-controls button {
+  display: grid;
+  place-items: center;
+}
+
+.profile-controls button:disabled {
+  color: var(--muted);
+  background: transparent;
+  border-color: var(--border);
 }
 
 .lane-tabs {
@@ -801,7 +836,7 @@ button.folder-row.retained {
 
   .toolbar {
     grid-template-columns: 1fr;
-    grid-template-rows: repeat(4, auto);
+    grid-template-rows: repeat(5, auto);
   }
 
   .status {

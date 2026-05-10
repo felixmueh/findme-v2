@@ -15,11 +15,18 @@ def test_initialize_database_creates_schema_and_wal_database(tmp_path: Path) -> 
                 "SELECT name FROM sqlite_master WHERE type = 'table'"
             ).fetchall()
         }
+        profiles = {
+            row[0]: row[1]
+            for row in db.execute("SELECT id, kind FROM search_profiles").fetchall()
+        }
 
     assert journal_mode == "wal"
     assert {
         "sources",
         "assets",
-        "folder_quality_overrides",
+        "search_profiles",
+        "search_profile_folder_settings",
         "schema_migrations",
     } <= tables
+
+    assert profiles == {"none": "none", "default": "default"}

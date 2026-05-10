@@ -114,7 +114,7 @@ def run(argv: list[str]) -> int:
 
         if args.command == "search-eval":
             evaluation = load_search_evaluation(args.eval)
-            selected_scopes = frozenset(args.scope or ["combined"])
+            selected_scopes = frozenset(args.scope or ["strict", "fuzzy", "domain"])
             evaluation = _filter_evaluation_scopes(evaluation, selected_scopes)
             domain_vocabulary = (
                 load_domain_vocabulary(config.domain_vocabulary_path)
@@ -231,7 +231,7 @@ def _build_parser() -> argparse.ArgumentParser:
     search_eval.add_argument(
         "--scope",
         action="append",
-        choices=["strict", "fuzzy", "domain", "combined"],
+        choices=["strict", "fuzzy", "domain"],
         help="benchmark scope to evaluate",
     )
     search_eval.add_argument(
@@ -245,7 +245,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _search_mode(scope: str) -> SearchMode:
-    if scope not in {"strict", "fuzzy", "domain", "combined"}:
+    if scope not in {"strict", "fuzzy", "domain"}:
         raise ValueError(f"unsupported search scope: {scope}")
     return scope
 

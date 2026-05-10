@@ -25,7 +25,7 @@ npm --prefix frontend run build
 uv run findme init-db --config config/findme.server.toml
 uv run findme index --config config/findme.server.toml
 uv run findme serve --config config/findme.server.toml --host 0.0.0.0 --port 8000 --static-dir frontend/dist
-uv run findme search-eval --config config/findme.server.toml --eval search-eval/dnd.yaml --scope combined
+uv run findme search-eval --config config/findme.server.toml --eval search-eval/dnd.yaml --scope strict --scope fuzzy --scope domain
 ```
 
 Open the app at the server address on port 8000. The server host always uses port 8000, regardless of the worktree `.port` file.
