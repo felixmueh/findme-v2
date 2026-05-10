@@ -9,3 +9,5 @@ frontend/dist/
 frontend/node_modules/
 sample-assets
 *.org
+.port
+.sbx

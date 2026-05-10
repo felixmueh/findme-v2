@@ -26,13 +26,13 @@ uv run pytest
 npm --prefix frontend run build
 uv run findme init-db --config config/findme.dev.toml
 uv run findme index --config config/findme.dev.toml
-uv run findme serve --config config/findme.dev.toml --host 0.0.0.0 --port 8000 --static-dir frontend/dist
+uv run findme serve --config config/findme.dev.toml --host 0.0.0.0 --port "$(cat .port)" --static-dir frontend/dist
 ```
 
-Publish sandbox port 8000 to the host. Open the app from the laptop host at:
+Publish the sandbox port recorded in `.port` to the host. Open the app from the laptop host at:
 
 ```text
-http://localhost:8000
+http://localhost:<port-from-.port>
 ```
 
 ## Requires Explicit Confirmation

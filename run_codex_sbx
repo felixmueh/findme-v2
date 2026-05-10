@@ -1,0 +1,207 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+sandbox_name="${CODEX_SBX_NAME:-codex-findme-v2}"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+env_profile="${CODEX_SBX_ENV_PROFILE:-$repo_root/docs/environments/server-sbx.md}"
+host_ip="${CODEX_SBX_HOST_IP:-0.0.0.0}"
+
+branch=""
+
+usage() {
+  cat >&2 <<EOF
+usage: $(basename "$0") [--branch BRANCH] [-- COMMAND...]
+
+Examples:
+  $(basename "$0")
+  $(basename "$0") --branch agent/foo
+  $(basename "$0") --branch agent/foo codex
+  $(basename "$0") --branch=agent/foo
+EOF
+}
+
+args=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --branch)
+      if [[ $# -lt 2 ]]; then
+        echo "missing value for --branch" >&2
+        usage
+        exit 2
+      fi
+      branch="$2"
+      shift 2
+      ;;
+    --branch=*)
+      branch="${1#--branch=}"
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      args+=("$@")
+      break
+      ;;
+    *)
+      args+=("$1")
+      shift
+      ;;
+  esac
+done
+
+set -- "${args[@]}"
+
+if [[ ! -f "$env_profile" ]]; then
+  echo "environment profile not found: $env_profile" >&2
+  exit 1
+fi
+
+if ! command -v sbx >/dev/null 2>&1; then
+  echo "sbx not found in PATH" >&2
+  exit 1
+fi
+
+if ! command -v git >/dev/null 2>&1; then
+  echo "git not found in PATH" >&2
+  exit 1
+fi
+
+cd "$repo_root"
+
+if ! git rev-parse --show-toplevel >/dev/null 2>&1; then
+  echo "not a git repository: $repo_root" >&2
+  exit 1
+fi
+
+if [[ "$(git rev-parse --show-toplevel)" != "$repo_root" ]]; then
+  echo "script must live in the repository root" >&2
+  echo "repo root according to git: $(git rev-parse --show-toplevel)" >&2
+  echo "script directory:           $repo_root" >&2
+  exit 1
+fi
+
+find_worktree_for_branch() {
+  local wanted_branch="$1"
+
+  git worktree list --porcelain |
+    awk -v branch="refs/heads/$wanted_branch" '
+      $1 == "worktree" {
+        current_worktree = substr($0, 10)
+      }
+      $1 == "branch" && $2 == branch {
+        print current_worktree
+        exit
+      }
+    '
+}
+
+random_free_port() {
+  python3 - <<'PY'
+import socket
+
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+    s.bind(("", 0))
+    print(s.getsockname()[1])
+PY
+}
+
+publish_port() {
+  local app_port="$1"
+  local port_spec="${host_ip}:${app_port}:${app_port}"
+
+  (
+    for attempt in {1..20}; do
+      if sbx ports "$sandbox_name" 2>/dev/null | grep -Fq "$port_spec"; then
+        exit 0
+      fi
+
+      publish_output="$(sbx ports "$sandbox_name" --publish "$port_spec" 2>&1)" && exit 0
+
+      if grep -Eiq 'already|allocated|in use' <<<"$publish_output"; then
+        exit 0
+      fi
+
+      if [[ "$attempt" == 20 ]]; then
+        printf '%s\n' "$publish_output" >&2
+        echo "failed to publish sandbox port after $attempt attempts: $port_spec" >&2
+        exit 1
+      fi
+
+      sleep 1
+    done
+  ) &
+}
+
+ensure_sandbox_exists() {
+  if ! sbx ls --quiet | grep -Fxq "$sandbox_name"; then
+    sbx create --name "$sandbox_name" codex "$repo_root"
+  fi
+}
+
+read_port_from_env_profile() {
+  local profile="$1"
+  local port
+
+  port="$(sed -n 's/.*--port \([0-9][0-9]*\).*/\1/p' "$profile" | head -n 1)"
+
+  if [[ -z "$port" ]]; then
+    echo "could not find a serve --port value in $profile" >&2
+    exit 1
+  fi
+
+  printf '%s\n' "$port"
+}
+
+read_or_create_worktree_port() {
+  local worktree_dir="$1"
+  local port_file="$worktree_dir/.port"
+  local port
+
+  if [[ ! -e "$port_file" ]]; then
+    random_free_port > "$port_file"
+  fi
+
+  port="$(tr -d '[:space:]' < "$port_file")"
+
+  if [[ ! "$port" =~ ^[0-9]+$ ]]; then
+    echo "invalid port in $port_file: $port" >&2
+    exit 1
+  fi
+
+  printf '%s\n' "$port"
+}
+
+ensure_sandbox_exists
+
+if [[ -n "$branch" ]]; then
+  # Create/reuse the sbx branch worktree, then exit immediately.
+  sbx run "$sandbox_name" --branch "$branch" -- true >/dev/null
+
+  worktree_dir="$(find_worktree_for_branch "$branch")"
+
+  if [[ -z "$worktree_dir" ]]; then
+    # Fallback for the usual sbx worktree layout.
+    worktree_dir="$repo_root/.sbx/${sandbox_name}-worktrees/${branch}"
+  fi
+
+  if [[ ! -d "$worktree_dir" ]]; then
+    echo "could not find sbx worktree for branch: $branch" >&2
+    echo "expected/fallback path was: $worktree_dir" >&2
+    echo "known worktrees:" >&2
+    git worktree list >&2
+    exit 1
+  fi
+
+  app_port="$(read_or_create_worktree_port "$worktree_dir")"
+  publish_port "$app_port"
+
+  exec sbx run "$sandbox_name" --branch "$branch" -- "$@"
+else
+  app_port="$(read_port_from_env_profile "$env_profile")"
+  publish_port "$app_port"
+
+  exec sbx run "$sandbox_name" -- "$@"
+fi

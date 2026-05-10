@@ -25,14 +25,14 @@ uv run pytest
 npm --prefix frontend run build
 uv run findme init-db --config config/findme.server.toml
 uv run findme index --config config/findme.server.toml
-uv run findme serve --config config/findme.server.toml --host 0.0.0.0 --port 8001 --static-dir frontend/dist
+uv run findme serve --config config/findme.server.toml --host 0.0.0.0 --port "$(cat .port)" --static-dir frontend/dist
 uv run findme search-eval --config config/findme.server.toml --eval search-eval/dnd.yaml --scope combined
 ```
 
-Publish sandbox port 8001 to the host. Open the app from the host at:
+Publish the sandbox port recorded in `.port` to the host. Open the app from the host at:
 
 ```text
-http://localhost:8001
+http://localhost:<port-from-.port>
 ```
 
 ## Requires Explicit Confirmation

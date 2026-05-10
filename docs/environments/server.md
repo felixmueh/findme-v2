@@ -28,7 +28,7 @@ uv run findme serve --config config/findme.server.toml --host 0.0.0.0 --port 800
 uv run findme search-eval --config config/findme.server.toml --eval search-eval/dnd.yaml --scope combined
 ```
 
-Open the app at the server address on port 8000.
+Open the app at the server address on port 8000. The server host always uses port 8000, regardless of the worktree `.port` file.
 
 ## Requires Explicit Confirmation
 

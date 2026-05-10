@@ -25,13 +25,13 @@ uv run pytest
 npm --prefix frontend run build
 uv run findme init-db --config config/findme.dev.toml
 uv run findme index --config config/findme.dev.toml
-uv run findme serve --config config/findme.dev.toml --host 127.0.0.1 --port 8000 --static-dir frontend/dist
+uv run findme serve --config config/findme.dev.toml --host 127.0.0.1 --port "$(cat .port)" --static-dir frontend/dist
 ```
 
-Open the app at:
+Use the worktree-specific port recorded in `.port`. Open the app at:
 
 ```text
-http://localhost:8000
+http://localhost:<port-from-.port>
 ```
 
 ## Requires Explicit Confirmation

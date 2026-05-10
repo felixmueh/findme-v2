@@ -59,6 +59,8 @@ The host and sandbox may share the same repository working directory. The active
 
 Committed environment descriptions live in `docs/environments/`. Each profile describes accessible paths, writable paths, safe commands, commands that require explicit confirmation, and how to serve and index the app.
 
+Each worktree has its own app port recorded in the repository-root `.port` file. When launching the app, use the port from `.port` for that worktree, including Docker sandbox port publishing, except on the server host environment. The server host must always serve on port 8000 regardless of `.port`.
+
 Use `config/findme.dev.toml` on laptop and laptop-sbx. This indexes only `sample-assets` and may share `.findme-data` between the laptop host and laptop sandbox.
 
 Use `config/findme.server.toml` on server and server-sbx. Both server environments may assume `/media/NAS/main/Documents/DND` is mounted and may share `/var/lib/findme-v2`.
