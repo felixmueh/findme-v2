@@ -290,7 +290,7 @@ a:focus-visible {
   z-index: 2;
   display: grid;
   justify-items: end;
-  gap: 5px;
+  gap: 0;
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
@@ -318,11 +318,11 @@ a:focus-visible {
 }
 
 .preview-volume-control {
+  position: relative;
   width: 32px;
   height: 104px;
-  display: grid;
-  place-items: center;
-  padding: 8px 0;
+  display: block;
+  padding-top: 5px;
   border: 1px solid var(--border-strong);
   border-radius: 6px;
   background: var(--surface);
@@ -331,16 +331,23 @@ a:focus-visible {
   pointer-events: none;
 }
 
-.card-audio-controls:hover .preview-volume-control {
+.preview-mute-button:hover + .preview-volume-control,
+.preview-mute-button:focus-visible + .preview-volume-control,
+.preview-volume-control:hover,
+.preview-volume-control:focus-within {
   visibility: visible;
   opacity: 1;
   pointer-events: auto;
 }
 
 .preview-volume-control input {
+  position: absolute;
+  top: 50%;
+  left: 50%;
   width: 84px;
   accent-color: var(--accent);
-  transform: rotate(-90deg);
+  transform: translate(-50%, -50%) rotate(-90deg);
+  transform-origin: center;
 }
 
 .tile-thumb {

@@ -527,9 +527,19 @@ test('previews audio on hover and shows playback controls when selected', async 
   await expect(audioCard.getByRole('slider', { name: 'Preview volume' })).toBeHidden()
   await expect(page.getByLabel('Hovered asset preview').getByRole('button', { name: 'Unmute preview' })).toHaveCount(0)
 
-  await audioCard.getByRole('button', { name: 'Unmute preview' }).hover()
+  const muteButton = audioCard.getByRole('button', { name: 'Unmute preview' })
+  const muteButtonBox = await muteButton.boundingBox()
+  if (!muteButtonBox) throw new Error('mute button is missing')
+  await page.mouse.move(muteButtonBox.x + muteButtonBox.width / 2, muteButtonBox.y + muteButtonBox.height + 32)
+  await expect(audioCard.getByRole('slider', { name: 'Preview volume' })).toBeHidden()
+
+  await muteButton.hover()
   await expect(audioCard.getByRole('slider', { name: 'Preview volume' })).toBeVisible()
   await expect(audioCard.getByRole('slider', { name: 'Preview volume' })).toHaveValue('35')
+  const sliderBox = await audioCard.getByRole('slider', { name: 'Preview volume' }).boundingBox()
+  if (!sliderBox) throw new Error('preview slider is missing')
+  expect(sliderBox.x).toBeGreaterThanOrEqual(muteButtonBox.x - 44)
+  expect(sliderBox.x + sliderBox.width).toBeLessThanOrEqual(muteButtonBox.x + muteButtonBox.width + 44)
 
   await audioCard.getByRole('button', { name: 'Unmute preview' }).click()
   await expect(audioCard.getByRole('button', { name: 'Mute preview' })).toBeVisible()
