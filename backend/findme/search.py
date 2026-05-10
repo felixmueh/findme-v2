@@ -5,15 +5,23 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
-import re
 import sqlite3
 import threading
 
 from rapidfuzz import fuzz, process
-import tantivy
 import yaml
 
-from findme.result_cards import CardMetadata
+from findme.search_corpus import (
+    SearchCorpus,
+    SearchCorpusAsset,
+    SearchCorpusError,
+    SearchCorpusSnapshot,
+    SearchLexicalIndex,
+    count_asset_directories,
+    fetch_search_corpus_assets,
+    normalize_search_text,
+    tokenize_search_text,
+)
 
 
 SearchMode = Literal["strict", "fuzzy", "domain", "combined"]
@@ -62,10 +70,6 @@ class SearchSuperseded(RuntimeError):
     pass
 
 
-class SearchCorpusError(RuntimeError):
-    pass
-
-
 @dataclass(frozen=True)
 class SearchControl:
     is_cancelled: Callable[[], bool]
@@ -82,74 +86,8 @@ class DomainVocabulary:
 
 
 @dataclass(frozen=True)
-class _AssetRecord:
-    asset_index: int
-    asset_id: str
-    source_id: str
-    source_display_name: str
-    source_priority: int
-    relative_path: str
-    filename: str
-    stem: str
-    extension: str
-    directory: str
-    size_bytes: int
-    mtime_ns: int
-    media_type: str
-    thumbnail_path: str | None
-    thumbnail_width: int | None
-    thumbnail_height: int | None
-    source_tokens: tuple[str, ...]
-    filename_tokens: tuple[str, ...]
-    directory_tokens: tuple[str, ...]
-    path_tokens: tuple[str, ...]
-    normalized_text: str
-    fuzzy_text: str
-    collection_key: str = ""
-    variant_sort_key: str = ""
-    has_variant: bool = False
-
-
-@dataclass(frozen=True)
-class _SearchCorpus:
-    assets: tuple[_AssetRecord, ...]
-    fuzzy_tokens: tuple[str, ...]
-    fuzzy_token_asset_indexes: tuple[tuple[int, ...], ...]
-    lexical_index: "_TantivyLexicalIndex | None" = None
-
-    @classmethod
-    def from_assets(cls, assets: Iterable[_AssetRecord]) -> "_SearchCorpus":
-        asset_tuple = tuple(assets)
-        return cls.from_preprocessed_assets(
-            asset_tuple,
-            lexical_index=_TantivyLexicalIndex.build(asset_tuple),
-        )
-
-    @classmethod
-    def from_preprocessed_assets(
-        cls,
-        assets: Iterable[_AssetRecord],
-        *,
-        lexical_index: "_TantivyLexicalIndex | None",
-    ) -> "_SearchCorpus":
-        asset_tuple = tuple(assets)
-        fuzzy_token_assets: dict[str, list[int]] = {}
-        for asset_index, asset in enumerate(asset_tuple):
-            for token in dict.fromkeys(asset.filename_tokens + asset.path_tokens):
-                fuzzy_token_assets.setdefault(token, []).append(asset_index)
-        return cls(
-            assets=asset_tuple,
-            fuzzy_tokens=tuple(fuzzy_token_assets),
-            fuzzy_token_asset_indexes=tuple(
-                tuple(asset_indexes) for asset_indexes in fuzzy_token_assets.values()
-            ),
-            lexical_index=lexical_index,
-        )
-
-
-@dataclass(frozen=True)
 class _Candidate:
-    asset: _AssetRecord
+    asset: SearchCorpusAsset
     lane: str
     raw_score: float
     matched_terms: tuple[str, ...]
@@ -158,7 +96,7 @@ class _Candidate:
 
 @dataclass(frozen=True)
 class _RankedCandidate:
-    asset: _AssetRecord
+    asset: SearchCorpusAsset
     score: float
 
 
@@ -174,7 +112,7 @@ class _InFlightSearch:
 
 @dataclass
 class SearchIndex:
-    assets: tuple[_AssetRecord, ...]
+    assets: tuple[SearchCorpusAsset, ...]
     directory_counts: dict[tuple[str, str], int]
     source_display_names: dict[str, str]
     source_sort_keys: dict[str, tuple[int, str, str]]
@@ -183,7 +121,7 @@ class SearchIndex:
     preferences_revision: int = 0
     fuzzy_tokens: tuple[str, ...] = ()
     fuzzy_token_asset_indexes: tuple[tuple[int, ...], ...] = ()
-    lexical_index: "_TantivyLexicalIndex | None" = None
+    lexical_index: "SearchLexicalIndex | None" = None
     cache_size: int = 128
     _cache_lock: threading.Lock = field(default_factory=threading.Lock)
     _ranked_cache: OrderedDict[_SearchCacheKey, tuple[_RankedCandidate, ...]] = field(
@@ -193,17 +131,17 @@ class SearchIndex:
 
     @classmethod
     def load(cls, db: sqlite3.Connection) -> "SearchIndex":
-        assets = _fetch_assets(
+        assets = fetch_search_corpus_assets(
             db,
             source_id=None,
             directory=None,
             directory_prefix=None,
         )
         folder_quality_overrides = _fetch_folder_quality_overrides(db)
-        corpus = _SearchCorpus.from_assets(assets)
+        corpus = SearchCorpus.from_assets(assets)
         return cls(
             assets=assets,
-            directory_counts=_counts_from_asset_directories(
+            directory_counts=count_asset_directories(
                 [(asset.source_id, asset.directory) for asset in assets]
             ),
             source_display_names={
@@ -228,97 +166,45 @@ class SearchIndex:
         )
 
     @classmethod
-    def load_from_corpus(
+    def load_from_snapshot(
         cls,
         db: sqlite3.Connection,
-        corpus_db: sqlite3.Connection,
+        snapshot: SearchCorpusSnapshot,
         *,
         expected_version: str,
         lexical_index_path: Path,
     ) -> "SearchIndex":
-        row = corpus_db.execute(
-            "SELECT value FROM corpus_metadata WHERE key = 'version'"
-        ).fetchone()
-        if row is None or row["value"] != expected_version:
-            found = "missing" if row is None else row["value"]
+        if snapshot.version != expected_version:
             raise SearchCorpusError(
                 "search corpus version mismatch "
-                f"(expected {expected_version}, found {found}); "
+                f"(expected {expected_version}, found {snapshot.version}); "
                 "run findme rebuild-search-corpus --config <config>"
             )
-        rows = corpus_db.execute(
-            """
-            SELECT
-              asset_index,
-              asset_id,
-              source_id,
-              source_display_name,
-              source_priority,
-              relative_path,
-              filename,
-              stem,
-              extension,
-              directory,
-              size_bytes,
-              mtime_ns,
-              media_type,
-              thumbnail_path,
-              thumbnail_width,
-              thumbnail_height,
-              source_tokens,
-              filename_tokens,
-              directory_tokens,
-              path_tokens,
-              normalized_text,
-              fuzzy_text,
-              collection_key,
-              variant_sort_key,
-              has_variant
-            FROM search_assets
-            ORDER BY asset_index
-            """
-        ).fetchall()
-        assets = tuple(_corpus_row_to_record(row) for row in rows)
-        folder_quality_overrides = _fetch_folder_quality_overrides(db)
         lexical_index = None
-        if assets:
+        if snapshot.assets:
             if not lexical_index_path.is_dir():
                 raise SearchCorpusError(
                     f"search lexical index is missing: {lexical_index_path}; "
                     "run findme rebuild-search-corpus --config <config>"
                 )
-            lexical_index = _TantivyLexicalIndex.open(
+            lexical_index = SearchLexicalIndex.open(
                 lexical_index_path,
-                asset_count=len(assets),
+                asset_count=len(snapshot.assets),
             )
-        corpus = _SearchCorpus.from_preprocessed_assets(
-            assets,
-            lexical_index=lexical_index,
-        )
+        folder_quality_overrides = _fetch_folder_quality_overrides(db)
         return cls(
-            assets=assets,
-            directory_counts=_counts_from_asset_directories(
-                [(asset.source_id, asset.directory) for asset in assets]
-            ),
-            source_display_names={
-                asset.source_id: asset.source_display_name for asset in assets
-            },
-            source_sort_keys={
-                asset.source_id: (
-                    -asset.source_priority,
-                    asset.source_display_name.casefold(),
-                    asset.source_id,
-                )
-                for asset in assets
-            },
+            assets=snapshot.assets,
+            directory_counts=snapshot.directory_counts,
+            source_display_names=snapshot.source_display_names,
+            source_sort_keys=snapshot.source_sort_keys,
             folder_quality_overrides=folder_quality_overrides,
             preference_adjustments=_preference_adjustments(
-                assets,
+                snapshot.assets,
                 folder_quality_overrides,
             ),
-            fuzzy_tokens=corpus.fuzzy_tokens,
-            fuzzy_token_asset_indexes=corpus.fuzzy_token_asset_indexes,
-            lexical_index=corpus.lexical_index,
+            fuzzy_tokens=snapshot.fuzzy_tokens,
+            fuzzy_token_asset_indexes=snapshot.fuzzy_token_asset_indexes,
+            lexical_index=lexical_index,
         )
 
     def search(
@@ -337,7 +223,7 @@ class SearchIndex:
         domain_vocabulary = domain_vocabulary or DEFAULT_DOMAIN_VOCABULARY
         if mode == "strict":
             corpus = _filter_corpus(
-                _SearchCorpus(
+                SearchCorpus(
                     self.assets,
                     self.fuzzy_tokens,
                     self.fuzzy_token_asset_indexes,
@@ -382,7 +268,7 @@ class SearchIndex:
         control: SearchControl | None = None,
     ) -> list[SearchResult]:
         corpus = _filter_corpus(
-            _SearchCorpus(
+            SearchCorpus(
                 self.assets,
                 self.fuzzy_tokens,
                 self.fuzzy_token_asset_indexes,
@@ -432,19 +318,8 @@ class SearchIndex:
             self.preferences_revision += 1
             self._ranked_cache.clear()
 
-    def _preference_adjustment(self, asset: _AssetRecord) -> float:
+    def _preference_adjustment(self, asset: SearchCorpusAsset) -> float:
         return self.preference_adjustments[asset.asset_index]
-
-    def card_metadata_by_asset_id(self) -> dict[str, CardMetadata]:
-        return {
-            asset.asset_id: CardMetadata(
-                asset_id=asset.asset_id,
-                collection_key=asset.collection_key,
-                variant_sort_key=asset.variant_sort_key,
-                has_variant=asset.has_variant,
-            )
-            for asset in self.assets
-        }
 
     def directory_matches(
         self,
@@ -460,7 +335,7 @@ class SearchIndex:
         if query and query.strip():
             if mode == "strict":
                 corpus = _filter_corpus(
-                    _SearchCorpus(
+                    SearchCorpus(
                         self.assets,
                         self.fuzzy_tokens,
                         self.fuzzy_token_asset_indexes,
@@ -471,7 +346,7 @@ class SearchIndex:
                     directory_prefix=None,
                     control=control,
                 )
-                match_counts = _counts_from_asset_directories(
+                match_counts = count_asset_directories(
                     _strict_match_directories(corpus, query, control=control)
                 )
             else:
@@ -484,7 +359,7 @@ class SearchIndex:
                     mode=mode,
                     control=control,
                 )
-                match_counts = _counts_from_asset_directories(
+                match_counts = count_asset_directories(
                     [
                         (candidate.asset.source_id, candidate.asset.directory)
                         for candidate in ranked
@@ -578,7 +453,7 @@ class SearchIndex:
             ranked = tuple(
                 _rank_search_assets(
                     _filter_corpus(
-                        _SearchCorpus(
+                        SearchCorpus(
                             self.assets,
                             self.fuzzy_tokens,
                             self.fuzzy_token_asset_indexes,
@@ -656,7 +531,6 @@ class SearchIndex:
             self._ranked_cache.popitem(last=False)
 
 
-_TOKEN_RE = re.compile(r"[a-z0-9]+")
 DEFAULT_DOMAIN_VOCABULARY = DomainVocabulary(
     expansions={
         "adventurer": (
@@ -752,7 +626,7 @@ def count_search_assets(
     )
 
 
-def _default_preference_adjustment(asset: _AssetRecord) -> float:
+def _default_preference_adjustment(asset: SearchCorpusAsset) -> float:
     return asset.source_priority * 0.01
 
 
@@ -794,8 +668,8 @@ def _rank_search(
     mode: SearchMode,
 ) -> list[_RankedCandidate]:
     return _rank_search_assets(
-        _SearchCorpus.from_assets(
-            _fetch_assets(
+        SearchCorpus.from_assets(
+            fetch_search_corpus_assets(
                 db,
                 source_id=source_id,
                 directory=directory,
@@ -810,15 +684,15 @@ def _rank_search(
 
 
 def _strict_search_page(
-    corpus: _SearchCorpus,
+    corpus: SearchCorpus,
     query: str,
     *,
     limit: int,
     offset: int,
-    preference_adjustment: Callable[[_AssetRecord], float] = _default_preference_adjustment,
+    preference_adjustment: Callable[[SearchCorpusAsset], float] = _default_preference_adjustment,
     control: SearchControl | None = None,
 ) -> SearchResultsPage:
-    query_tokens = _tokens(query)
+    query_tokens = tokenize_search_text(query)
     if not query_tokens:
         return SearchResultsPage(assets=[], total=0)
     if corpus.lexical_index is None:
@@ -840,10 +714,10 @@ def _strict_search_page(
 
 
 def _strict_ranked_candidates(
-    corpus: _SearchCorpus,
+    corpus: SearchCorpus,
     query_tokens: tuple[str, ...],
     *,
-    preference_adjustment: Callable[[_AssetRecord], float],
+    preference_adjustment: Callable[[SearchCorpusAsset], float],
     control: SearchControl | None = None,
 ) -> tuple[list[_RankedCandidate], int]:
     if corpus.lexical_index is None:
@@ -876,12 +750,12 @@ def _strict_ranked_candidates(
 
 
 def _strict_match_directories(
-    corpus: _SearchCorpus,
+    corpus: SearchCorpus,
     query: str,
     *,
     control: SearchControl | None = None,
 ) -> list[tuple[str, str]]:
-    query_tokens = _tokens(query)
+    query_tokens = tokenize_search_text(query)
     if not query_tokens:
         return []
     if corpus.lexical_index is None:
@@ -911,18 +785,18 @@ def _strict_match_directories(
 
 
 def _rank_search_assets(
-    assets: Iterable[_AssetRecord] | _SearchCorpus,
+    assets: Iterable[SearchCorpusAsset] | SearchCorpus,
     query: str,
     *,
     domain_vocabulary: DomainVocabulary,
     mode: SearchMode,
-    preference_adjustment: Callable[[_AssetRecord], float] = _default_preference_adjustment,
+    preference_adjustment: Callable[[SearchCorpusAsset], float] = _default_preference_adjustment,
     control: SearchControl | None = None,
 ) -> list[_RankedCandidate]:
     corpus = (
-        assets if isinstance(assets, _SearchCorpus) else _SearchCorpus.from_assets(assets)
+        assets if isinstance(assets, SearchCorpus) else SearchCorpus.from_assets(assets)
     )
-    query_tokens = _tokens(query)
+    query_tokens = tokenize_search_text(query)
     if not query_tokens:
         return []
     if mode not in {"strict", "fuzzy", "domain", "combined"}:
@@ -1005,7 +879,7 @@ def _search_cache_key(
     preferences_revision: int = 0,
 ) -> _SearchCacheKey:
     return (
-        _normalize_text(query),
+        normalize_search_text(query),
         mode,
         source_id,
         directory,
@@ -1015,247 +889,26 @@ def _search_cache_key(
     )
 
 
-class _TantivyLexicalIndex:
-    _FIELDS = ("stem", "filename", "path", "directory", "source")
-    _TRIGRAM_FIELDS = (
-        "filename_trigrams",
-        "path_trigrams",
-        "directory_trigrams",
-        "source_trigrams",
-    )
-    _EXACT_WEIGHTS = {
-        "stem": 90.0,
-        "filename": 50.0,
-        "path": 12.0,
-        "directory": 8.0,
-        "source": 22.0,
-    }
-    _PREFIX_WEIGHTS = {
-        "stem": 58.0,
-        "filename": 38.0,
-        "path": 8.0,
-        "directory": 5.0,
-        "source": 16.0,
-    }
-    _INFIX_WEIGHTS = {
-        "filename_trigrams": 1.5,
-        "path_trigrams": 0.75,
-        "directory_trigrams": 0.4,
-        "source_trigrams": 0.5,
-    }
-
-    def __init__(
-        self,
-        index: tantivy.Index,
-        searcher: tantivy.Searcher,
-        asset_count: int,
-    ) -> None:
-        self.index = index
-        self.schema = index.schema
-        self.searcher = searcher
-        self.asset_count = asset_count
-
-    @classmethod
-    def build(
-        cls,
-        assets: tuple[_AssetRecord, ...],
-        *,
-        path: Path | None = None,
-    ) -> "_TantivyLexicalIndex | None":
-        if not assets:
-            return None
-        schema_builder = tantivy.SchemaBuilder()
-        schema_builder.add_integer_field("asset_index", stored=True, fast=True)
-        for field_name in cls._FIELDS + cls._TRIGRAM_FIELDS:
-            schema_builder.add_text_field(field_name)
-        schema = schema_builder.build()
-        index = tantivy.Index(schema, path=str(path) if path is not None else None)
-        writer = index.writer(heap_size=300_000_000, num_threads=2)
-        for asset_index, asset in enumerate(assets):
-            writer.add_document(
-                tantivy.Document(
-                    asset_index=asset_index,
-                    stem=" ".join(_tokens(asset.stem)),
-                    filename=" ".join(asset.filename_tokens),
-                    path=" ".join(asset.path_tokens),
-                    directory=" ".join(asset.directory_tokens),
-                    source=" ".join(asset.source_tokens),
-                    filename_trigrams=_trigram_text(asset.filename_tokens),
-                    path_trigrams=_trigram_text(asset.path_tokens),
-                    directory_trigrams=_trigram_text(asset.directory_tokens),
-                    source_trigrams=_trigram_text(asset.source_tokens),
-                )
-            )
-        writer.commit()
-        index.reload()
-        return cls(index=index, searcher=index.searcher(), asset_count=len(assets))
-
-    @classmethod
-    def open(cls, path: Path, *, asset_count: int) -> "_TantivyLexicalIndex":
-        index = tantivy.Index.open(str(path))
-        index.reload()
-        return cls(index=index, searcher=index.searcher(), asset_count=asset_count)
-
-    def candidates_with_scores(
-        self,
-        query_tokens: tuple[str, ...],
-    ) -> tuple[tuple[int, float], ...]:
-        matches, _total = self.search_with_scores(
-            query_tokens,
-            require_all_terms=False,
-            limit=self.asset_count,
-            offset=0,
-        )
-        return matches
-
-    def search_with_scores(
-        self,
-        query_tokens: tuple[str, ...],
-        *,
-        require_all_terms: bool,
-        limit: int,
-        offset: int,
-    ) -> tuple[tuple[tuple[int, float], ...], int]:
-        query = self._candidate_query(
-            query_tokens,
-            require_all_terms=require_all_terms,
-        )
-        if query is None:
-            return (), 0
-        result = self.searcher.search(query, limit=limit, offset=offset, count=True)
-        doc_addresses = [doc_address for _score, doc_address in result.hits]
-        asset_indexes = self.searcher.fast_field_values("asset_index", doc_addresses)
-        return (
-            tuple(
-                (asset_index, float(score))
-                for (score, _doc_address), asset_index in zip(
-                    result.hits,
-                    asset_indexes,
-                    strict=True,
-                )
-            ),
-            result.count,
-        )
-
-    def candidate_indexes(self, query_tokens: tuple[str, ...]) -> tuple[int, ...]:
-        return tuple(
-            asset_index for asset_index, _score in self.candidates_with_scores(query_tokens)
-        )
-
-    def _candidate_query(
-        self,
-        query_tokens: tuple[str, ...],
-        *,
-        require_all_terms: bool = False,
-    ) -> tantivy.Query | None:
-        subqueries = [
-            (
-                tantivy.Occur.Must if require_all_terms else tantivy.Occur.Should,
-                token_query,
-            )
-            for token in query_tokens
-            if (token_query := self._token_query(token)) is not None
-        ]
-        if not subqueries:
-            return None
-        return tantivy.Query.boolean_query(subqueries)
-
-    def _token_query(self, token: str) -> tantivy.Query | None:
-        subqueries: list[tuple[tantivy.Occur, tantivy.Query]] = []
-        for field_name in self._FIELDS:
-            subqueries.append(
-                (
-                    tantivy.Occur.Should,
-                    tantivy.Query.boost_query(
-                        tantivy.Query.term_query(self.schema, field_name, token),
-                        self._EXACT_WEIGHTS[field_name],
-                    ),
-                )
-            )
-            prefix_terms = [
-                term
-                for term, _doc_frequency in self.searcher.terms_with_prefix(
-                    field_name,
-                    token,
-                    limit=None,
-                )
-                if term != token
-            ]
-            if prefix_terms:
-                subqueries.append(
-                    (
-                        tantivy.Occur.Should,
-                        tantivy.Query.boost_query(
-                            tantivy.Query.term_set_query(
-                                self.schema,
-                                field_name,
-                                prefix_terms,
-                            ),
-                            self._PREFIX_WEIGHTS[field_name],
-                        ),
-                    )
-                )
-
-        trigrams = _trigrams(token)
-        if trigrams:
-            for trigram_field in self._TRIGRAM_FIELDS:
-                subqueries.append(
-                    (
-                        tantivy.Occur.Should,
-                        tantivy.Query.boost_query(
-                            tantivy.Query.boolean_query(
-                                [
-                                    (
-                                        tantivy.Occur.Must,
-                                        tantivy.Query.term_query(
-                                            self.schema,
-                                            trigram_field,
-                                            trigram,
-                                        ),
-                                    )
-                                    for trigram in trigrams
-                                ]
-                            ),
-                            self._INFIX_WEIGHTS[trigram_field],
-                        ),
-                    )
-                )
-
-        if not subqueries:
-            return None
-        return tantivy.Query.boolean_query(subqueries)
-
-
-def _trigrams(token: str) -> tuple[str, ...]:
-    if len(token) < 3:
-        return ()
-    return tuple(dict.fromkeys(token[index : index + 3] for index in range(len(token) - 2)))
-
-
-def _trigram_text(tokens: tuple[str, ...]) -> str:
-    return " ".join(trigram for token in tokens for trigram in _trigrams(token))
-
-
 def _domain_candidate_indexes(
-    corpus: _SearchCorpus,
+    corpus: SearchCorpus,
     expanded_terms: tuple[str, ...],
 ) -> tuple[int, ...] | range:
     if corpus.lexical_index is None:
         return range(len(corpus.assets))
     candidate_indexes: set[int] = set()
     for term in expanded_terms:
-        candidate_indexes.update(corpus.lexical_index.candidate_indexes(_tokens(term)))
+        candidate_indexes.update(corpus.lexical_index.candidate_indexes(tokenize_search_text(term)))
     return tuple(candidate_indexes)
 
 
 def _filter_corpus(
-    corpus: _SearchCorpus,
+    corpus: SearchCorpus,
     *,
     source_id: str | None,
     directory: str | None,
     directory_prefix: str | None,
     control: SearchControl | None = None,
-) -> _SearchCorpus:
+) -> SearchCorpus:
     if source_id is None and directory is None and directory_prefix is None:
         return corpus
 
@@ -1273,7 +926,7 @@ def _filter_corpus(
         ):
             continue
         filtered_assets.append(asset)
-    return _SearchCorpus.from_assets(filtered_assets)
+    return SearchCorpus.from_assets(filtered_assets)
 
 
 def _filter_directory_counts(
@@ -1287,71 +940,6 @@ def _filter_directory_counts(
         for (source, path), count in directory_counts.items()
         if source == source_id
     }
-
-
-def _counts_from_asset_directories(
-    directories: Iterable[tuple[str, str] | tuple[str, str, int]],
-) -> dict[tuple[str, str], int]:
-    counts: dict[tuple[str, str], int] = {}
-    for item in directories:
-        source = item[0]
-        directory = item[1]
-        direct_count = item[2] if len(item) == 3 else 1
-        counts[(source, "")] = counts.get((source, ""), 0) + direct_count
-        if not directory:
-            continue
-        parts = directory.split("/")
-        for index in range(1, len(parts) + 1):
-            path = "/".join(parts[:index])
-            counts[(source, path)] = counts.get((source, path), 0) + direct_count
-    return counts
-
-
-def _fetch_assets(
-    db: sqlite3.Connection,
-    *,
-    source_id: str | None,
-    directory: str | None,
-    directory_prefix: str | None,
-) -> tuple[_AssetRecord, ...]:
-    where = ["assets.stale = 0"]
-    params: list[object] = []
-    if source_id:
-        where.append("assets.source_id = ?")
-        params.append(source_id)
-    if directory is not None:
-        where.append("assets.directory = ?")
-        params.append(directory)
-    if directory_prefix:
-        where.append("(assets.directory = ? OR assets.directory LIKE ?)")
-        params.extend([directory_prefix, f"{directory_prefix}/%"])
-
-    rows = db.execute(
-        f"""
-        SELECT
-          assets.asset_id,
-          assets.source_id,
-          sources.display_name AS source_display_name,
-          sources.priority AS source_priority,
-          assets.relative_path,
-          assets.filename,
-          assets.stem,
-          assets.extension,
-          assets.directory,
-          assets.size_bytes,
-          assets.mtime_ns,
-          assets.media_type,
-          assets.thumbnail_path,
-          assets.thumbnail_width,
-          assets.thumbnail_height
-        FROM assets
-        JOIN sources ON sources.id = assets.source_id
-        WHERE {" AND ".join(where)}
-        ORDER BY sources.priority DESC, assets.relative_path COLLATE NOCASE
-        """,
-        params,
-    ).fetchall()
-    return tuple(_row_to_record(row, index) for index, row in enumerate(rows))
 
 
 def _fetch_folder_quality_overrides(
@@ -1400,7 +988,7 @@ def upsert_folder_quality(
 
 
 def _preference_adjustments(
-    assets: tuple[_AssetRecord, ...],
+    assets: tuple[SearchCorpusAsset, ...],
     folder_quality_overrides: dict[tuple[str, str], int],
 ) -> tuple[float, ...]:
     return tuple(
@@ -1451,7 +1039,7 @@ def _folder_quality_adjustment(quality: int) -> float:
 
 
 def _strict_candidates(
-    corpus_or_assets: Iterable[_AssetRecord] | _SearchCorpus,
+    corpus_or_assets: Iterable[SearchCorpusAsset] | SearchCorpus,
     query_tokens: tuple[str, ...],
     query: str,
     *,
@@ -1460,8 +1048,8 @@ def _strict_candidates(
 ) -> list[_Candidate]:
     corpus = (
         corpus_or_assets
-        if isinstance(corpus_or_assets, _SearchCorpus)
-        else _SearchCorpus.from_assets(corpus_or_assets)
+        if isinstance(corpus_or_assets, SearchCorpus)
+        else SearchCorpus.from_assets(corpus_or_assets)
     )
     assets = corpus.assets
     candidate_matches = (
@@ -1493,7 +1081,7 @@ def _strict_candidates(
 
 
 def _fuzzy_candidates(
-    corpus: _SearchCorpus,
+    corpus: SearchCorpus,
     query_tokens: tuple[str, ...],
     query: str,
     *,
@@ -1545,7 +1133,7 @@ def _fuzzy_candidates(
 
 
 def _domain_candidates(
-    corpus_or_assets: Iterable[_AssetRecord] | _SearchCorpus,
+    corpus_or_assets: Iterable[SearchCorpusAsset] | SearchCorpus,
     query_tokens: tuple[str, ...],
     query: str,
     domain_vocabulary: DomainVocabulary,
@@ -1557,8 +1145,8 @@ def _domain_candidates(
         return []
     corpus = (
         corpus_or_assets
-        if isinstance(corpus_or_assets, _SearchCorpus)
-        else _SearchCorpus.from_assets(corpus_or_assets)
+        if isinstance(corpus_or_assets, SearchCorpus)
+        else SearchCorpus.from_assets(corpus_or_assets)
     )
     assets = corpus.assets
     candidates = []
@@ -1586,7 +1174,7 @@ def _rank_candidates(
     candidates: list[_Candidate],
     query_tokens: tuple[str, ...],
     *,
-    preference_adjustment: Callable[[_AssetRecord], float] = _default_preference_adjustment,
+    preference_adjustment: Callable[[SearchCorpusAsset], float] = _default_preference_adjustment,
     control: SearchControl | None = None,
 ) -> list[_RankedCandidate]:
     by_asset: dict[str, list[tuple[int, _Candidate]]] = defaultdict(list)
@@ -1641,7 +1229,7 @@ def _candidate_lane_sort_key(candidate: _Candidate) -> tuple[float, int, str]:
 
 
 def _media_intent_adjustment(
-    asset: _AssetRecord,
+    asset: SearchCorpusAsset,
     query_tokens: tuple[str, ...],
 ) -> float:
     if asset.source_id not in {"music", "sounds"}:
@@ -1666,7 +1254,7 @@ def _media_intent_adjustment(
 
 
 def _strict_score(
-    asset: _AssetRecord,
+    asset: SearchCorpusAsset,
     query_tokens: tuple[str, ...],
 ) -> tuple[float, tuple[str, ...]]:
     matched = []
@@ -1685,7 +1273,7 @@ def _strict_score(
     return score, tuple(matched)
 
 
-def _best_strict_token_score(asset: _AssetRecord, token: str) -> float:
+def _best_strict_token_score(asset: SearchCorpusAsset, token: str) -> float:
     return max(
         _field_token_score(
             asset.filename_tokens,
@@ -1747,7 +1335,7 @@ def _strict_tantivy_raw_score(
 
 
 def _fuzzy_token_matches(
-    corpus: _SearchCorpus,
+    corpus: SearchCorpus,
     query_tokens: tuple[str, ...],
 ) -> tuple[dict[int, float], ...]:
     token_matches = []
@@ -1768,12 +1356,12 @@ def _fuzzy_token_matches(
 
 
 def _fuzzy_raw_score(
-    asset: _AssetRecord,
+    asset: SearchCorpusAsset,
     query_tokens: tuple[str, ...],
     query: str,
     token_scores: tuple[float, ...],
 ) -> float:
-    query_score = float(fuzz.WRatio(_normalize_text(query), asset.fuzzy_text))
+    query_score = float(fuzz.WRatio(normalize_search_text(query), asset.fuzzy_text))
     score = sum(token_scores) + query_score
     if all(token in asset.filename_tokens for token in query_tokens):
         score += 80.0
@@ -1781,13 +1369,13 @@ def _fuzzy_raw_score(
 
 
 def _domain_score(
-    asset: _AssetRecord,
+    asset: SearchCorpusAsset,
     expanded_terms: tuple[str, ...],
 ) -> tuple[float, tuple[str, ...]]:
     matched = []
     score = 0.0
     for term in expanded_terms:
-        term_tokens = _tokens(term)
+        term_tokens = tokenize_search_text(term)
         term_score, term_matches = _strict_score(asset, term_tokens)
         if term_score <= 0:
             continue
@@ -1808,72 +1396,7 @@ def _expanded_terms(
     return tuple(dict.fromkeys(expanded))
 
 
-def _row_to_record(row: sqlite3.Row, asset_index: int) -> _AssetRecord:
-    source_tokens = _tokens(f"{row['source_id']} {row['source_display_name']}")
-    filename_tokens = _tokens(row["filename"])
-    directory_tokens = _tokens(row["directory"])
-    path_tokens = _tokens(row["relative_path"])
-    normalized_text = _normalize_text(
-        " ".join((row["filename"], row["stem"], row["directory"], row["relative_path"]))
-    )
-    fuzzy_text = " ".join(filename_tokens + path_tokens)
-    return _AssetRecord(
-        asset_index=asset_index,
-        asset_id=row["asset_id"],
-        source_id=row["source_id"],
-        source_display_name=row["source_display_name"],
-        source_priority=row["source_priority"],
-        relative_path=row["relative_path"],
-        filename=row["filename"],
-        stem=row["stem"],
-        extension=row["extension"],
-        directory=row["directory"],
-        size_bytes=row["size_bytes"],
-        mtime_ns=row["mtime_ns"],
-        media_type=row["media_type"],
-        thumbnail_path=row["thumbnail_path"],
-        thumbnail_width=row["thumbnail_width"],
-        thumbnail_height=row["thumbnail_height"],
-        source_tokens=source_tokens,
-        filename_tokens=filename_tokens,
-        directory_tokens=directory_tokens,
-        path_tokens=path_tokens,
-        normalized_text=normalized_text,
-        fuzzy_text=fuzzy_text,
-    )
-
-
-def _corpus_row_to_record(row: sqlite3.Row) -> _AssetRecord:
-    return _AssetRecord(
-        asset_index=row["asset_index"],
-        asset_id=row["asset_id"],
-        source_id=row["source_id"],
-        source_display_name=row["source_display_name"],
-        source_priority=row["source_priority"],
-        relative_path=row["relative_path"],
-        filename=row["filename"],
-        stem=row["stem"],
-        extension=row["extension"],
-        directory=row["directory"],
-        size_bytes=row["size_bytes"],
-        mtime_ns=row["mtime_ns"],
-        media_type=row["media_type"],
-        thumbnail_path=row["thumbnail_path"],
-        thumbnail_width=row["thumbnail_width"],
-        thumbnail_height=row["thumbnail_height"],
-        source_tokens=tuple(row["source_tokens"].split()),
-        filename_tokens=tuple(row["filename_tokens"].split()),
-        directory_tokens=tuple(row["directory_tokens"].split()),
-        path_tokens=tuple(row["path_tokens"].split()),
-        normalized_text=row["normalized_text"],
-        fuzzy_text=row["fuzzy_text"],
-        collection_key=row["collection_key"],
-        variant_sort_key=row["variant_sort_key"],
-        has_variant=bool(row["has_variant"]),
-    )
-
-
-def _record_to_result(asset: _AssetRecord, score: float) -> SearchResult:
+def _record_to_result(asset: SearchCorpusAsset, score: float) -> SearchResult:
     return SearchResult(
         asset_id=asset.asset_id,
         source_id=asset.source_id,
@@ -1891,11 +1414,3 @@ def _record_to_result(asset: _AssetRecord, score: float) -> SearchResult:
         thumbnail_height=asset.thumbnail_height,
         score=score,
     )
-
-
-def _tokens(text: str) -> tuple[str, ...]:
-    return tuple(_TOKEN_RE.findall(text.casefold()))
-
-
-def _normalize_text(text: str) -> str:
-    return " ".join(_tokens(text))

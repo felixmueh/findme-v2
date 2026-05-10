@@ -6,7 +6,7 @@ from findme.api import create_app
 from findme.config import AppConfig, SourceConfig
 from findme.db import connect, initialize_database
 from findme.indexer import index_sources
-from findme.search_preprocess import rebuild_search_corpus
+from findme.search_corpus import rebuild_search_corpus
 
 from helpers import write_image
 
@@ -120,7 +120,7 @@ def test_api_opens_prebuilt_lexical_index_without_rebuilding(
     def fail_lexical_rebuild(*_args, **_kwargs):
         raise AssertionError("serve should open the prebuilt lexical index")
 
-    monkeypatch.setattr("findme.search._TantivyLexicalIndex.build", fail_lexical_rebuild)
+    monkeypatch.setattr("findme.search_corpus.SearchLexicalIndex.build", fail_lexical_rebuild)
 
     client = TestClient(create_app(config, db_path))
     body = client.get("/api/search", params={"q": "goblin", "mode": "strict"}).json()

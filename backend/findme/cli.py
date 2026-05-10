@@ -13,12 +13,14 @@ from findme.cleanup import cleanup_index
 from findme.config import ConfigError, load_config
 from findme.db import connect, initialize_database
 from findme.indexer import count_indexable_files, index_sources
-from findme.search import SearchCorpusError, SearchIndex, SearchMode, load_domain_vocabulary
-from findme.search_preprocess import (
+from findme.search import SearchIndex, SearchMode, load_domain_vocabulary
+from findme.search_corpus import (
     SEARCH_CORPUS_VERSION,
+    SearchCorpusError,
+    load_search_corpus_snapshot,
     rebuild_search_corpus,
     search_corpus_lexical_path,
-    search_corpus_path,
+    search_corpus_snapshot_path,
 )
 from findme.search_eval import (
     EvaluationQuery,
@@ -121,7 +123,7 @@ def run(argv: list[str]) -> int:
             )
             with connect(db_path) as db:
                 initialize_database(db)
-                corpus_path = search_corpus_path(
+                snapshot_path = search_corpus_snapshot_path(
                     config.data_root,
                     config.search_corpus_path,
                 )
@@ -129,18 +131,13 @@ def run(argv: list[str]) -> int:
                     config.data_root,
                     config.search_corpus_path,
                 )
-                if not corpus_path.is_file():
-                    raise SearchCorpusError(
-                        f"search corpus is missing: {corpus_path}; "
-                        "run findme rebuild-search-corpus --config <config>"
-                    )
-                with connect(corpus_path) as corpus_db:
-                    search_index = SearchIndex.load_from_corpus(
-                        db,
-                        corpus_db,
-                        expected_version=SEARCH_CORPUS_VERSION,
-                        lexical_index_path=lexical_path,
-                    )
+                snapshot = load_search_corpus_snapshot(snapshot_path)
+                search_index = SearchIndex.load_from_snapshot(
+                    db,
+                    snapshot,
+                    expected_version=SEARCH_CORPUS_VERSION,
+                    lexical_index_path=lexical_path,
+                )
                 report = evaluate_search(
                     evaluation,
                     runner=lambda scope, query: [

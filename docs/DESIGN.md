@@ -181,7 +181,7 @@ source_id + relative_path + size + mtime
 
 This avoids content hashing in v1 while still invalidating derived files when an asset changes.
 
-Search-serving data is a derived corpus, not canonical metadata. The main database remains the source of truth for indexed assets, sources, folder quality, and thumbnail references. Search preprocessing builds a separate versioned search corpus under the app data root, with the active filename derived from the preprocessing version. Serving and search evaluation consume that prepared corpus and fail clearly if it is missing or stale; they do not rebuild it implicitly.
+Search-serving data is a derived corpus, not canonical metadata. The main database remains the source of truth for indexed assets, sources, folder quality, and thumbnail references. `search_corpus.py` owns the rebuild-sensitive corpus format and preprocessing signals. It builds a separate versioned pickle snapshot under the app data root, with the active filename derived from the preprocessing version, plus the matching Tantivy lexical index. Serving and search evaluation consume that prepared corpus and fail clearly if it is missing or stale; they do not rebuild it implicitly.
 
 Indexing runs in two phases:
 

@@ -6,7 +6,7 @@ from findme.api import create_app
 from findme.config import AppConfig, OutputProfile, SourceConfig
 from findme.db import connect, initialize_database
 from findme.indexer import index_sources
-from findme.search_preprocess import rebuild_search_corpus
+from findme.search_corpus import rebuild_search_corpus
 
 from helpers import write_image
 
