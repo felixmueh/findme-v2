@@ -414,6 +414,107 @@ test('highlights the hovered asset folder path', async ({ page }) => {
   await expect(page.getByRole('group', { name: 'maps folder' })).toHaveClass(/direct-highlight/)
 })
 
+test('previews audio on hover and shows playback controls when selected', async ({ page }) => {
+  const audioAsset = {
+    ...sampleAsset,
+    asset_id: 'asset-thunder',
+    relative_path: 'sounds/thunder.mp3',
+    filename: 'thunder.mp3',
+    stem: 'thunder',
+    extension: '.mp3',
+    directory: 'sounds',
+    media_type: 'audio',
+  }
+
+  await page.addInitScript(() => {
+    Object.defineProperty(window, '__audioEvents', {
+      configurable: true,
+      writable: true,
+      value: [],
+    })
+    Object.defineProperty(HTMLMediaElement.prototype, 'play', {
+      configurable: true,
+      value(this: HTMLMediaElement) {
+        ;(window as unknown as { __audioEvents: string[] }).__audioEvents.push(
+          `play:${this.getAttribute('src') ?? ''}`
+        )
+        return Promise.resolve()
+      },
+    })
+    Object.defineProperty(HTMLMediaElement.prototype, 'pause', {
+      configurable: true,
+      value(this: HTMLMediaElement) {
+        ;(window as unknown as { __audioEvents: string[] }).__audioEvents.push(
+          `pause:${this.getAttribute('src') ?? ''}`
+        )
+      },
+    })
+  })
+
+  await page.route('**/api/search-with-directory-counts?*', async (route) => {
+    await route.fulfill({
+      json: {
+        total: 1,
+        cards: [{ kind: 'asset', asset: audioAsset }],
+        directories: [
+          sampleRootDirectory(),
+          {
+            source_id: 'sample',
+            path: 'sounds',
+            name: 'sounds',
+            depth: 1,
+            asset_count: 1,
+            matched_asset_count: 1,
+            quality: 5,
+            quality_override: null,
+          },
+        ],
+      },
+    })
+  })
+  await page.route('**/api/search?*', async (route) => {
+    await route.fulfill({ json: { total: 1, cards: [{ kind: 'asset', asset: audioAsset }] } })
+  })
+  await page.route('**/api/assets/asset-thunder', async (route) => {
+    await route.fulfill({
+      json: {
+        asset: audioAsset,
+        actions: actionsFor(audioAsset, '/tmp/sample-assets/sounds/thunder.mp3'),
+      },
+    })
+  })
+  await page.route('**/api/assets/asset-thunder/file', async (route) => {
+    await route.fulfill({
+      contentType: 'audio/mpeg',
+      body: Buffer.from('audio'),
+    })
+  })
+
+  await page.goto('/')
+  const tile = page.getByRole('button', { name: /thunder\.mp3/i })
+  await expect(tile).toBeVisible()
+
+  await tile.hover()
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __audioEvents: string[] }).__audioEvents)).toContain(
+    'play:/api/assets/asset-thunder/file'
+  )
+
+  await page.mouse.move(0, 0)
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __audioEvents: string[] }).__audioEvents)).toContain(
+    'pause:/api/assets/asset-thunder/file'
+  )
+
+  await page.evaluate(() => {
+    ;(window as unknown as { __audioEvents: string[] }).__audioEvents = []
+  })
+  await tile.click()
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __audioEvents: string[] }).__audioEvents)).toContain(
+    'pause:/api/assets/asset-thunder/file'
+  )
+  const selectedPanel = page.getByLabel('Selected asset')
+  await expect(selectedPanel.locator('audio[controls]')).toHaveAttribute('src', '/api/assets/asset-thunder/file')
+})
+
 test('selecting an asset unfolds and scrolls to its folder path without refolding user-opened folders', async ({ page }) => {
   const farAsset = {
     ...sampleAsset,

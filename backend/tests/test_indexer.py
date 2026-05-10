@@ -152,6 +152,36 @@ def test_index_sources_skips_unchanged_video_poster_generation(tmp_path: Path) -
     assert second.upserted_assets == 0
 
 
+def test_index_sources_classifies_audio_files(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    (source_root / "thunder.mp3").write_bytes(b"audio")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".mp3"}),
+            ),
+        ),
+    )
+
+    with connect(tmp_path / "findme.sqlite3") as db:
+        initialize_database(db)
+        summary = index_sources(db, config)
+        row = db.execute(
+            "SELECT media_type, thumbnail_path FROM assets WHERE relative_path = 'thunder.mp3'"
+        ).fetchone()
+
+    assert summary.scanned_files == 1
+    assert summary.upserted_assets == 1
+    assert row["media_type"] == "audio"
+    assert row["thumbnail_path"] is None
+
+
 def test_index_sources_reports_thumbnail_failures_without_aborting(tmp_path: Path) -> None:
     source_root = tmp_path / "assets"
     source_root.mkdir()

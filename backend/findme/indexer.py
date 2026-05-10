@@ -20,6 +20,7 @@ from findme.thumbnails import (
 
 IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif"})
 VIDEO_EXTENSIONS = frozenset({".webm", ".mp4"})
+AUDIO_EXTENSIONS = frozenset({".mp3", ".ogg", ".wav", ".aif", ".aiff", ".m4a", ".flac"})
 IGNORED_DIRS = frozenset({".findme"})
 
 
@@ -391,6 +392,8 @@ def _media_type(extension: str) -> str:
         return "image"
     if extension in VIDEO_EXTENSIONS:
         return "video"
+    if extension in AUDIO_EXTENSIONS:
+        return "audio"
     return "other"
 
 

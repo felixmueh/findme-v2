@@ -14,6 +14,7 @@
     Layers2,
     LoaderCircle,
     Search,
+    Volume2,
   } from 'lucide-svelte'
   import {
     type Asset,
@@ -96,6 +97,7 @@
   let searchRevision = 0
   let collectionCycleTimer: number | undefined
   let assetRequestController: AbortController | undefined
+  let hoverAudioElement = $state<HTMLAudioElement>()
   let searchInput: HTMLInputElement
   let tileGridElement = $state<HTMLDivElement>()
   let folderPanelElement = $state<HTMLElement>()
@@ -119,6 +121,11 @@
   )
   const hoverPreviewAsset = $derived(
     hoveredCollection ? collectionDisplayAsset(hoveredCollection) : hoveredAsset
+  )
+  const hoverAudioUrl = $derived(
+    hoverPreviewAsset?.media_type === 'audio' && hoverPreviewAsset.asset_id !== selectedAssetId
+      ? assetFileUrl(hoverPreviewAsset)
+      : ''
   )
   const resultLabel = $derived(`${resultTotal} ${resultTotal === 1 ? 'card' : 'cards'}`)
   const visibleDirectories = $derived(directories.filter((directory) => isDirectoryVisible(directory)))
@@ -194,6 +201,22 @@
       return
     }
     void scrollHoveredDirectoryIntoView(key)
+  })
+
+  $effect(() => {
+    const audio = hoverAudioElement
+    const url = hoverAudioUrl
+    if (!audio || !url) return
+
+    audio.src = url
+    audio.load()
+    const playback = audio.play()
+    if (playback !== undefined) {
+      playback.catch(() => {
+        // Browsers can block audible hover playback until the page has user activation.
+      })
+    }
+    return () => stopAudioPreview(audio)
   })
 
   function setSearchMode(mode: SearchMode) {
@@ -472,7 +495,21 @@
   function assetIcon(asset: Asset) {
     if (asset.media_type === 'image') return ImageIcon
     if (asset.media_type === 'video') return Film
+    if (asset.media_type === 'audio') return Volume2
     return FileQuestion
+  }
+
+  function assetFileUrl(asset: Pick<Asset, 'asset_id'>) {
+    return `/api/assets/${asset.asset_id}/file`
+  }
+
+  function stopAudioPreview(audio: HTMLAudioElement) {
+    audio.pause()
+    try {
+      audio.currentTime = 0
+    } catch {
+      // Some browsers reject seeking before metadata is available.
+    }
   }
 
   function formatBytes(bytes: number) {
@@ -758,7 +795,7 @@
   }
 
   function openAsset(asset: Asset) {
-    window.open(`/api/assets/${asset.asset_id}/file`, '_blank', 'noopener')
+    window.open(assetFileUrl(asset), '_blank', 'noopener')
   }
 
   function handleAssetAuxClick(event: MouseEvent, asset: Asset) {
@@ -822,6 +859,11 @@
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
+
+{#if hoverAudioUrl}
+  <!-- svelte-ignore a11y_media_has_caption -->
+  <audio bind:this={hoverAudioElement} preload="none"></audio>
+{/if}
 
 <main class="app-shell">
   <header class="toolbar">
@@ -938,9 +980,17 @@
         {/if}
       </div>
 
-      {#if hoverPreviewAsset?.thumbnail_url}
+      {#if hoverPreviewAsset}
+        {@const HoverIcon = assetIcon(hoverPreviewAsset)}
         <aside class="hover-preview" aria-label="Hovered asset preview">
-          <img src={hoverPreviewAsset.thumbnail_url} alt="" />
+          {#if hoverPreviewAsset.thumbnail_url}
+            <img src={hoverPreviewAsset.thumbnail_url} alt="" />
+          {:else}
+            <div class="file-preview">
+              <HoverIcon size={30} />
+              <span>{hoverPreviewAsset.extension.slice(1).toUpperCase()}</span>
+            </div>
+          {/if}
           <span>{hoverPreviewAsset.filename}</span>
         </aside>
       {/if}
@@ -955,6 +1005,15 @@
             {:else if selected.asset.media_type === 'video'}
               <!-- svelte-ignore a11y_media_has_caption -->
               <video src={actions.open.url} controls preload="metadata" autoplay muted loop playsinline></video>
+            {:else if selected.asset.media_type === 'audio'}
+              <div class="audio-preview">
+                <div class="file-preview">
+                  <SelectedIcon size={30} />
+                  <span>{selected.asset.extension.slice(1).toUpperCase()}</span>
+                </div>
+                <!-- svelte-ignore a11y_media_has_caption -->
+                <audio src={actions.open.url} controls preload="metadata"></audio>
+              </div>
             {:else}
               <div class="file-preview">
                 <SelectedIcon size={30} />
