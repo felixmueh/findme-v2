@@ -1,6 +1,9 @@
 <script lang="ts">
+  import { tick } from 'svelte'
   import {
     Copy,
+    Ban,
+    Check,
     Download,
     ExternalLink,
     FileQuestion,
@@ -41,6 +44,8 @@
     quality_override: number | null
   }
 
+  type FilterRuleState = 'whitelist' | 'blacklist'
+
   type ActionProfile = {
     id: string
     label: string
@@ -62,8 +67,7 @@
   let query = $state('')
   let searchMode = $state<SearchMode>('strict')
   let sourceId = $state('')
-  let selectedDirectory = $state('')
-  let selectedDirectorySourceId = $state('')
+  let filterRules = $state<Map<string, FilterRuleState>>(new Map())
   let sources = $state<Source[]>([])
   let directories = $state<DirectoryNode[]>([])
   let collapsedDirectories = $state<Set<string>>(new Set())
@@ -91,7 +95,9 @@
   let directoryRequestController: AbortController | undefined
   let searchInput: HTMLInputElement
   let tileGridElement = $state<HTMLDivElement>()
+  let folderPanelElement = $state<HTMLElement>()
   let loadMoreTrigger = $state<HTMLDivElement>()
+  let folderHoverRestoreScrollTop: number | null = null
 
   const pageSize = 100
   const searchSessionId =
@@ -110,9 +116,30 @@
   )
   const resultLabel = $derived(`${resultTotal} ${resultTotal === 1 ? 'card' : 'cards'}`)
   const visibleDirectories = $derived(directories.filter((directory) => isDirectoryVisible(directory)))
-  const visibleDirectoryKeys = $derived.by(
-    () => new Set(visibleDirectories.map((directory) => directoryKey(directory)))
+  const serializedFilterRules = $derived.by(() =>
+    Array.from(filterRules.entries()).map(([key, state]) => {
+      const separatorIndex = key.indexOf('\u0000')
+      const source_id = key.slice(0, separatorIndex)
+      const path = key.slice(separatorIndex + 1)
+      return { source_id, path, state }
+    })
   )
+  const hoveredAssetAncestorKeys = $derived.by(() => {
+    const asset = hoverPreviewAsset
+    const keys = new Set<string>()
+    if (!asset) return keys
+    keys.add(directoryKey({ source_id: asset.source_id, path: '' }))
+    if (!asset.directory) return keys
+    const parts = asset.directory.split('/')
+    for (let index = 1; index <= parts.length; index += 1) {
+      keys.add(directoryKey({ source_id: asset.source_id, path: parts.slice(0, index).join('/') }))
+    }
+    return keys
+  })
+  const directHoveredDirectoryKey = $derived.by(() => {
+    const asset = hoverPreviewAsset
+    return asset ? directoryKey({ source_id: asset.source_id, path: asset.directory }) : ''
+  })
   const qualityTargetDirectory = $derived.by(
     () =>
       directories.find(
@@ -143,8 +170,7 @@
     query
     searchMode
     sourceId
-    selectedDirectory
-    selectedDirectorySourceId
+    filterRules
     const revision = ++searchRevision
     window.clearTimeout(debounceTimer)
     debounceTimer = window.setTimeout(() => {
@@ -156,6 +182,7 @@
     query
     searchMode
     sourceId
+    filterRules
     const revision = searchRevision
     window.clearTimeout(directoryDebounceTimer)
     directoryDebounceTimer = window.setTimeout(() => {
@@ -177,6 +204,20 @@
     return () => observer.disconnect()
   })
 
+  $effect(() => {
+    const key = directHoveredDirectoryKey
+    const panel = folderPanelElement
+    if (!panel) return
+    if (!key) {
+      if (folderHoverRestoreScrollTop !== null) {
+        panel.scrollTop = folderHoverRestoreScrollTop
+        folderHoverRestoreScrollTop = null
+      }
+      return
+    }
+    void scrollHoveredDirectoryIntoView(key)
+  })
+
   async function loadSources() {
     const response = await fetch('/api/sources')
     if (!response.ok) {
@@ -190,8 +231,6 @@
 
   function changeSource(event: Event) {
     sourceId = (event.currentTarget as HTMLSelectElement).value
-    selectedDirectory = ''
-    selectedDirectorySourceId = ''
     collapsedDirectories = new Set()
   }
 
@@ -205,6 +244,7 @@
     directoryRequestController = controller
     const params = new URLSearchParams()
     if (sourceId) params.set('source_id', sourceId)
+    appendFilterRules(params)
     const trimmed = query.trim()
     if (trimmed) {
       params.set('q', trimmed)
@@ -250,9 +290,8 @@
     const params = new URLSearchParams()
     params.set('limit', String(pageSize))
     params.set('offset', String(offset))
-    const effectiveSourceId = sourceId || selectedDirectorySourceId
-    if (effectiveSourceId) params.set('source_id', effectiveSourceId)
-    if (selectedDirectory) params.set('directory_prefix', selectedDirectory)
+    if (sourceId) params.set('source_id', sourceId)
+    appendFilterRules(params)
     const trimmed = query.trim()
     const path = trimmed ? '/api/search' : '/api/assets'
     if (trimmed) {
@@ -424,18 +463,93 @@
     return `${(bytes / 1024 / 1024).toFixed(1)} MB`
   }
 
-  function toggleDirectory(directory: DirectoryNode) {
-    if (isDirectorySelected(directory)) {
-      selectedDirectory = ''
-      selectedDirectorySourceId = ''
-      return
-    }
-    selectedDirectory = directory.path
-    selectedDirectorySourceId = sourceId ? '' : directory.source_id
-  }
-
   function directoryKey(directory: Pick<DirectoryNode, 'source_id' | 'path'>) {
     return `${directory.source_id}\u0000${directory.path}`
+  }
+
+  function directoryDomKey(directory: Pick<DirectoryNode, 'source_id' | 'path'>) {
+    return `${encodeURIComponent(directory.source_id)}:${encodeURIComponent(directory.path)}`
+  }
+
+  function directoryDomKeyFromKey(key: string) {
+    const separatorIndex = key.indexOf('\u0000')
+    return `${encodeURIComponent(key.slice(0, separatorIndex))}:${encodeURIComponent(key.slice(separatorIndex + 1))}`
+  }
+
+  async function scrollHoveredDirectoryIntoView(key: string) {
+    await tick()
+    const panel = folderPanelElement
+    if (!panel || directHoveredDirectoryKey !== key) return
+    const row = panel.querySelector<HTMLElement>(`[data-directory-key="${directoryDomKeyFromKey(key)}"]`)
+    if (!row) return
+    const panelRect = panel.getBoundingClientRect()
+    const rowRect = row.getBoundingClientRect()
+    if (rowRect.top >= panelRect.top && rowRect.bottom <= panelRect.bottom) return
+    if (folderHoverRestoreScrollTop === null) {
+      folderHoverRestoreScrollTop = panel.scrollTop
+    }
+    row.scrollIntoView({ block: 'nearest' })
+  }
+
+  function appendFilterRules(params: URLSearchParams) {
+    for (const rule of serializedFilterRules) {
+      params.append('filter_rule', JSON.stringify(rule))
+    }
+  }
+
+  function directoryRuleState(directory: DirectoryNode) {
+    return filterRules.get(directoryKey(directory)) ?? null
+  }
+
+  function folderControlLabel(directory: DirectoryNode, ruleState: FilterRuleState | null) {
+    const state = ruleState === 'whitelist' ? 'focused, ' : ruleState === 'blacklist' ? 'blocked, ' : ''
+    return `Folder controls for ${directory.name}, ${state}quality ${directory.quality}`
+  }
+
+  function nodeKeyParts(key: string) {
+    const separatorIndex = key.indexOf('\u0000')
+    return {
+      sourceId: key.slice(0, separatorIndex),
+      path: key.slice(separatorIndex + 1),
+    }
+  }
+
+  function pathsShareSubtree(first: string, second: string) {
+    return first === second || isPathAncestor(first, second) || isPathAncestor(second, first)
+  }
+
+  function isPathAncestor(ancestor: string, path: string) {
+    return ancestor === '' ? path !== '' : path.startsWith(`${ancestor}/`)
+  }
+
+  function toggleDirectoryRule(directory: DirectoryNode, state: FilterRuleState) {
+    const key = directoryKey(directory)
+    const next = new Map(filterRules)
+    if (next.get(key) === state) {
+      next.delete(key)
+    } else {
+      if (state === 'whitelist') {
+        const target = nodeKeyParts(key)
+        for (const [existingKey, existingState] of next) {
+          if (existingState !== 'whitelist') continue
+          const existing = nodeKeyParts(existingKey)
+          if (existing.sourceId === target.sourceId && pathsShareSubtree(existing.path, target.path)) {
+            next.delete(existingKey)
+          }
+        }
+      }
+      next.set(key, state)
+    }
+    filterRules = next
+  }
+
+  function setDirectoryRule(event: MouseEvent, directory: DirectoryNode, state: FilterRuleState) {
+    event.stopPropagation()
+    toggleDirectoryRule(directory, state)
+  }
+
+  function clearFilterRules() {
+    filterRules = new Map()
   }
 
   function hasChildren(directory: DirectoryNode) {
@@ -444,11 +558,6 @@
 
   function isCollapsed(directory: DirectoryNode) {
     return collapsedDirectories.has(directoryKey(directory))
-  }
-
-  function isDirectorySelected(directory: DirectoryNode) {
-    if (!selectedDirectory && !selectedDirectorySourceId) return false
-    return directory.path === selectedDirectory && (sourceId || selectedDirectorySourceId) === directory.source_id
   }
 
   function isDirectoryVisible(directory: DirectoryNode) {
@@ -468,14 +577,13 @@
   }
 
   function handleDirectoryClick(event: MouseEvent, directory: DirectoryNode) {
-    if (event.shiftKey) {
-      toggleDirectory(directory)
+    if (event.shiftKey || event.altKey) {
+      event.preventDefault()
+      event.stopPropagation()
+      toggleDirectoryRule(directory, event.shiftKey ? 'whitelist' : 'blacklist')
       return
     }
-    if (!hasChildren(directory)) {
-      toggleDirectory(directory)
-      return
-    }
+    if (!hasChildren(directory)) return
     const next = new Set(collapsedDirectories)
     const key = directoryKey(directory)
     if (next.has(key)) {
@@ -543,11 +651,6 @@
     event.stopPropagation()
     const key = directoryKey(directory)
     qualityTargetKey = qualityTargetKey === key ? '' : key
-  }
-
-  function clearDirectory() {
-    selectedDirectory = ''
-    selectedDirectorySourceId = ''
   }
 
   function openAsset(asset: Asset) {
@@ -794,34 +897,31 @@
       {/if}
     </section>
 
-    <aside class="folder-panel" aria-label="Folder tree">
+    <aside class="folder-panel" aria-label="Folder tree" bind:this={folderPanelElement}>
       <div class="panel-title">Folders</div>
       <button
-        class:active={selectedDirectory === '' && selectedDirectorySourceId === ''}
         class="folder-row"
         type="button"
-        onclick={clearDirectory}
+        disabled={filterRules.size === 0}
+        onclick={clearFilterRules}
       >
         <Folder size={15} />
-        <span>All folders</span>
+        <span>Clear rules</span>
       </button>
-      {#if selectedDirectory && !visibleDirectoryKeys.has(`${selectedDirectorySourceId || sourceId}\u0000${selectedDirectory}`)}
-        <button class="folder-row active retained" type="button" onclick={clearDirectory}>
-          <span class="folder-spacer"></span>
-          <Folder size={15} />
-          <span>{selectedDirectory}</span>
-          <em>0</em>
-        </button>
-      {/if}
       {#each visibleDirectories as directory (directoryKey(directory))}
         {@const children = hasChildren(directory)}
+        {@const ruleState = directoryRuleState(directory)}
         <div
-          class:active={isDirectorySelected(directory)}
+          class:path-highlight={hoveredAssetAncestorKeys.has(directoryKey(directory))}
+          class:direct-highlight={directHoveredDirectoryKey === directoryKey(directory)}
+          class:whitelist={ruleState === 'whitelist'}
+          class:blacklist={ruleState === 'blacklist'}
           class:collapsed={children && isCollapsed(directory)}
           class:leaf={!children}
           class="folder-row"
           role="group"
           aria-label={`${directory.name} folder`}
+          data-directory-key={directoryDomKey(directory)}
           style={`--depth: ${directory.depth}`}
           onmouseenter={() => setQualityHover(directory)}
           onmouseleave={() => clearQualityHover(directory)}
@@ -843,34 +943,63 @@
             {/if}
           </em>
           <span
-            class="quality-control"
+            class="folder-control"
             role="group"
             tabindex="-1"
-            aria-label={`Quality controls for ${directory.name}`}
+            aria-label={`Current folder controls for ${directory.name}`}
           >
             <button
+              class:blocked={ruleState === 'blacklist'}
+              class:focused={ruleState === 'whitelist'}
               class:override={directory.quality_override !== null}
               type="button"
-              aria-label={`Quality ${directory.quality} for ${directory.name}`}
+              aria-label={folderControlLabel(directory, ruleState)}
               aria-expanded={qualityTargetKey === directoryKey(directory)}
               onfocus={() => setQualityHover(directory)}
               onclick={(event) => toggleQualityPicker(event, directory)}
             >
-              {directory.quality}
+              {#if ruleState === 'whitelist'}
+                <Check size={13} />
+              {:else if ruleState === 'blacklist'}
+                <Ban size={13} />
+              {/if}
+              <span>{directory.quality}</span>
             </button>
             {#if qualityTargetKey === directoryKey(directory)}
-              <span class="quality-popover" role="listbox" aria-label={`Set quality for ${directory.name}`}>
-                {#each Array.from({ length: 11 }, (_, quality) => quality) as quality}
+              <span class="folder-control-popover" role="group" aria-label={`Folder controls for ${directory.name}`}>
+                <span class="scope-actions">
                   <button
-                    class:active={quality === directory.quality}
+                    class:active={ruleState === 'whitelist'}
                     type="button"
-                    role="option"
-                    aria-selected={quality === directory.quality}
-                    onclick={(event) => changeFolderQuality(event, directory, quality)}
+                    aria-label={`Focus ${directory.name}`}
+                    onclick={(event) => setDirectoryRule(event, directory, 'whitelist')}
                   >
-                    {quality}
+                    <Check size={13} />
+                    <span>Focus</span>
                   </button>
-                {/each}
+                  <button
+                    class:active={ruleState === 'blacklist'}
+                    type="button"
+                    aria-label={`Block ${directory.name}`}
+                    onclick={(event) => setDirectoryRule(event, directory, 'blacklist')}
+                  >
+                    <Ban size={13} />
+                    <span>Block</span>
+                  </button>
+                </span>
+                <span class="quality-popover" role="listbox" aria-label={`Set quality for ${directory.name}`}>
+                  {#each Array.from({ length: 11 }, (_, quality) => quality) as quality}
+                    <button
+                      class:active={quality === directory.quality}
+                      type="button"
+                      role="option"
+                      aria-selected={quality === directory.quality}
+                      onclick={(event) => changeFolderQuality(event, directory, quality)}
+                    >
+                      {quality}
+                    </button>
+                  {/each}
+                </span>
               </span>
             {/if}
           </span>

@@ -15,6 +15,7 @@ import yaml
 
 
 SearchMode = Literal["strict", "fuzzy", "domain", "combined"]
+DirectoryFilterState = Literal["whitelist", "blacklist"]
 DEFAULT_FOLDER_QUALITY = 5
 FOLDER_QUALITY_WEIGHT = 20.0
 
@@ -52,8 +53,29 @@ class DirectoryMatch:
     depth: int
     asset_count: int
     matched_asset_count: int
+    included_asset_count: int
     quality: int
     quality_override: int | None
+
+
+@dataclass(frozen=True)
+class DirectoryFilterRule:
+    source_id: str
+    path: str
+    state: DirectoryFilterState
+
+
+@dataclass(frozen=True)
+class DirectoryFilter:
+    rules: tuple[DirectoryFilterRule, ...] = ()
+    has_whitelist: bool = field(init=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "has_whitelist",
+            any(rule.state == "whitelist" for rule in self.rules),
+        )
 
 
 class SearchSuperseded(RuntimeError):
@@ -176,6 +198,7 @@ class SearchIndex:
             source_id=None,
             directory=None,
             directory_prefix=None,
+            directory_filter=None,
         )
         folder_quality_overrides = _fetch_folder_quality_overrides(db)
         corpus = _SearchCorpus.from_assets(assets)
@@ -212,6 +235,7 @@ class SearchIndex:
         source_id: str | None = None,
         directory: str | None = None,
         directory_prefix: str | None = None,
+        directory_filter: DirectoryFilter | None = None,
         domain_vocabulary: DomainVocabulary | None = None,
         mode: SearchMode = "combined",
         limit: int = 100,
@@ -230,6 +254,7 @@ class SearchIndex:
                 source_id=source_id,
                 directory=directory,
                 directory_prefix=directory_prefix,
+                directory_filter=directory_filter,
                 control=control,
             )
             return _strict_search_page(
@@ -245,6 +270,7 @@ class SearchIndex:
             source_id=source_id,
             directory=directory,
             directory_prefix=directory_prefix,
+            directory_filter=directory_filter,
             domain_vocabulary=domain_vocabulary,
             mode=mode,
             control=control,
@@ -263,6 +289,7 @@ class SearchIndex:
         source_id: str | None = None,
         directory: str | None = None,
         directory_prefix: str | None = None,
+        directory_filter: DirectoryFilter | None = None,
         control: SearchControl | None = None,
     ) -> list[SearchResult]:
         corpus = _filter_corpus(
@@ -275,6 +302,7 @@ class SearchIndex:
             source_id=source_id,
             directory=directory,
             directory_prefix=directory_prefix,
+            directory_filter=directory_filter,
             control=control,
         )
         return [_record_to_result(asset, 0) for asset in corpus.assets]
@@ -324,6 +352,7 @@ class SearchIndex:
         query: str | None = None,
         *,
         source_id: str | None = None,
+        directory_filter: DirectoryFilter | None = None,
         domain_vocabulary: DomainVocabulary | None = None,
         mode: SearchMode = "combined",
         control: SearchControl | None = None,
@@ -342,6 +371,7 @@ class SearchIndex:
                     source_id=source_id,
                     directory=None,
                     directory_prefix=None,
+                    directory_filter=None,
                     control=control,
                 )
                 match_counts = _counts_from_asset_directories(
@@ -353,6 +383,7 @@ class SearchIndex:
                     source_id=source_id,
                     directory=None,
                     directory_prefix=None,
+                    directory_filter=None,
                     domain_vocabulary=domain_vocabulary or DEFAULT_DOMAIN_VOCABULARY,
                     mode=mode,
                     control=control,
@@ -362,6 +393,60 @@ class SearchIndex:
                         (candidate.asset.source_id, candidate.asset.directory)
                         for candidate in ranked
                     ]
+                )
+        included_counts = match_counts
+        if directory_filter:
+            if query and query.strip():
+                if mode == "strict":
+                    corpus = _filter_corpus(
+                        _SearchCorpus(
+                            self.assets,
+                            self.fuzzy_tokens,
+                            self.fuzzy_token_asset_indexes,
+                            self.lexical_index,
+                        ),
+                        source_id=source_id,
+                        directory=None,
+                        directory_prefix=None,
+                        directory_filter=directory_filter,
+                        control=control,
+                    )
+                    included_counts = _counts_from_asset_directories(
+                        _strict_match_directories(corpus, query, control=control)
+                    )
+                else:
+                    ranked = self._ranked_search(
+                        query,
+                        source_id=source_id,
+                        directory=None,
+                        directory_prefix=None,
+                        directory_filter=directory_filter,
+                        domain_vocabulary=domain_vocabulary or DEFAULT_DOMAIN_VOCABULARY,
+                        mode=mode,
+                        control=control,
+                    )
+                    included_counts = _counts_from_asset_directories(
+                        [
+                            (candidate.asset.source_id, candidate.asset.directory)
+                            for candidate in ranked
+                        ]
+                    )
+            else:
+                corpus = _filter_corpus(
+                    _SearchCorpus(
+                        self.assets,
+                        self.fuzzy_tokens,
+                        self.fuzzy_token_asset_indexes,
+                        self.lexical_index,
+                    ),
+                    source_id=source_id,
+                    directory=None,
+                    directory_prefix=None,
+                    directory_filter=directory_filter,
+                    control=control,
+                )
+                included_counts = _counts_from_asset_directories(
+                    [(asset.source_id, asset.directory) for asset in corpus.assets]
                 )
 
         directories = []
@@ -380,6 +465,7 @@ class SearchIndex:
                     depth=depth,
                     asset_count=total_count,
                     matched_asset_count=matched_count,
+                    included_asset_count=included_counts.get((source, path), 0),
                     quality=quality,
                     quality_override=quality_override,
                 )
@@ -403,6 +489,7 @@ class SearchIndex:
         source_id: str | None,
         directory: str | None,
         directory_prefix: str | None,
+        directory_filter: DirectoryFilter | None,
         domain_vocabulary: DomainVocabulary,
         mode: SearchMode,
         control: SearchControl | None,
@@ -414,6 +501,7 @@ class SearchIndex:
             source_id=source_id,
             directory=directory,
             directory_prefix=directory_prefix,
+            directory_filter=directory_filter,
             domain_vocabulary=domain_vocabulary,
             mode=mode,
             preferences_revision=self.preferences_revision,
@@ -442,6 +530,7 @@ class SearchIndex:
                 source_id=source_id,
                 directory=directory,
                 directory_prefix=directory_prefix,
+                directory_filter=directory_filter,
                 domain_vocabulary=domain_vocabulary,
                 mode=mode,
                 control=control,
@@ -460,6 +549,7 @@ class SearchIndex:
                         source_id=source_id,
                         directory=directory,
                         directory_prefix=directory_prefix,
+                        directory_filter=directory_filter,
                         control=control,
                     ),
                     query,
@@ -554,6 +644,7 @@ def search_assets(
     source_id: str | None = None,
     directory: str | None = None,
     directory_prefix: str | None = None,
+    directory_filter: DirectoryFilter | None = None,
     domain_vocabulary: DomainVocabulary | None = None,
     mode: SearchMode = "combined",
     limit: int = 100,
@@ -565,6 +656,7 @@ def search_assets(
         source_id=source_id,
         directory=directory,
         directory_prefix=directory_prefix,
+        directory_filter=directory_filter,
         domain_vocabulary=domain_vocabulary,
         mode=mode,
         limit=limit,
@@ -579,6 +671,7 @@ def search_asset_page(
     source_id: str | None = None,
     directory: str | None = None,
     directory_prefix: str | None = None,
+    directory_filter: DirectoryFilter | None = None,
     domain_vocabulary: DomainVocabulary | None = None,
     mode: SearchMode = "combined",
     limit: int = 100,
@@ -590,6 +683,7 @@ def search_asset_page(
         source_id=source_id,
         directory=directory,
         directory_prefix=directory_prefix,
+        directory_filter=directory_filter,
         domain_vocabulary=domain_vocabulary or DEFAULT_DOMAIN_VOCABULARY,
         mode=mode,
     )
@@ -609,6 +703,7 @@ def count_search_assets(
     source_id: str | None = None,
     directory: str | None = None,
     directory_prefix: str | None = None,
+    directory_filter: DirectoryFilter | None = None,
     domain_vocabulary: DomainVocabulary | None = None,
     mode: SearchMode = "combined",
 ) -> int:
@@ -619,6 +714,7 @@ def count_search_assets(
             source_id=source_id,
             directory=directory,
             directory_prefix=directory_prefix,
+            directory_filter=directory_filter,
             domain_vocabulary=domain_vocabulary or DEFAULT_DOMAIN_VOCABULARY,
             mode=mode,
         )
@@ -663,6 +759,7 @@ def _rank_search(
     source_id: str | None,
     directory: str | None,
     directory_prefix: str | None,
+    directory_filter: DirectoryFilter | None,
     domain_vocabulary: DomainVocabulary,
     mode: SearchMode,
 ) -> list[_RankedCandidate]:
@@ -673,6 +770,7 @@ def _rank_search(
                 source_id=source_id,
                 directory=directory,
                 directory_prefix=directory_prefix,
+                directory_filter=directory_filter,
             )
         ),
         query,
@@ -873,6 +971,7 @@ def _search_cache_key(
     source_id: str | None,
     directory: str | None,
     directory_prefix: str | None,
+    directory_filter: DirectoryFilter | None,
     domain_vocabulary: DomainVocabulary,
     mode: SearchMode,
     preferences_revision: int = 0,
@@ -883,6 +982,11 @@ def _search_cache_key(
         source_id,
         directory,
         directory_prefix,
+        tuple(
+            sorted((rule.source_id, rule.path, rule.state) for rule in directory_filter.rules)
+        )
+        if directory_filter
+        else (),
         tuple(sorted(domain_vocabulary.expansions.items())),
         preferences_revision,
     )
@@ -1116,9 +1220,15 @@ def _filter_corpus(
     source_id: str | None,
     directory: str | None,
     directory_prefix: str | None,
+    directory_filter: DirectoryFilter | None,
     control: SearchControl | None = None,
 ) -> _SearchCorpus:
-    if source_id is None and directory is None and directory_prefix is None:
+    if (
+        source_id is None
+        and directory is None
+        and directory_prefix is None
+        and not directory_filter
+    ):
         return corpus
 
     filtered_assets = []
@@ -1134,9 +1244,36 @@ def _filter_corpus(
             or asset.directory.startswith(f"{directory_prefix}/")
         ):
             continue
+        if directory_filter and not includes_asset(
+            asset.source_id,
+            asset.directory,
+            directory_filter,
+        ):
+            continue
         filtered_assets.append(asset)
     return _SearchCorpus.from_assets(filtered_assets)
 
+
+def includes_asset(
+    source_id: str,
+    directory: str,
+    directory_filter: DirectoryFilter,
+) -> bool:
+    if not directory_filter.rules:
+        return True
+    rules_by_node = {
+        (rule.source_id, rule.path): rule.state for rule in directory_filter.rules
+    }
+    nearest = None
+    for ancestor in reversed(_directory_ancestors(directory)):
+        state = rules_by_node.get((source_id, ancestor))
+        if state is not None:
+            nearest = state
+    if nearest == "whitelist":
+        return True
+    if nearest == "blacklist":
+        return False
+    return not directory_filter.has_whitelist
 
 def _filter_directory_counts(
     directory_counts: dict[tuple[str, str], int],
@@ -1175,6 +1312,7 @@ def _fetch_assets(
     source_id: str | None,
     directory: str | None,
     directory_prefix: str | None,
+    directory_filter: DirectoryFilter | None,
 ) -> tuple[_AssetRecord, ...]:
     where = ["assets.stale = 0"]
     params: list[object] = []
@@ -1213,7 +1351,14 @@ def _fetch_assets(
         """,
         params,
     ).fetchall()
-    return tuple(_row_to_record(row, index) for index, row in enumerate(rows))
+    records = tuple(_row_to_record(row, index) for index, row in enumerate(rows))
+    if not directory_filter:
+        return records
+    return tuple(
+        record
+        for record in records
+        if includes_asset(record.source_id, record.directory, directory_filter)
+    )
 
 
 def _fetch_folder_quality_overrides(

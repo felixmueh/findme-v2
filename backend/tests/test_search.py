@@ -7,10 +7,13 @@ from findme.config import AppConfig, SourceConfig
 from findme.db import connect, initialize_database
 from findme.indexer import index_sources
 from findme.search import (
+    DirectoryFilter,
+    DirectoryFilterRule,
     DomainVocabulary,
     SearchControl,
     SearchIndex,
     SearchSuperseded,
+    includes_asset,
     search_assets,
     upsert_folder_quality,
 )
@@ -53,6 +56,42 @@ def test_search_assets_applies_source_and_directory_filters(tmp_path: Path) -> N
         results = search_assets(db, "goblin", source_id="dnd", directory="Tokens")
 
     assert [result.relative_path for result in results] == ["Tokens/Goblin.png"]
+
+
+def test_directory_filter_rules_apply_deepest_specified_ancestor() -> None:
+    assert includes_asset("dnd", "Tokens", DirectoryFilter()) is True
+
+    blacklist_only = DirectoryFilter(
+        (DirectoryFilterRule("dnd", "Tokens/Unused", "blacklist"),)
+    )
+    assert includes_asset("dnd", "Tokens/Unused", blacklist_only) is False
+    assert includes_asset("dnd", "Tokens", blacklist_only) is True
+    assert includes_asset("other", "Tokens/Unused", blacklist_only) is True
+
+    whitelist_mode = DirectoryFilter(
+        (DirectoryFilterRule("dnd", "Maps", "whitelist"),)
+    )
+    assert includes_asset("dnd", "Maps/Caves", whitelist_mode) is True
+    assert includes_asset("dnd", "Tokens", whitelist_mode) is False
+
+    whitelist_overrides_root_blacklist = DirectoryFilter(
+        (
+            DirectoryFilterRule("dnd", "", "blacklist"),
+            DirectoryFilterRule("dnd", "Maps", "whitelist"),
+        )
+    )
+    assert includes_asset("dnd", "Maps/Caves", whitelist_overrides_root_blacklist) is True
+    assert includes_asset("dnd", "Tokens", whitelist_overrides_root_blacklist) is False
+
+    blacklist_overrides_parent_whitelist = DirectoryFilter(
+        (
+            DirectoryFilterRule("dnd", "", "whitelist"),
+            DirectoryFilterRule("dnd", "Maps/Unused", "blacklist"),
+        )
+    )
+    assert includes_asset("dnd", "Maps/Unused", blacklist_overrides_parent_whitelist) is False
+    assert includes_asset("dnd", "Maps", blacklist_overrides_parent_whitelist) is True
+    assert includes_asset("other", "Maps/Unused", blacklist_overrides_parent_whitelist) is False
 
 
 def test_search_assets_hides_stale_assets(tmp_path: Path) -> None:

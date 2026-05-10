@@ -43,6 +43,10 @@ button {
   border: 0;
 }
 
+button:disabled {
+  cursor: default;
+}
+
 .app-shell {
   height: 100vh;
   display: grid;
@@ -477,6 +481,10 @@ button.folder-row {
   grid-template-columns: 14px minmax(0, 1fr);
 }
 
+button.folder-row:disabled {
+  color: var(--faint);
+}
+
 button.folder-row.retained {
   grid-template-columns: 14px 16px minmax(0, 1fr) auto;
 }
@@ -495,14 +503,23 @@ button.folder-row.retained {
 }
 
 .folder-row:hover,
-.folder-row.active,
 .folder-row:hover .folder-main,
-.folder-row.active .folder-main {
+.folder-row.path-highlight,
+.folder-row.path-highlight .folder-main {
   background: var(--surface-alt);
 }
 
-.folder-row.active {
-  color: var(--accent-hover);
+.folder-row.direct-highlight,
+.folder-row.direct-highlight .folder-main {
+  background: #eeebe6;
+}
+
+.folder-row.whitelist {
+  box-shadow: inset 3px 0 0 #15803d;
+}
+
+.folder-row.blacklist {
+  box-shadow: inset 3px 0 0 var(--danger);
 }
 
 .folder-row.retained {
@@ -527,7 +544,7 @@ button.folder-row.retained {
   width: 14px;
 }
 
-.folder-row > span:not(.quality-control),
+.folder-row > span:not(.folder-control),
 .folder-main > span {
   min-width: 0;
   overflow: hidden;
@@ -547,49 +564,97 @@ button.folder-row.retained {
   font-weight: 700;
 }
 
-.quality-control {
+.folder-control {
   position: relative;
   display: flex;
   align-items: center;
   overflow: visible;
 }
 
-.quality-control > button {
-  width: 22px;
+.folder-control > button {
+  min-width: 28px;
   height: 22px;
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+  justify-content: center;
   border: 1px solid var(--border);
   border-radius: 5px;
   background: transparent;
   color: var(--faint);
+  padding: 0 5px;
   font-size: 11px;
   text-align: center;
 }
 
-.quality-control > button:hover,
-.quality-control > button:focus-visible {
+.folder-control > button:hover,
+.folder-control > button:focus-visible {
   color: var(--text);
   background: var(--surface-alt);
 }
 
-.quality-control > button.override {
+.folder-control > button.override {
   color: var(--accent-hover);
   border-color: var(--accent);
   font-weight: 650;
 }
 
-.quality-popover {
+.folder-control > button.focused {
+  color: #166534;
+  border-color: #15803d;
+  background: #dcfce7;
+}
+
+.folder-control > button.blocked {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: #fee4e2;
+}
+
+.folder-control-popover {
   position: absolute;
   right: 0;
   bottom: calc(100% + 4px);
   z-index: 20;
   display: grid;
-  grid-template-columns: repeat(11, 22px);
-  gap: 2px;
+  gap: 5px;
   padding: 4px;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--surface);
   box-shadow: 0 2px 8px rgb(0 0 0 / 16%);
+}
+
+.scope-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+
+.scope-actions button {
+  height: 24px;
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  padding: 0 7px;
+  font-size: 11px;
+}
+
+.scope-actions button:hover,
+.scope-actions button.active {
+  color: var(--text);
+  background: var(--surface-alt);
+}
+
+.quality-popover {
+  display: grid;
+  grid-template-columns: repeat(11, 22px);
+  gap: 2px;
 }
 
 .quality-popover button {
