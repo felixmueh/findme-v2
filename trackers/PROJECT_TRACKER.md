@@ -84,6 +84,7 @@ References: [Design: Derived Resources And Actions](../docs/DESIGN.md#derived-re
 - [x] Directory and directory-prefix filters.
 - [x] Stale assets hidden from normal search.
 - [x] Source priority included in current scoring.
+- [x] User-defined source/directory quality included in current scoring.
 - [x] Bounded, process-local result cache for repeated exact queries.
 - [ ] Near-repeat search cache reuse, e.g. `Goblins` then `Goblin`, with a max memory size.
 - [ ] Real crawl and search engine comparison.
@@ -99,6 +100,7 @@ References: [Design: Derived Resources And Actions](../docs/DESIGN.md#derived-re
 
 - [x] Text match score.
 - [x] Source priority.
+- [x] User-defined source/directory quality.
 - [x] Source/directory filter scope.
 - [ ] Exact token/stem match signals.
 - [ ] Prefix/infix/fuzzy match signals.

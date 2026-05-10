@@ -11,8 +11,35 @@ AssetResponse = dict[str, Any]
 ResultCard = dict[str, Any]
 
 
-_TRAILING_NUMBER_RE = re.compile(
-    r"^(?P<base>.+?)[\s._-]*(?:[\(\[]?(?P<number>\d+)[\)\]]?)$"
+_EMBEDDED_IMAGE_EXTENSION_RE = re.compile(
+    r"(?i)\.(?:png|jpe?g|webp|gif)$",
+)
+_STEM_SEPARATOR_RE = re.compile(r"[\s._-]+")
+_TRAILING_GLUED_NUMERIC_VARIANT_RE = re.compile(
+    r"(?P<base>.+?)(?P<variant>\d+[A-Za-z]?)$"
+)
+_NUMERIC_VARIANT_RE = re.compile(r"\d+[A-Za-z]?")
+_LETTER_NUMERIC_VARIANT_RE = re.compile(r"[A-Za-z]{1,2}\d+")
+_LETTER_VARIANT_RE = re.compile(r"(?:[A-Za-z]|[A-Z]{2})")
+_VARIANT_COLORS = frozenset(
+    {
+        "black",
+        "blue",
+        "brown",
+        "cyan",
+        "gold",
+        "gray",
+        "green",
+        "grey",
+        "magenta",
+        "orange",
+        "pink",
+        "purple",
+        "red",
+        "silver",
+        "white",
+        "yellow",
+    }
 )
 
 
@@ -20,8 +47,8 @@ _TRAILING_NUMBER_RE = re.compile(
 class _GroupedAsset:
     asset: AssetResponse
     collection_key: tuple[str, str, str]
-    variant_sort_key: tuple[str, int, str]
-    has_number_suffix: bool
+    variant_sort_key: tuple[str, tuple[tuple[int, int, str], ...], str]
+    has_variant: bool
 
 
 def result_cards_for_assets(
@@ -42,14 +69,14 @@ class ResultCardResolver:
     by_collection: dict[tuple[str, str, str], tuple[_GroupedAsset, ...]]
     by_asset_id: dict[str, _GroupedAsset]
     collection_counts: dict[tuple[str, str, str], int]
-    has_numbered_asset: dict[tuple[str, str, str], bool]
+    has_variant_asset: dict[tuple[str, str, str], bool]
 
     @classmethod
     def from_assets(cls, assets: Iterable[AssetResponse]) -> "ResultCardResolver":
         by_collection: dict[tuple[str, str, str], list[_GroupedAsset]] = {}
         by_asset_id: dict[str, _GroupedAsset] = {}
         collection_counts: dict[tuple[str, str, str], int] = {}
-        has_numbered_asset: dict[tuple[str, str, str], bool] = {}
+        has_variant_asset: dict[tuple[str, str, str], bool] = {}
         for asset in assets:
             grouped = _grouped_asset(asset)
             by_asset_id[str(asset["asset_id"])] = grouped
@@ -57,9 +84,8 @@ class ResultCardResolver:
             collection_counts[grouped.collection_key] = (
                 collection_counts.get(grouped.collection_key, 0) + 1
             )
-            has_numbered_asset[grouped.collection_key] = (
-                has_numbered_asset.get(grouped.collection_key, False)
-                or grouped.has_number_suffix
+            has_variant_asset[grouped.collection_key] = (
+                has_variant_asset.get(grouped.collection_key, False) or grouped.has_variant
             )
         return cls(
             by_collection={
@@ -68,7 +94,7 @@ class ResultCardResolver:
             },
             by_asset_id=by_asset_id,
             collection_counts=collection_counts,
-            has_numbered_asset=has_numbered_asset,
+            has_variant_asset=has_variant_asset,
         )
 
     def cards_for(self, assets: Iterable[AssetResponse]) -> list[ResultCard]:
@@ -90,7 +116,7 @@ class ResultCardResolver:
             grouped = self._grouped_for_asset(asset)
             if (
                 self.collection_counts[grouped.collection_key] < 2
-                or not self.has_numbered_asset[grouped.collection_key]
+                or not self.has_variant_asset[grouped.collection_key]
             ):
                 total += 1
                 if total > offset and (limit is None or len(cards) < limit):
@@ -125,33 +151,88 @@ class ResultCardResolver:
             asset=asset,
             collection_key=cached.collection_key,
             variant_sort_key=cached.variant_sort_key,
-            has_number_suffix=cached.has_number_suffix,
+            has_variant=cached.has_variant,
         )
 
 
 def _grouped_asset(asset: AssetResponse) -> _GroupedAsset:
     source_id = str(asset["source_id"])
     directory = str(asset["directory"])
-    stem = str(asset["stem"])
-    base, suffix_number, has_number_suffix = _variant_parts(stem)
+    stem = _collection_stem(str(asset["stem"]))
+    base, variant_sort_key, has_variant = _variant_parts(stem)
     collection_key = (source_id, directory, base.casefold())
     return _GroupedAsset(
         asset=asset,
         collection_key=collection_key,
         variant_sort_key=(
             base.casefold(),
-            suffix_number,
+            variant_sort_key,
             str(asset["relative_path"]).casefold(),
         ),
-        has_number_suffix=has_number_suffix,
+        has_variant=has_variant,
     )
 
 
-def _variant_parts(stem: str) -> tuple[str, int, bool]:
-    match = _TRAILING_NUMBER_RE.match(stem)
-    if not match:
-        return stem, 0, False
-    return match.group("base").rstrip(" ._-"), int(match.group("number")), True
+def _variant_parts(stem: str) -> tuple[str, tuple[tuple[int, int, str], ...], bool]:
+    base_tokens: list[str] = []
+    variant_sort_keys: list[tuple[int, int, str]] = []
+
+    for raw_token in _STEM_SEPARATOR_RE.split(stem):
+        if not raw_token:
+            continue
+        token_parts = _token_parts(raw_token)
+        for token, variant in token_parts:
+            if variant:
+                variant_sort_keys.append(_variant_sort_key(token))
+            else:
+                base_tokens.append(token)
+
+    if not variant_sort_keys:
+        return stem, (), False
+    if not base_tokens:
+        return stem, (), False
+    return " ".join(base_tokens), tuple(variant_sort_keys), True
+
+
+def _token_parts(raw_token: str) -> list[tuple[str, bool]]:
+    token = raw_token.strip("()[]{}")
+    if _is_variant_token(token):
+        return [(token, True)]
+    match = _TRAILING_GLUED_NUMERIC_VARIANT_RE.match(token)
+    if match and not _is_variant_token(token):
+        base = match.group("base")
+        variant = match.group("variant")
+        if base and _is_variant_token(variant):
+            return [(base, False), (variant, True)]
+    return [(token, False)]
+
+
+def _is_variant_token(token: str) -> bool:
+    if not token:
+        return False
+    if token.casefold() in _VARIANT_COLORS:
+        return True
+    return (
+        _NUMERIC_VARIANT_RE.fullmatch(token) is not None
+        or _LETTER_NUMERIC_VARIANT_RE.fullmatch(token) is not None
+        or _LETTER_VARIANT_RE.fullmatch(token) is not None
+    )
+
+
+def _variant_sort_key(variant: str) -> tuple[int, int, str]:
+    numeric = re.fullmatch(r"(\d+)([A-Za-z]?)", variant)
+    if numeric is not None:
+        return (1, int(numeric.group(1)), numeric.group(2).casefold())
+    letter_numeric = re.fullmatch(r"([A-Za-z]{1,2})(\d+)", variant)
+    if letter_numeric is not None:
+        return (2, int(letter_numeric.group(2)), letter_numeric.group(1).casefold())
+    if variant.casefold() in _VARIANT_COLORS:
+        return (3, 0, variant.casefold())
+    return (4, 0, variant.casefold())
+
+
+def _collection_stem(stem: str) -> str:
+    return _EMBEDDED_IMAGE_EXTENSION_RE.sub("", stem)
 
 
 def _public_collection_key(collection_key: tuple[str, str, str]) -> str:

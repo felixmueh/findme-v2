@@ -8,6 +8,7 @@ import time
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
 from findme.assets import (
     AssetNotFoundError,
@@ -28,7 +29,14 @@ from findme.search import (
     SearchControl,
     SearchSuperseded,
     load_domain_vocabulary,
+    upsert_folder_quality,
 )
+
+
+class FolderQualityRequest(BaseModel):
+    source_id: str
+    directory: str = ""
+    quality: int = Field(ge=0, le=10)
 
 
 def create_app(
@@ -103,6 +111,33 @@ def create_app(
         except SearchSuperseded:
             return Response(status_code=204)
         return {"directories": [_directory_response(directory) for directory in directories]}
+
+    @app.put("/api/folder-quality")
+    def set_folder_quality(request: FolderQualityRequest) -> dict[str, object]:
+        if (request.source_id, request.directory) not in search_index.directory_counts:
+            raise HTTPException(status_code=404, detail="indexed folder was not found") from None
+        with connect(database_path) as db:
+            upsert_folder_quality(
+                db,
+                source_id=request.source_id,
+                directory=request.directory,
+                quality=request.quality,
+            )
+        search_index.set_folder_quality(
+            request.source_id,
+            request.directory,
+            request.quality,
+        )
+        quality, quality_override = search_index.folder_quality(
+            request.source_id,
+            request.directory,
+        )
+        return {
+            "source_id": request.source_id,
+            "directory": request.directory,
+            "quality": quality,
+            "quality_override": quality_override,
+        }
 
     @app.get("/api/search")
     def search(
@@ -227,6 +262,8 @@ def _directory_response(directory: DirectoryMatch) -> dict[str, object]:
         "depth": directory.depth,
         "asset_count": directory.asset_count,
         "matched_asset_count": directory.matched_asset_count,
+        "quality": directory.quality,
+        "quality_override": directory.quality_override,
     }
 
 

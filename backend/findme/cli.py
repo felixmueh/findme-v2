@@ -105,6 +105,7 @@ def run(argv: list[str]) -> int:
                 else None
             )
             with connect(db_path) as db:
+                initialize_database(db)
                 search_index = SearchIndex.load(db)
                 report = evaluate_search(
                     evaluation,

@@ -41,6 +41,14 @@ def initialize_database(db: sqlite3.Connection) -> None:
           priority INTEGER NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS folder_quality_overrides (
+          source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+          directory TEXT NOT NULL,
+          quality INTEGER NOT NULL CHECK (quality BETWEEN 0 AND 10),
+          updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          PRIMARY KEY (source_id, directory)
+        );
+
         CREATE TABLE IF NOT EXISTS assets (
           asset_id TEXT PRIMARY KEY,
           source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,

@@ -43,6 +43,8 @@ def test_api_lists_indexed_directory_tree(tmp_path: Path) -> None:
             "depth": 0,
             "asset_count": 3,
             "matched_asset_count": 3,
+            "quality": 5,
+            "quality_override": None,
         },
         {
             "source_id": "dnd",
@@ -51,6 +53,8 @@ def test_api_lists_indexed_directory_tree(tmp_path: Path) -> None:
             "depth": 1,
             "asset_count": 1,
             "matched_asset_count": 1,
+            "quality": 5,
+            "quality_override": None,
         },
         {
             "source_id": "dnd",
@@ -59,6 +63,8 @@ def test_api_lists_indexed_directory_tree(tmp_path: Path) -> None:
             "depth": 1,
             "asset_count": 2,
             "matched_asset_count": 2,
+            "quality": 5,
+            "quality_override": None,
         },
         {
             "source_id": "dnd",
@@ -67,6 +73,8 @@ def test_api_lists_indexed_directory_tree(tmp_path: Path) -> None:
             "depth": 2,
             "asset_count": 1,
             "matched_asset_count": 1,
+            "quality": 5,
+            "quality_override": None,
         },
         {
             "source_id": "dnd",
@@ -75,6 +83,8 @@ def test_api_lists_indexed_directory_tree(tmp_path: Path) -> None:
             "depth": 2,
             "asset_count": 1,
             "matched_asset_count": 1,
+            "quality": 5,
+            "quality_override": None,
         },
     ]
 
@@ -112,6 +122,8 @@ def test_api_lists_only_directories_with_search_matches(tmp_path: Path) -> None:
             "depth": 0,
             "asset_count": 3,
             "matched_asset_count": 2,
+            "quality": 5,
+            "quality_override": None,
         },
         {
             "source_id": "dnd",
@@ -120,6 +132,8 @@ def test_api_lists_only_directories_with_search_matches(tmp_path: Path) -> None:
             "depth": 1,
             "asset_count": 1,
             "matched_asset_count": 1,
+            "quality": 5,
+            "quality_override": None,
         },
         {
             "source_id": "dnd",
@@ -128,6 +142,8 @@ def test_api_lists_only_directories_with_search_matches(tmp_path: Path) -> None:
             "depth": 1,
             "asset_count": 2,
             "matched_asset_count": 1,
+            "quality": 5,
+            "quality_override": None,
         },
         {
             "source_id": "dnd",
@@ -136,6 +152,8 @@ def test_api_lists_only_directories_with_search_matches(tmp_path: Path) -> None:
             "depth": 2,
             "asset_count": 1,
             "matched_asset_count": 1,
+            "quality": 5,
+            "quality_override": None,
         },
     ]
 
@@ -180,14 +198,8 @@ def test_api_directory_rows_are_source_scoped_for_all_sources(tmp_path: Path) ->
             "depth": 0,
             "asset_count": 1,
             "matched_asset_count": 1,
-        },
-        {
-            "source_id": "maps",
-            "path": "",
-            "name": "Maps",
-            "depth": 0,
-            "asset_count": 1,
-            "matched_asset_count": 1,
+            "quality": 5,
+            "quality_override": None,
         },
         {
             "source_id": "dnd",
@@ -196,6 +208,18 @@ def test_api_directory_rows_are_source_scoped_for_all_sources(tmp_path: Path) ->
             "depth": 1,
             "asset_count": 1,
             "matched_asset_count": 1,
+            "quality": 5,
+            "quality_override": None,
+        },
+        {
+            "source_id": "maps",
+            "path": "",
+            "name": "Maps",
+            "depth": 0,
+            "asset_count": 1,
+            "matched_asset_count": 1,
+            "quality": 5,
+            "quality_override": None,
         },
         {
             "source_id": "maps",
@@ -204,5 +228,7 @@ def test_api_directory_rows_are_source_scoped_for_all_sources(tmp_path: Path) ->
             "depth": 1,
             "asset_count": 1,
             "matched_asset_count": 1,
+            "quality": 5,
+            "quality_override": None,
         },
     ]

@@ -222,6 +222,7 @@ Potential ranking inputs:
 
 - text match score
 - source priority
+- user-defined source/directory quality
 - selected source/directory filters
 - media type
 - recency
@@ -268,10 +269,18 @@ This fits virtualized grids and huge thumbnail sets better than traditional page
 
 Result ranges are over visible result cards, not necessarily raw assets. Similar
 assets may fold into a single collection card. For v1, collections are detected
-within the same source and directory by stripping a trailing number from the
-filename stem, including glued numbers and parenthesized or bracketed numbers.
-Examples include `Goblin2.png`, `Goblin 03.webp`, `Goblin (4).png`, and
-`Goblin [5].jpg`.
+within the same source and directory by stripping recognized variant tokens from
+filename stems. Variants include numeric tokens such as `1`, `5b`, and `7C`,
+short letter tokens such as `A`, `B`, and `BC`, common color names such as
+`Blue`, `green`, and `MAGENTA`, and letter-number tokens such as `A2`. Variant
+tokens may appear at the end or in delimited middle positions, and more than one
+variant token may appear in a stem. Accidental embedded image extensions in
+double-extension names are ignored before grouping, so names like
+`Map_01.png.jpg` fold with adjacent map variants.
+
+Examples include `Goblin2.png`, `Goblin 03.webp`, `Goblin (4).png`,
+`Goblin [5].jpg`, `Portal_Blue_Glow.png`, and
+`Human_Male_Blacksmith_A2_Spirit_02.png.jpg`.
 
 Collections are computed from indexed metadata when the server loads the
 in-memory search data, not persisted as indexer output. This keeps the rule easy
@@ -295,6 +304,14 @@ It should:
 - show asset counts per source/directory
 - act as a hard filter for search and browse through explicit include/exclude subtree rules
 - never perform live filesystem walking from the UI
+- expose a persistent user-defined quality label from 0 to 10 for each indexed
+  source/directory
+
+Directory quality is user-edited runtime preference data and lives in the app
+database, not in source folders or server config. It is a ranking signal, not a
+hard filter. Changing quality should update the live search index preferences,
+clear ranked result caches, and make the current query/browse ordering change
+without re-indexing or restarting the app.
 
 The final sidebar filtering model is tracked in `docs/SIDEBAR_FILTERING.md`. In that model, source roots and directories can be marked as green whitelist or red blacklist rules. The nearest specified ancestor decides whether an asset is included, and the existence of any whitelist rule globally excludes otherwise-unspecified assets. This rule model replaces a single selected-directory hard filter.
 

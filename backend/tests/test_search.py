@@ -12,6 +12,7 @@ from findme.search import (
     SearchIndex,
     SearchSuperseded,
     search_assets,
+    upsert_folder_quality,
 )
 
 from helpers import write_image
@@ -191,6 +192,104 @@ def test_combined_search_penalizes_audio_sources_for_visual_object_queries(
     assert [result.relative_path for result in results] == [
         "StoneDoor.png",
         "door_big_close.mp3",
+    ]
+
+
+def test_search_index_applies_folder_quality_to_combined_and_strict_ranking(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "assets"
+    write_image(source_root / "Bad" / "Goblin.png")
+    write_image(source_root / "Good" / "Goblin.png")
+    config = _config(tmp_path, source_root)
+
+    with connect(tmp_path / "findme.sqlite3") as db:
+        initialize_database(db)
+        index_sources(db, config)
+        search_index = SearchIndex.load(db)
+
+        assert [result.relative_path for result in search_index.search("goblin").assets] == [
+            "Bad/Goblin.png",
+            "Good/Goblin.png",
+        ]
+
+        upsert_folder_quality(db, source_id="dnd", directory="Good", quality=10)
+        search_index.set_folder_quality("dnd", "Good", 10)
+
+        combined = search_index.search("goblin").assets
+        strict = search_index.search("goblin", mode="strict").assets
+
+    assert [result.relative_path for result in combined] == [
+        "Good/Goblin.png",
+        "Bad/Goblin.png",
+    ]
+    assert [result.relative_path for result in strict] == [
+        "Good/Goblin.png",
+        "Bad/Goblin.png",
+    ]
+
+    with connect(tmp_path / "findme.sqlite3") as db:
+        reloaded = SearchIndex.load(db)
+
+    assert [result.relative_path for result in reloaded.search("goblin").assets] == [
+        "Good/Goblin.png",
+        "Bad/Goblin.png",
+    ]
+
+    with connect(tmp_path / "findme.sqlite3") as db:
+        upsert_folder_quality(db, source_id="dnd", directory="Good", quality=5)
+        reloaded.set_folder_quality("dnd", "Good", 5)
+        assert reloaded.folder_quality("dnd", "Good") == (5, None)
+        stored_overrides = db.execute(
+            "SELECT quality FROM folder_quality_overrides WHERE source_id = ? AND directory = ?",
+            ("dnd", "Good"),
+        ).fetchall()
+
+    assert stored_overrides == []
+    assert [result.relative_path for result in reloaded.search("goblin").assets] == [
+        "Bad/Goblin.png",
+        "Good/Goblin.png",
+    ]
+
+
+def test_directory_matches_keep_each_source_subtree_together(tmp_path: Path) -> None:
+    dnd_root = tmp_path / "dnd"
+    maps_root = tmp_path / "maps"
+    write_image(dnd_root / "Tokens" / "Goblin.png")
+    write_image(maps_root / "Tokens" / "Cave.png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=dnd_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+            SourceConfig(
+                id="maps",
+                display_name="Maps",
+                root=maps_root,
+                priority=5,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+
+    with connect(tmp_path / "findme.sqlite3") as db:
+        initialize_database(db)
+        index_sources(db, config)
+        search_index = SearchIndex.load(db)
+
+    assert [
+        (directory.source_id, directory.path)
+        for directory in search_index.directory_matches()
+    ] == [
+        ("dnd", ""),
+        ("dnd", "Tokens"),
+        ("maps", ""),
+        ("maps", "Tokens"),
     ]
 
 

@@ -209,6 +209,8 @@ Hard requirements:
 - final ranking logic is centralized and localized
 - changing ranking should not require touching indexing, API, UI, or lane implementations
 - source priority is applied in the final ranker, not inside retrieval lanes
+- user-defined source/directory quality is applied as a final ranking
+  adjustment, not inside retrieval lanes
 - selected source/directory scope is a hard filter before or during retrieval
 - stale assets are hidden from normal search
 - diagnostics expose enough signals to tune ranking
@@ -223,9 +225,21 @@ Potential ranking inputs:
 - prefix/infix/fuzzy match signals
 - domain-expanded match signals
 - source priority
+- user-defined source/directory quality
 - media type
 - recency or other file metadata if useful
 - future semantic similarity
+
+Strict lexical search still uses Tantivy for retrieval, but preference ranking is
+applied after retrieval through a lightweight rerank step:
+
+```text
+strict candidates + Tantivy score -> preference adjustment -> sorted results
+```
+
+Do not use the full Python multi-lane ranker as a fallback for strict search.
+If the strict lexical index is unavailable, fail clearly rather than silently
+switching to different ranking semantics.
 
 ## Workbench
 
