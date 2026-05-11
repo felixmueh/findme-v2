@@ -102,9 +102,15 @@ This creates a simple "deepest specified parent wins" model:
 
 ## Replacement Of Single Directory Selection
 
-The red/green subtree rule set replaces the current single selected directory filter.
+The red/green subtree rule set replaces the old single selected directory
+filter.
 
-There should not be a separate hard filter for "selected directory" in the final model. A row can still be clicked for focus, expansion, preview context, or keyboard navigation, but only red/green rules affect result inclusion.
+There should not be a separate persisted hard filter for "selected directory" in
+the final model. Clicking a folder row may set a transient directory view scope
+for browsing/searching inside that subtree, but that scope is request-local and
+compiled through the same numeric selection path as profile filtering. Tree
+expansion is a separate icon button. Only red/green rules affect the saved
+profile.
 
 This avoids unclear combinations such as:
 
@@ -204,7 +210,10 @@ The same parameter should be accepted by:
 - `GET /api/search`
 - `GET /api/search-with-directory-counts`
 
-The older `directory_prefix` and exact `directory` parameters become implementation details or compatibility-only paths once the sidebar rule model is built.
+Transient directory views should be represented explicitly by the frontend and
+compiled by the backend into the same numeric runtime data as profile selection.
+The older `directory_prefix` and exact `directory` parameters are not a frontend
+state model.
 
 ## Backend Evaluation
 

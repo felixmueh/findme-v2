@@ -290,6 +290,22 @@ class SearchProfileSessionManager:
     ) -> SearchPreferences:
         return self.session(db, search_session).preferences
 
+    def view_preferences(
+        self,
+        db: sqlite3.Connection,
+        search_session: str | None,
+        *,
+        source_id: str,
+        directory: str,
+    ) -> SearchPreferences:
+        self._validate_directory(source_id, directory)
+        session = self.session(db, search_session)
+        return self._compile_preferences_for_view(
+            session.working_settings,
+            source_id=source_id,
+            directory=directory,
+        )
+
     def select_profile(
         self,
         db: sqlite3.Connection,
@@ -575,6 +591,25 @@ class SearchProfileSessionManager:
             quality_overrides=_quality_overrides(normalized),
         )
 
+    def _compile_preferences_for_view(
+        self,
+        settings: dict[tuple[str, str], FolderSetting],
+        *,
+        source_id: str,
+        directory: str,
+    ) -> SearchPreferences:
+        normalized = _normalize_settings(settings)
+        display_filter = _settings_to_filter(normalized)
+        return self._search_index.compile_preferences(
+            directory_filter=_view_scoped_filter(
+                display_filter,
+                source_id=source_id,
+                directory=directory,
+            ),
+            display_directory_filter=display_filter,
+            quality_overrides=_quality_overrides(normalized),
+        )
+
     def _validate_directory(self, source_id: str, directory: str) -> None:
         if (source_id, directory) not in self._search_index.directory_counts:
             raise SearchProfileValidationError("indexed folder was not found")
@@ -647,6 +682,33 @@ def _settings_to_filter(
             if setting.selection_state is not None
         )
     )
+
+
+def _view_scoped_filter(
+    directory_filter: DirectoryFilter,
+    *,
+    source_id: str,
+    directory: str,
+) -> DirectoryFilter:
+    return DirectoryFilter(
+        (
+            DirectoryFilterRule(source_id=source_id, path=directory, state="whitelist"),
+            *(
+                rule
+                for rule in directory_filter.rules
+                if rule.source_id == source_id
+                and _is_strict_descendant_directory(rule.path, directory)
+            ),
+        )
+    )
+
+
+def _is_strict_descendant_directory(directory: str, parent: str) -> bool:
+    if directory == parent:
+        return False
+    if parent == "":
+        return directory != ""
+    return directory.startswith(f"{parent}/")
 
 
 def _scoring_settings(

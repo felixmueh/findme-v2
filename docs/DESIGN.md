@@ -21,6 +21,11 @@ This is personal-use software. It should be optimized for this server, this asse
 
 The implementation should stay small, maintainable, and tested. It should not carry fallback mechanisms for unknown environments. If this server is missing a required tool, directory, or dependency, the app should fail with a clear actionable error rather than silently degrading into a weaker generic path.
 
+Performance work should simplify the actual data path. When a faster approach
+introduces parallel contracts, compatibility layers, or speculative caches,
+prefer reshaping callers around the simpler path unless the extra structure is
+measured and still needed.
+
 ## Product Surface
 
 The v1 product surface is a standalone browser web app served by the asset server.
@@ -225,6 +230,9 @@ Settled design constraints:
 
 - search reads indexed data only
 - no live filesystem walking during search
+- the hot path is numeric: retrieval lanes return asset indexes and scores,
+  profile preferences are arrays, paging materializes only returned assets, and
+  directory counts roll up numeric directory ids
 - search lanes are directly requestable user-facing modes
 - each lane may use its engine's own ranking when that is faster and good enough
 - selected source/directory filters should be hard filters
@@ -341,7 +349,13 @@ working-state cue, not a cue for persisted settings that already match the
 profile. The same compact control also indicates when explicit focus or block
 rules exist below the folder, separate from the folder's own direct rule state.
 
-A row selection can still focus, expand, or provide preview context, but final hard filtering should come from the explicit include/exclude subtree rules. Global empty-query behavior can be conservative, such as showing nothing, recent assets, or preferred assets.
+A row click may apply a transient directory view scope for browsing within a
+folder without changing the active search profile. That view scope is not a
+second persistent filter model: the backend compiles it into the same numeric
+selection data used by profile rules, while preserving the user-authored
+profile rule states for display. Expanding/collapsing the tree is a separate
+row control. Global empty-query behavior can be conservative, such as showing
+nothing, recent assets, or preferred assets.
 
 ## Preview Experience
 

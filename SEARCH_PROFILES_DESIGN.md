@@ -225,8 +225,12 @@ SearchProfileRuntime
 - base profile version
 - normalized folder settings
 - preference_adjustment_array: numeric score adjustment per asset index
-- included_asset_indexes: profile selection compiled to asset indexes, or `None`
-  when all assets are included
+- included_asset_mask: boolean array by asset index, or `None` when all assets
+  are included
+- included_asset_index_order: ordered asset indexes for fast selected-scope
+  browse, or `None` when all assets are included
+- included_directory_count_array: numeric source/directory counts after
+  selection, or `None` when all assets are included
 - selection rules for UI display/fingerprinting
 - effective selection rules after superseded whitelist ancestors are removed
 - settings fingerprint
@@ -247,8 +251,16 @@ Folder quality is compiled into the active session preferences. Search calls
 receive that runtime preference data directly.
 
 Selection also belongs in the profile runtime. It remains a hard filter before
-pagination, but search and browse should test `asset.asset_index` against the
-compiled runtime inclusion set rather than rebuilding a filtered search corpus.
+pagination, but search and browse should test asset indexes against the compiled
+runtime inclusion mask rather than rebuilding a filtered search corpus or
+walking Python object graphs.
+
+Transient directory view scopes use the same compilation boundary. A view scope
+adds a synthetic whitelist for the viewed folder and keeps only descendant
+profile rules that can affect that view. This compiled filter controls the
+result set, while a separate display filter preserves the user-authored profile
+rules shown in the sidebar. The view scope is not persisted and is not a second
+profile model.
 
 ## Ranking Simplification
 
@@ -275,9 +287,10 @@ that lane's scored result set.
 The target search flow is:
 
 ```text
-retrieve scored candidates for the selected lane
-apply profile preferences
-cache the preference-adjusted result by query, mode, scope, vocabulary, and profile fingerprint
+retrieve asset indexes + scored candidates for the selected lane
+apply numeric profile preferences
+take the requested top-k page
+derive directory counts from numeric asset indexes
 ```
 
 The shared post-retrieval step should be named around what it actually does,
@@ -287,6 +300,10 @@ lanes or apply hidden product heuristics.
 
 Strict/Tantivy, fuzzy, and domain retrieval may still use different retrieval
 engines, but they should feed a common preference and caching boundary.
+
+Do not preserve older object-heavy search paths once callers have moved to the
+numeric path. This project favors updating API/frontend/tests directly over
+maintaining compatibility layers that make the hot path harder to reason about.
 
 ## Caching
 
@@ -332,15 +349,10 @@ strict match score.
 Search profiles must preserve that behavior while making the preference
 adjustment source profile-specific.
 
-The current strict filtered path can be slow because filtering creates a new
-filtered corpus for large selected scopes. Profile filtering should avoid
-rebuilding large corpora when a profile can answer inclusion through precomputed
-directory/profile data.
-
-The refactor should make strict coherent with the other product lanes:
+Strict is coherent with the other product lanes:
 
 ```text
-Tantivy strict retrieval -> scored candidates -> apply_preferences -> cache
+Tantivy strict retrieval -> scored asset indexes -> apply_preferences -> top-k page
 ```
 
 Fuzzy and domain should follow the same shape with their own retrieval engines.
@@ -355,6 +367,13 @@ resolved search scope.
 Where practical, directory counts should be derived from the already resolved
 matched result set instead of launching a second broad search. This is especially
 important for large sources such as `MapMaking`.
+
+Directory rows should be built from numeric count arrays. Count exact asset leaf
+directory ids with `bincount`, then roll child counts into parents using the
+precomputed directory parent ids. Scoped browse and transient directory views
+should first resolve a numeric asset-index array and then use the same count
+array response path. Avoid reintroducing dict/string tuple aggregation or
+directory response object layers for normal search/profile serving.
 
 The standalone `/api/directories` endpoint is not used by the current frontend
 and should be removed during the search-profile refactor unless a concrete UI

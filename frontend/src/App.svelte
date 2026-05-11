@@ -137,6 +137,7 @@
   let loadMoreTrigger = $state<HTMLDivElement>()
   let folderHoverRestoreScrollTop: number | null = null
   let hasInitializedFolderCollapse = false
+  let viewDirectory = $state<Pick<DirectoryNode, 'source_id' | 'path'> | null>(null)
 
   const pageSize = 100
   const searchSessionId =
@@ -148,6 +149,7 @@
   const selectedDirectoryKey = $derived(
     selected ? directoryKey({ source_id: selected.asset.source_id, path: selected.asset.directory }) : ''
   )
+  const viewDirectoryKey = $derived(viewDirectory ? directoryKey(viewDirectory) : '')
   const visibleEntries = $derived.by(() => visibleEntriesForCards(cards, expandedCollections))
   const selectedIndex = $derived(
     visibleEntries.findIndex((entry) => entry.kind === 'asset' && entry.asset.asset_id === selectedAssetId)
@@ -190,6 +192,7 @@
   $effect(() => {
     query
     searchMode
+    viewDirectoryKey
     profileSession?.active_profile_id
     profileSession?.dirty
     const revision = ++searchRevision
@@ -279,6 +282,10 @@
     const trimmed = query.trim()
     const includeDirectoryCounts = !append && offset === 0
     const path = includeDirectoryCounts ? '/api/search-with-directory-counts' : '/api/search'
+    if (viewDirectory) {
+      params.set('view_source_id', viewDirectory.source_id)
+      params.set('view_directory', viewDirectory.path)
+    }
     if (trimmed) {
       params.set('q', trimmed)
       params.set('mode', searchMode)
@@ -749,13 +756,25 @@
     return true
   }
 
-  function handleDirectoryClick(event: MouseEvent, directory: DirectoryNode) {
+  function handleDirectoryNameClick(event: MouseEvent, directory: DirectoryNode) {
     if (event.shiftKey || event.altKey) {
       event.preventDefault()
       event.stopPropagation()
       void toggleDirectoryRule(directory, event.shiftKey ? 'whitelist' : 'blacklist')
       return
     }
+    toggleDirectoryView(directory)
+  }
+
+  function toggleDirectoryView(directory: DirectoryNode) {
+    const key = directoryKey(directory)
+    viewDirectory = viewDirectoryKey === key
+      ? null
+      : { source_id: directory.source_id, path: directory.path }
+  }
+
+  function toggleDirectoryCollapse(event: MouseEvent, directory: DirectoryNode) {
+    event.stopPropagation()
     if (!hasChildren(directory)) return
     const next = new Set(collapsedDirectories)
     const key = directoryKey(directory)
@@ -1368,6 +1387,7 @@
           class:blacklist={ruleState === 'blacklist'}
           class:source-root={directory.depth === 0}
           class:selected-folder={selectedDirectoryKey === directoryKey(directory)}
+          class:view-folder={viewDirectoryKey === directoryKey(directory)}
           class:collapsed={children && isCollapsed(directory)}
           class:leaf={!children}
           class="folder-row"
@@ -1378,20 +1398,29 @@
           onmouseenter={() => setQualityHover(directory)}
           onmouseleave={() => clearQualityHover(directory)}
         >
+          {#if children}
+            <button
+              class="folder-toggle"
+              type="button"
+              aria-label={`${isCollapsed(directory) ? 'Expand' : 'Collapse'} ${directory.name}`}
+              aria-expanded={!isCollapsed(directory)}
+              onclick={(event) => toggleDirectoryCollapse(event, directory)}
+            >
+              <ChevronRight class="folder-chevron" size={14} />
+            </button>
+          {:else}
+            <span class="folder-toggle" aria-hidden="true">
+              <span class="folder-spacer"></span>
+            </span>
+          {/if}
           <button
             class:source-root={directory.depth === 0}
             class="folder-main"
             type="button"
-            onclick={(event) => handleDirectoryClick(event, directory)}
+            aria-pressed={viewDirectoryKey === directoryKey(directory)}
+            onclick={(event) => handleDirectoryNameClick(event, directory)}
           >
-            {#if children}
-              <ChevronRight class="folder-chevron" size={14} />
-            {:else}
-              <span class="folder-spacer"></span>
-            {/if}
-            {#if directory.depth > 0}
-              <Folder size={15} />
-            {/if}
+            <Folder size={15} />
             <span>{directory.name}</span>
           </button>
           <em>

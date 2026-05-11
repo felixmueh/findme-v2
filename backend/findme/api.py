@@ -97,6 +97,49 @@ def create_app(
     )
     search_revisions = _SearchRevisionRegistry()
 
+    def resolve_view_scope(
+        *,
+        source_id: str | None,
+        directory: str | None,
+        directory_prefix: str | None,
+        view_source_id: str | None,
+        view_directory: str | None,
+    ) -> tuple[str | None, str | None, str | None]:
+        has_view_scope = view_source_id is not None or view_directory is not None
+        if not has_view_scope:
+            return source_id, directory, directory_prefix
+        if view_source_id is None or view_directory is None:
+            raise HTTPException(
+                status_code=400,
+                detail="view_source_id and view_directory must be provided together",
+            )
+        if source_id is not None or directory is not None or directory_prefix is not None:
+            raise HTTPException(
+                status_code=400,
+                detail="view scope cannot be combined with source_id, directory, or directory_prefix",
+            )
+        return view_source_id, None, view_directory or None
+
+    def session_and_preferences(
+        db: sqlite3.Connection,
+        *,
+        search_session: str | None,
+        view_source_id: str | None,
+        view_directory: str | None,
+    ):
+        profile_session = profile_sessions.session(db, search_session)
+        preferences = (
+            profile_sessions.view_preferences(
+                db,
+                search_session,
+                source_id=view_source_id,
+                directory=view_directory or "",
+            )
+            if view_source_id is not None
+            else profile_session.preferences
+        )
+        return profile_session, preferences
+
     def needs_scoped_scope(
         *,
         preferences,
@@ -179,12 +222,29 @@ def create_app(
         source_id: str | None = None,
         directory: str | None = None,
         directory_prefix: str | None = None,
+        view_source_id: str | None = None,
+        view_directory: str | None = None,
         search_session: str | None = None,
         limit: int = Query(default=100, ge=1, le=500),
         offset: int = Query(default=0, ge=0),
     ) -> dict[str, object]:
+        source_id, directory, directory_prefix = resolve_view_scope(
+            source_id=source_id,
+            directory=directory,
+            directory_prefix=directory_prefix,
+            view_source_id=view_source_id,
+            view_directory=view_directory,
+        )
         with connect(database_path) as db:
-            preferences = profile_sessions.preferences(db, search_session)
+            try:
+                _profile_session, preferences = session_and_preferences(
+                    db,
+                    search_session=search_session,
+                    view_source_id=view_source_id,
+                    view_directory=view_directory,
+                )
+            except SearchProfileValidationError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
         cards, total = card_page_for_browse_scope(
             preferences=preferences,
             source_id=source_id,
@@ -322,13 +382,30 @@ def create_app(
         source_id: str | None = None,
         directory: str | None = None,
         directory_prefix: str | None = None,
+        view_source_id: str | None = None,
+        view_directory: str | None = None,
         limit: int = Query(default=100, ge=1, le=500),
         offset: int = Query(default=0, ge=0),
         search_session: str | None = None,
         search_revision: int | None = None,
     ) -> object:
+        source_id, directory, directory_prefix = resolve_view_scope(
+            source_id=source_id,
+            directory=directory,
+            directory_prefix=directory_prefix,
+            view_source_id=view_source_id,
+            view_directory=view_directory,
+        )
         with connect(database_path) as db:
-            preferences = profile_sessions.preferences(db, search_session)
+            try:
+                _profile_session, preferences = session_and_preferences(
+                    db,
+                    search_session=search_session,
+                    view_source_id=view_source_id,
+                    view_directory=view_directory,
+                )
+            except SearchProfileValidationError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
         control = search_revisions.control(search_session, search_revision)
         if control and control.is_cancelled():
             return Response(status_code=204)
@@ -373,21 +450,37 @@ def create_app(
         source_id: str | None = None,
         directory: str | None = None,
         directory_prefix: str | None = None,
+        view_source_id: str | None = None,
+        view_directory: str | None = None,
         limit: int = Query(default=100, ge=1, le=500),
         offset: int = Query(default=0, ge=0),
         search_session: str | None = None,
         search_revision: int | None = None,
     ) -> object:
+        source_id, directory, directory_prefix = resolve_view_scope(
+            source_id=source_id,
+            directory=directory,
+            directory_prefix=directory_prefix,
+            view_source_id=view_source_id,
+            view_directory=view_directory,
+        )
         with connect(database_path) as db:
-            profile_session = profile_sessions.session(db, search_session)
-            preferences = profile_session.preferences
-            dirty_folder_subtree_keys = profile_sessions.dirty_folder_subtree_keys(
-                profile_session
-            )
-            (
-                descendant_whitelist_keys,
-                descendant_blacklist_keys,
-            ) = profile_sessions.selection_descendant_rule_keys(profile_session)
+            try:
+                profile_session, preferences = session_and_preferences(
+                    db,
+                    search_session=search_session,
+                    view_source_id=view_source_id,
+                    view_directory=view_directory,
+                )
+                dirty_folder_subtree_keys = profile_sessions.dirty_folder_subtree_keys(
+                    profile_session
+                )
+                (
+                    descendant_whitelist_keys,
+                    descendant_blacklist_keys,
+                ) = profile_sessions.selection_descendant_rule_keys(profile_session)
+            except SearchProfileValidationError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
         control = search_revisions.control(search_session, search_revision)
         if control and control.is_cancelled():
             return Response(status_code=204)
