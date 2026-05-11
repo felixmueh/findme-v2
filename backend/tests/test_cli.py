@@ -184,6 +184,72 @@ media_extensions = [".png"]
     assert any("search preprocessing finished:" in line for line in lines)
 
 
+def test_cli_index_verbose_logs_each_file_action(tmp_path: Path, capsys) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    write_image(source_root / "ghost.png")
+    config_path = tmp_path / "findme.toml"
+    data_root = tmp_path / "data"
+    config_path.write_text(
+        f"""
+[app]
+data_root = "{data_root}"
+
+[[sources]]
+id = "dnd"
+display_name = "DND"
+root = "{source_root}"
+priority = 10
+media_extensions = [".png"]
+""",
+        encoding="utf-8",
+    )
+
+    assert (
+        run(
+            [
+                "index",
+                "--config",
+                str(config_path),
+                "--thumbnail-workers",
+                "1",
+                "-v",
+            ]
+        )
+        == 0
+    )
+    first_lines = capsys.readouterr().out.splitlines()
+    assert any(
+        "index file queued: source=dnd path=ghost.png action=thumbnail media=image" in line
+        for line in first_lines
+    )
+    assert any(
+        "index file done: source=dnd path=ghost.png action=upserted thumbnail=generated"
+        in line
+        for line in first_lines
+    )
+
+    assert (
+        run(
+            [
+                "index",
+                "--config",
+                str(config_path),
+                "--thumbnail-workers",
+                "1",
+                "-v",
+            ]
+        )
+        == 0
+    )
+    second_lines = capsys.readouterr().out.splitlines()
+    assert any(
+        "index file done: source=dnd path=ghost.png action=unchanged thumbnail=cached"
+        in line
+        for line in second_lines
+    )
+
+
 def test_cli_index_reports_thumbnail_failures(tmp_path: Path, capsys) -> None:
     source_root = tmp_path / "assets"
     source_root.mkdir()

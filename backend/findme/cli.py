@@ -14,7 +14,7 @@ from findme.api import create_app
 from findme.cleanup import cleanup_index
 from findme.config import ConfigError, load_config
 from findme.db import connect, initialize_database
-from findme.indexer import count_indexable_files, index_sources
+from findme.indexer import IndexEvent, count_indexable_files, index_sources
 from findme.search import SearchIndex, SearchMode, load_domain_vocabulary
 from findme.search_corpus import (
     SEARCH_CORPUS_VERSION,
@@ -61,10 +61,14 @@ def run(argv: list[str]) -> int:
                 return 2
             if args.rebuild_thumbnails:
                 shutil.rmtree(config.data_root / "cache" / "thumbs", ignore_errors=True)
-            logger = _IndexLogger(stream=sys.stdout)
+            logger = _IndexLogger(stream=sys.stdout, verbosity=args.verbose)
             logger.log("counting indexable files started")
             total_files = count_indexable_files(config)
-            logger = _IndexLogger(stream=sys.stdout, total_files=total_files)
+            logger = _IndexLogger(
+                stream=sys.stdout,
+                total_files=total_files,
+                verbosity=args.verbose,
+            )
             logger.log(f"counting indexable files finished: files={total_files}")
             logger.log(
                 f"index started: files={total_files} thumbnail_workers={thumbnail_workers}"
@@ -222,6 +226,13 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         help="override configured thumbnail worker count for this index run",
     )
+    index.add_argument(
+        "-v",
+        "--verbose",
+        action="count",
+        default=0,
+        help="increase index logging verbosity; -v logs each file queued and completed",
+    )
 
     rebuild_search = subparsers.add_parser(
         "rebuild-search-corpus",
@@ -304,16 +315,37 @@ class _IndexLogger:
         stream,
         total_files: int | None = None,
         progress_interval_seconds: float = 30.0,
+        verbosity: int = 0,
     ) -> None:
         self._stream = stream
         self._total_files = total_files
         self._progress_interval_seconds = progress_interval_seconds
+        self._verbosity = verbosity
         self._last_progress_log = 0.0
         self._current_source_id: str | None = None
 
     def log(self, message: str) -> None:
         timestamp = datetime.now().astimezone().isoformat(timespec="seconds")
         print(f"{timestamp} {message}", file=self._stream, flush=True)
+
+    def event(self, event: IndexEvent) -> None:
+        if event.kind == "thumbnail-wait":
+            waiting = ", ".join(event.waiting_assets)
+            self.log(
+                "index waiting for thumbnail workers: "
+                f"source={event.source_id} {event.message} waiting=[{waiting}]"
+            )
+            return
+        if self._verbosity < 1:
+            return
+        if event.kind == "file-queued":
+            self.log(
+                "index file queued: "
+                f"source={event.source_id} "
+                f"path={event.relative_path} "
+                f"action=thumbnail "
+                f"{event.message}"
+            )
 
     def progress(self, progress) -> None:
         if self._total_files is None:
@@ -324,6 +356,14 @@ class _IndexLogger:
                 "index source active: "
                 f"source={progress.current_source_id} "
                 f"scanned={progress.scanned_files}/{self._total_files}"
+            )
+        if self._verbosity >= 1 and progress.current_relative_path:
+            self.log(
+                "index file done: "
+                f"source={progress.current_source_id} "
+                f"path={progress.current_relative_path} "
+                f"action={progress.current_action} "
+                f"thumbnail={progress.current_thumbnail}"
             )
 
         now = time.monotonic()
@@ -354,6 +394,9 @@ class _IndexProgressReporter:
         self._logger = logger
 
     def __call__(self, progress) -> None:
+        if isinstance(progress, IndexEvent):
+            self._logger.event(progress)
+            return
         self._bar(progress)
         self._logger.progress(progress)
 

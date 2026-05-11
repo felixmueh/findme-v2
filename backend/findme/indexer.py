@@ -42,7 +42,7 @@ class ThumbnailFailure:
 
 
 class ProgressReporter(Protocol):
-    def __call__(self, progress: "IndexProgress") -> None: ...
+    def __call__(self, progress: "IndexProgress | IndexEvent") -> None: ...
 
 
 @dataclass(frozen=True)
@@ -54,6 +54,18 @@ class IndexProgress:
     marked_stale: int
     current_source_id: str
     elapsed_seconds: float
+    current_relative_path: str = ""
+    current_action: str = ""
+    current_thumbnail: str = ""
+
+
+@dataclass(frozen=True)
+class IndexEvent:
+    kind: str
+    source_id: str
+    relative_path: str = ""
+    message: str = ""
+    waiting_assets: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -112,7 +124,13 @@ def index_sources(
         )
 
         seen_paths = set()
-        for prepared in _prepare_assets(db, config, source, max_workers=worker_count):
+        for prepared in _prepare_assets(
+            db,
+            config,
+            source,
+            max_workers=worker_count,
+            progress=progress,
+        ):
             seen_paths.add(prepared.pending.relative_path)
             scanned += 1
             if prepared.upsert_required:
@@ -131,6 +149,11 @@ def index_sources(
                         marked_stale=stale,
                         current_source_id=source.id,
                         elapsed_seconds=time.monotonic() - start,
+                        current_relative_path=prepared.pending.relative_path,
+                        current_action=(
+                            "upserted" if prepared.upsert_required else "unchanged"
+                        ),
+                        current_thumbnail=_thumbnail_status(prepared),
                     )
                 )
 
@@ -178,10 +201,40 @@ def _prepare_assets(
     source: SourceConfig,
     *,
     max_workers: int,
+    progress: ProgressReporter | None = None,
 ) -> Iterator[PreparedAsset]:
     in_flight: set[Future[PreparedAsset]] = set()
+    started_at: dict[Future[PreparedAsset], float] = {}
+    started_pending: dict[Future[PreparedAsset], PendingAsset] = {}
+    last_wait_log = 0.0
     limit = max(max_workers * 2, 1)
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        def wait_for_completed() -> tuple[set[Future[PreparedAsset]], set[Future[PreparedAsset]]]:
+            nonlocal last_wait_log
+            while True:
+                done, remaining = wait(in_flight, timeout=5.0, return_when=FIRST_COMPLETED)
+                if done:
+                    return done, remaining
+                if progress is None:
+                    continue
+                now = time.monotonic()
+                if now - last_wait_log < 30.0:
+                    continue
+                last_wait_log = now
+                waiting_assets = tuple(
+                    f"{pending.source.id}:{pending.relative_path}:{now - started_at[future]:.1f}s"
+                    for future, pending in started_pending.items()
+                    if future in in_flight
+                )
+                progress(
+                    IndexEvent(
+                        kind="thumbnail-wait",
+                        source_id=source.id,
+                        message=f"in_flight={len(in_flight)}",
+                        waiting_assets=waiting_assets,
+                    )
+                )
+
         for file_path in _iter_source_files(source):
             pending = _pending_asset(source, file_path)
             current = _current_asset(db, pending)
@@ -195,14 +248,30 @@ def _prepare_assets(
                     upsert_required=False,
                 )
                 continue
-            in_flight.add(executor.submit(_prepare_asset, config, pending))
+            if progress is not None:
+                progress(
+                    IndexEvent(
+                        kind="file-queued",
+                        source_id=source.id,
+                        relative_path=pending.relative_path,
+                        message=f"media={pending.media_type}",
+                    )
+                )
+            future = executor.submit(_prepare_asset, config, pending)
+            in_flight.add(future)
+            started_at[future] = time.monotonic()
+            started_pending[future] = pending
             if len(in_flight) >= limit:
-                done, in_flight = wait(in_flight, return_when=FIRST_COMPLETED)
+                done, in_flight = wait_for_completed()
                 for future in done:
+                    started_at.pop(future, None)
+                    started_pending.pop(future, None)
                     yield future.result()
         while in_flight:
-            done, in_flight = wait(in_flight, return_when=FIRST_COMPLETED)
+            done, in_flight = wait_for_completed()
             for future in done:
+                started_at.pop(future, None)
+                started_pending.pop(future, None)
                 yield future.result()
 
 
@@ -296,6 +365,16 @@ def _needs_thumbnail(pending: PendingAsset) -> bool:
     if pending.media_type == "image":
         return True
     return False
+
+
+def _thumbnail_status(prepared: PreparedAsset) -> str:
+    if prepared.thumbnail_failure is not None:
+        return "failed"
+    if prepared.thumbnail is None:
+        return "none"
+    if prepared.thumbnail.generated:
+        return "generated"
+    return "cached"
 
 
 def _upsert_asset(db: sqlite3.Connection, prepared: PreparedAsset) -> int:
