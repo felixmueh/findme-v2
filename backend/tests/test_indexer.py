@@ -293,6 +293,12 @@ def test_index_sources_does_not_retry_unchanged_thumbnail_failures(
         initialize_database(db)
         first = index_sources(db, config, thumbnail_workers=2)
         second = index_sources(db, config, thumbnail_workers=2)
+        retried = index_sources(
+            db,
+            config,
+            thumbnail_workers=2,
+            retry_failed_thumbnails=True,
+        )
         rows = db.execute(
             """
             SELECT relative_path, thumbnail_path
@@ -308,6 +314,10 @@ def test_index_sources_does_not_retry_unchanged_thumbnail_failures(
     assert second.scanned_files == 2
     assert second.upserted_assets == 0
     assert second.thumbnail_failures == ()
+    assert retried.scanned_files == 2
+    assert retried.upserted_assets == 1
+    assert len(retried.thumbnail_failures) == 1
+    assert retried.thumbnail_failures[0].relative_path == "broken.png"
     assert rows[0]["relative_path"] == "broken.png"
     assert rows[0]["thumbnail_path"] is None
     assert rows[1]["relative_path"] == "valid.png"

@@ -278,6 +278,47 @@ media_extensions = [".png"]
     assert "thumbnail failed: dnd:broken.png" in captured.err
 
 
+def test_cli_index_can_retry_failed_thumbnails(tmp_path: Path, capsys) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    (source_root / "broken.png").write_bytes(b"\x89PNG\r\n\x1a\ntruncated")
+    config_path = tmp_path / "findme.toml"
+    data_root = tmp_path / "data"
+    config_path.write_text(
+        f"""
+[app]
+data_root = "{data_root}"
+
+[[sources]]
+id = "dnd"
+display_name = "DND"
+root = "{source_root}"
+priority = 10
+media_extensions = [".png"]
+""",
+        encoding="utf-8",
+    )
+
+    base_command = [
+        "index",
+        "--config",
+        str(config_path),
+        "--thumbnail-workers",
+        "1",
+    ]
+    assert run(base_command) == 0
+    capsys.readouterr()
+
+    assert run(base_command) == 0
+    skipped = capsys.readouterr()
+    assert "failed 0 thumbnails" in skipped.out
+
+    assert run([*base_command, "--retry-failed-thumbnails"]) == 0
+    retried = capsys.readouterr()
+    assert "failed 1 thumbnails" in retried.out
+    assert "thumbnail failed: dnd:broken.png" in retried.err
+
+
 def test_cli_cleanup_dry_run_preserves_stale_rows_and_unreferenced_cache(
     tmp_path: Path,
     capsys,

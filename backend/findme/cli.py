@@ -83,6 +83,7 @@ def run(argv: list[str]) -> int:
                     db,
                     config,
                     thumbnail_workers=thumbnail_workers,
+                    retry_failed_thumbnails=args.retry_failed_thumbnails,
                     progress=progress,
                 )
             progress.finish()
@@ -225,6 +226,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--thumbnail-workers",
         type=int,
         help="override configured thumbnail worker count for this index run",
+    )
+    index.add_argument(
+        "--retry-failed-thumbnails",
+        action="store_true",
+        help="retry thumbnail generation for unchanged assets that previously failed",
     )
     index.add_argument(
         "-v",

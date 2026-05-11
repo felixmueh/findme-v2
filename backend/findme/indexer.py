@@ -101,6 +101,7 @@ def index_sources(
     config: AppConfig,
     *,
     thumbnail_workers: int | None = None,
+    retry_failed_thumbnails: bool = False,
     progress: ProgressReporter | None = None,
 ) -> IndexSummary:
     scanned = 0
@@ -130,6 +131,7 @@ def index_sources(
             config,
             source,
             max_workers=worker_count,
+            retry_failed_thumbnails=retry_failed_thumbnails,
             progress=progress,
         ):
             seen_paths.add(prepared.pending.relative_path)
@@ -202,6 +204,7 @@ def _prepare_assets(
     source: SourceConfig,
     *,
     max_workers: int,
+    retry_failed_thumbnails: bool = False,
     progress: ProgressReporter | None = None,
 ) -> Iterator[PreparedAsset]:
     in_flight: set[Future[PreparedAsset]] = set()
@@ -243,7 +246,7 @@ def _prepare_assets(
                 current.media_type == pending.media_type
                 and (
                     current.thumbnail is not None
-                    or current.thumbnail_path is None
+                    or (current.thumbnail_path is None and not retry_failed_thumbnails)
                     or not _needs_thumbnail(pending)
                 )
             ):
