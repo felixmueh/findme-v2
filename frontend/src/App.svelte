@@ -167,9 +167,9 @@
 
   const pageSize = 100
   const gridCardsPerRowMin = 1
-  const gridCardsPerRowMax = 12
-  const gridCardsPerRowDefault = 6
-  const gridCardsPerRowStorageKey = 'findme.gridCardsPerRow'
+  const gridCardsPerRowMax = 15
+  const gridCardsPerRowDefault = 12
+  const gridCardsPerRowStorageKey = 'findme.gridCardsPerRow.v2'
   const searchSessionId =
     typeof crypto !== 'undefined' && 'randomUUID' in crypto
       ? crypto.randomUUID()
@@ -331,6 +331,23 @@
 
   function showFewerGridCards() {
     setGridCardsPerRow(gridCardsPerRow - 1)
+  }
+
+  function scrollTileGridWithWheel(event: WheelEvent) {
+    const grid = tileGridElement
+    if (!grid || event.defaultPrevented) return
+    const deltaScale = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? grid.clientHeight : 1
+    const topDelta = event.deltaY * deltaScale
+    const leftDelta = event.deltaX * deltaScale
+    if (topDelta === 0 && leftDelta === 0) return
+
+    const previousTop = grid.scrollTop
+    const previousLeft = grid.scrollLeft
+    grid.scrollTop += topDelta
+    grid.scrollLeft += leftDelta
+    if (grid.scrollTop !== previousTop || grid.scrollLeft !== previousLeft) {
+      event.preventDefault()
+    }
   }
 
   async function loadAssets(revision = searchRevision) {
@@ -1420,7 +1437,7 @@
 
   <section class="workspace">
     <section class="main-region" aria-label="Assets">
-      <div class="tile-grid" bind:this={tileGridElement} style={gridWidthStyle}>
+      <div class="tile-grid" bind:this={tileGridElement} style={gridWidthStyle} onwheel={scrollTileGridWithWheel}>
         {#each visibleEntries as entry (visibleEntryKey(entry))}
           {#if entry.kind === 'collection'}
             {@const collection = entry.collection}

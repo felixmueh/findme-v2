@@ -158,6 +158,16 @@ async function tileThumbSize(page: Page) {
   return box
 }
 
+function sampleAssetAt(index: number) {
+  return {
+    ...sampleAsset,
+    asset_id: `asset-${index}`,
+    relative_path: `maps/asset-${index}.png`,
+    filename: `asset-${index}.png`,
+    stem: `asset-${index}`,
+  }
+}
+
 async function disableAutomaticInfiniteScroll(page: Page) {
   await page.addInitScript(() => {
     class ManualIntersectionObserver {
@@ -275,28 +285,62 @@ test('changes the number of visible grid columns from the toolbar', async ({ pag
   await page.goto('/')
   await expect(page.getByRole('button', { name: /castle\.png/i })).toBeVisible()
 
-  const initialColumns = await gridColumnCount(page)
-  await expect(page.getByLabel(`${initialColumns} cards per row`)).toBeVisible()
+  await expect.poll(() => gridColumnCount(page)).toBe(12)
+  await expect(page.getByLabel('12 cards per row')).toBeVisible()
   await expect(page.locator('.grid-width-controls')).not.toContainText('px')
   const initialThumb = await tileThumbSize(page)
   expect(Math.abs(initialThumb.width - initialThumb.height)).toBeLessThanOrEqual(1)
 
   await page.getByRole('button', { name: 'Show more cards in grid' }).click()
-  await expect.poll(() => gridColumnCount(page)).toBe(initialColumns + 1)
-  await expect(page.getByLabel(`${initialColumns + 1} cards per row`)).toBeVisible()
+  await expect.poll(() => gridColumnCount(page)).toBe(13)
+  await expect(page.getByLabel('13 cards per row')).toBeVisible()
   const denserThumb = await tileThumbSize(page)
   expect(denserThumb.width).toBeLessThan(initialThumb.width)
   expect(Math.abs(denserThumb.width - denserThumb.height)).toBeLessThanOrEqual(1)
 
   await page.getByRole('button', { name: 'Show fewer cards in grid' }).click()
-  await expect.poll(() => gridColumnCount(page)).toBe(initialColumns)
+  await expect.poll(() => gridColumnCount(page)).toBe(12)
 
-  for (let index = 1; index < initialColumns; index += 1) {
+  for (let index = 12; index < 15; index += 1) {
+    await page.getByRole('button', { name: 'Show more cards in grid' }).click()
+  }
+  await expect.poll(() => gridColumnCount(page)).toBe(15)
+  await expect(page.getByLabel('15 cards per row')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Show more cards in grid' })).toBeDisabled()
+
+  for (let index = 15; index > 1; index -= 1) {
     await page.getByRole('button', { name: 'Show fewer cards in grid' }).click()
   }
   await expect.poll(() => gridColumnCount(page)).toBe(1)
   await expect(page.getByLabel('1 card per row')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Show fewer cards in grid' })).toBeDisabled()
+})
+
+test('scrolls the asset grid when wheeling over a card', async ({ page }) => {
+  const assets = Array.from({ length: 240 }, (_, index) => sampleAssetAt(index))
+  const cards = assets.map((asset) => ({ kind: 'asset', asset }))
+  const root = { ...sampleRootDirectory(), asset_count: assets.length, matched_asset_count: assets.length, included_asset_count: assets.length }
+  const maps = { ...sampleDirectory(), asset_count: assets.length, matched_asset_count: assets.length, included_asset_count: assets.length }
+
+  await page.unroute('**/api/search?*')
+  await page.unroute('**/api/search-with-directory-counts?*')
+  await page.route('**/api/search?*', async (route) => {
+    await route.fulfill({ json: { total: assets.length, cards, has_more: false, next_offset: assets.length } })
+  })
+  await page.route('**/api/search-with-directory-counts?*', async (route) => {
+    await route.fulfill({ json: { directories: [root, maps] } })
+  })
+
+  await page.goto('/')
+  await expect(page.getByRole('button', { name: /asset-0\.png/i })).toBeVisible()
+  const grid = page.locator('.tile-grid')
+  await expect.poll(() => grid.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true)
+
+  await page.getByRole('button', { name: /asset-0\.png/i }).hover()
+  const initialScrollTop = await grid.evaluate((element) => element.scrollTop)
+  await page.mouse.wheel(0, 520)
+
+  await expect.poll(() => grid.evaluate((element) => element.scrollTop)).toBeGreaterThan(initialScrollTop)
 })
 
 test('renders the initial card page before refreshing directory state', async ({ page }) => {
@@ -1131,7 +1175,7 @@ test('previews audio on hover and shows playback controls when selected', async 
   const tile = page.getByRole('button', { name: /thunder\.mp3/i })
   await expect(tile).toBeVisible()
 
-  await tile.hover()
+  await tile.hover({ position: { x: 8, y: 8 } })
   await expect.poll(() => page.evaluate(() => (window as unknown as { __audioEvents: string[] }).__audioEvents)).toContain(
     'play:/api/assets/asset-thunder/file:muted=true:volume=0.5'
   )
@@ -1178,7 +1222,7 @@ test('previews audio on hover and shows playback controls when selected', async 
   await page.evaluate(() => {
     ;(window as unknown as { __audioEvents: string[] }).__audioEvents = []
   })
-  await tile.click()
+  await tile.click({ position: { x: 8, y: 8 } })
   await expect.poll(() => page.evaluate(() => (window as unknown as { __audioEvents: string[] }).__audioEvents)).toContain(
     'pause:/api/assets/asset-thunder/file'
   )
