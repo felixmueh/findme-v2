@@ -138,6 +138,52 @@ media_extensions = [".png"]
     assert "generated 1 thumbnails" in captured.out
 
 
+def test_cli_index_writes_phase_logs_to_stdout(tmp_path: Path, capsys) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    write_image(source_root / "ghost.png")
+    config_path = tmp_path / "findme.toml"
+    data_root = tmp_path / "data"
+    config_path.write_text(
+        f"""
+[app]
+data_root = "{data_root}"
+
+[[sources]]
+id = "dnd"
+display_name = "DND"
+root = "{source_root}"
+priority = 10
+media_extensions = [".png"]
+""",
+        encoding="utf-8",
+    )
+
+    assert (
+        run(
+            [
+                "index",
+                "--config",
+                str(config_path),
+                "--thumbnail-workers",
+                "1",
+            ]
+        )
+        == 0
+    )
+
+    lines = capsys.readouterr().out.splitlines()
+    assert any("counting indexable files started" in line for line in lines)
+    assert any("counting indexable files finished: files=1" in line for line in lines)
+    assert any("index started: files=1 thumbnail_workers=1" in line for line in lines)
+    assert any("index progress: scanned=1/1" in line for line in lines)
+    assert any("asset indexing finished: scanned=1 upserted=1" in line for line in lines)
+    assert any("search preprocessing started" in line for line in lines)
+    assert any("search preprocessing loaded assets: count=1" in line for line in lines)
+    assert any("search lexical index build started: assets=1" in line for line in lines)
+    assert any("search preprocessing finished:" in line for line in lines)
+
+
 def test_cli_index_reports_thumbnail_failures(tmp_path: Path, capsys) -> None:
     source_root = tmp_path / "assets"
     source_root.mkdir()

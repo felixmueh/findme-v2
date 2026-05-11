@@ -3,7 +3,7 @@ from __future__ import annotations
 # Changes to this module can change the derived search corpus format or signals.
 # Increment SEARCH_CORPUS_VERSION and rebuild the search corpus after modifying it.
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 import pickle
@@ -382,7 +382,12 @@ def load_search_corpus_snapshot(path: Path) -> SearchCorpusSnapshot:
     return snapshot
 
 
-def rebuild_search_corpus(config: AppConfig, db_path: Path) -> Path:
+def rebuild_search_corpus(
+    config: AppConfig,
+    db_path: Path,
+    *,
+    log: Callable[[str], None] | None = None,
+) -> Path:
     snapshot_destination = search_corpus_snapshot_path(
         config.data_root,
         config.search_corpus_path,
@@ -409,22 +414,48 @@ def rebuild_search_corpus(config: AppConfig, db_path: Path) -> Path:
     )
 
     try:
+        _log_search_corpus_progress(log, "search preprocessing loading assets")
         with sqlite3.connect(db_path) as source_db:
             source_db.row_factory = sqlite3.Row
             assets = fetch_search_corpus_assets(source_db)
+        _log_search_corpus_progress(
+            log,
+            f"search preprocessing loaded assets: count={len(assets)}",
+        )
 
+        _log_search_corpus_progress(log, "search snapshot build started")
         snapshot = _snapshot_for_assets(assets)
+        _log_search_corpus_progress(log, "search snapshot write started")
         with temp_snapshot_path.open("wb") as snapshot_file:
             pickle.dump(snapshot, snapshot_file, protocol=pickle.HIGHEST_PROTOCOL)
+        _log_search_corpus_progress(
+            log,
+            f"search snapshot write finished: bytes={temp_snapshot_path.stat().st_size}",
+        )
 
+        _log_search_corpus_progress(
+            log,
+            f"search lexical index build started: assets={len(assets)}",
+        )
         SearchLexicalIndex.build(assets, path=temp_lexical_path)
+        _log_search_corpus_progress(log, "search lexical index build finished")
+        _log_search_corpus_progress(log, "search preprocessing publishing artifacts")
         temp_snapshot_path.replace(snapshot_destination)
         _replace_directory(temp_lexical_path, lexical_destination)
+        _log_search_corpus_progress(
+            log,
+            f"search preprocessing finished: snapshot={snapshot_destination}",
+        )
         return snapshot_destination
     except Exception:
         temp_snapshot_path.unlink(missing_ok=True)
         shutil.rmtree(temp_lexical_path, ignore_errors=True)
         raise
+
+
+def _log_search_corpus_progress(log: Callable[[str], None] | None, message: str) -> None:
+    if log is not None:
+        log(message)
 
 
 def _snapshot_for_assets(assets: tuple[SearchCorpusAsset, ...]) -> SearchCorpusSnapshot:

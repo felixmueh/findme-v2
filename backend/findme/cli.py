@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 from pathlib import Path
 import shutil
 import sys
+import time
 
 from tqdm import tqdm
 import uvicorn
@@ -59,7 +61,18 @@ def run(argv: list[str]) -> int:
                 return 2
             if args.rebuild_thumbnails:
                 shutil.rmtree(config.data_root / "cache" / "thumbs", ignore_errors=True)
-            progress = _IndexProgressBar(total_files=count_indexable_files(config))
+            logger = _IndexLogger(stream=sys.stdout)
+            logger.log("counting indexable files started")
+            total_files = count_indexable_files(config)
+            logger = _IndexLogger(stream=sys.stdout, total_files=total_files)
+            logger.log(f"counting indexable files finished: files={total_files}")
+            logger.log(
+                f"index started: files={total_files} thumbnail_workers={thumbnail_workers}"
+            )
+            progress = _IndexProgressReporter(
+                bar=_IndexProgressBar(total_files=total_files),
+                logger=logger,
+            )
             with connect(db_path) as db:
                 initialize_database(db)
                 summary = index_sources(
@@ -69,7 +82,16 @@ def run(argv: list[str]) -> int:
                     progress=progress,
                 )
             progress.finish()
-            corpus_path = rebuild_search_corpus(config, db_path)
+            logger.log(
+                "asset indexing finished: "
+                f"scanned={summary.scanned_files} "
+                f"upserted={summary.upserted_assets} "
+                f"thumbnails={summary.generated_thumbnails} "
+                f"failed={len(summary.thumbnail_failures)} "
+                f"stale={summary.marked_stale}"
+            )
+            logger.log("search preprocessing started")
+            corpus_path = rebuild_search_corpus(config, db_path, log=logger.log)
             print(
                 "indexed "
                 f"{summary.scanned_files} files, "
@@ -88,9 +110,11 @@ def run(argv: list[str]) -> int:
             return 0
 
         if args.command == "rebuild-search-corpus":
+            logger = _IndexLogger(stream=sys.stdout)
             with connect(db_path) as db:
                 initialize_database(db)
-            corpus_path = rebuild_search_corpus(config, db_path)
+            logger.log("search preprocessing started")
+            corpus_path = rebuild_search_corpus(config, db_path, log=logger.log)
             print(f"rebuilt search corpus: {corpus_path}")
             return 0
 
@@ -271,6 +295,70 @@ def _filter_evaluation_scopes(
             for query in evaluation.queries
         ),
     )
+
+
+class _IndexLogger:
+    def __init__(
+        self,
+        *,
+        stream,
+        total_files: int | None = None,
+        progress_interval_seconds: float = 30.0,
+    ) -> None:
+        self._stream = stream
+        self._total_files = total_files
+        self._progress_interval_seconds = progress_interval_seconds
+        self._last_progress_log = 0.0
+        self._current_source_id: str | None = None
+
+    def log(self, message: str) -> None:
+        timestamp = datetime.now().astimezone().isoformat(timespec="seconds")
+        print(f"{timestamp} {message}", file=self._stream, flush=True)
+
+    def progress(self, progress) -> None:
+        if self._total_files is None:
+            return
+        if progress.current_source_id != self._current_source_id:
+            self._current_source_id = progress.current_source_id
+            self.log(
+                "index source active: "
+                f"source={progress.current_source_id} "
+                f"scanned={progress.scanned_files}/{self._total_files}"
+            )
+
+        now = time.monotonic()
+        should_log = (
+            self._last_progress_log == 0.0
+            or now - self._last_progress_log >= self._progress_interval_seconds
+            or progress.scanned_files >= self._total_files
+        )
+        if not should_log:
+            return
+
+        self._last_progress_log = now
+        self.log(
+            "index progress: "
+            f"scanned={progress.scanned_files}/{self._total_files} "
+            f"source={progress.current_source_id} "
+            f"upserted={progress.upserted_assets} "
+            f"thumbnails={progress.generated_thumbnails} "
+            f"failed={progress.failed_thumbnails} "
+            f"stale={progress.marked_stale} "
+            f"elapsed={progress.elapsed_seconds:.1f}s"
+        )
+
+
+class _IndexProgressReporter:
+    def __init__(self, *, bar: "_IndexProgressBar", logger: _IndexLogger) -> None:
+        self._bar = bar
+        self._logger = logger
+
+    def __call__(self, progress) -> None:
+        self._bar(progress)
+        self._logger.progress(progress)
+
+    def finish(self) -> None:
+        self._bar.finish()
 
 
 class _IndexProgressBar:
