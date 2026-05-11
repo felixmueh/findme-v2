@@ -141,6 +141,45 @@ def test_index_sources_marks_missing_assets_stale(tmp_path: Path) -> None:
     assert stale == 1
 
 
+def test_index_sources_refreshes_asset_search_for_source(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    write_image(source_root / "dragon.webp")
+    write_image(source_root / "phoenix.webp")
+
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".webp"}),
+            ),
+        ),
+    )
+
+    with connect(tmp_path / "findme.sqlite3") as db:
+        initialize_database(db)
+        index_sources(db, config)
+        count_before = db.execute(
+            "SELECT COUNT(*) FROM asset_search WHERE source_id = ?", ("dnd",)
+        ).fetchone()[0]
+        (source_root / "dragon.webp").unlink()
+        index_sources(db, config)
+        count_after = db.execute(
+            "SELECT COUNT(*) FROM asset_search WHERE source_id = ?", ("dnd",)
+        ).fetchone()[0]
+        stale_count = db.execute(
+            "SELECT COUNT(*) FROM assets WHERE source_id = ? AND stale = 0", ("dnd",)
+        ).fetchone()[0]
+
+    assert count_before == 2
+    assert count_after == 1
+    assert stale_count == 1
+
+
 def test_index_sources_skips_unchanged_thumbnail_generation(tmp_path: Path) -> None:
     source_root = tmp_path / "assets"
     source_root.mkdir()

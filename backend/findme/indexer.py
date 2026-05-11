@@ -234,6 +234,11 @@ def index_sources(
                     message=f"new_stale={newly_stale}",
                 )
             )
+        _refresh_asset_search(
+            db,
+            source.id,
+            progress=progress,
+        )
         if progress is not None:
             progress(
                 IndexProgress(
@@ -774,6 +779,14 @@ def _upsert_assets(
     if not prepared_assets:
         return 0
     started = time.monotonic()
+    if progress is not None:
+        progress(
+            IndexEvent(
+                kind="upsert-batch-start",
+                source_id=prepared_assets[0].pending.source.id,
+                message=f"batch={len(prepared_assets)}",
+            )
+        )
     db.executemany(
         """
         INSERT INTO assets(
@@ -818,27 +831,6 @@ def _upsert_assets(
             for prepared in prepared_assets
         ],
     )
-    db.executemany(
-        "DELETE FROM asset_search WHERE asset_id = ?",
-        [(prepared.pending.asset_id,) for prepared in prepared_assets],
-    )
-    db.executemany(
-        """
-        INSERT INTO asset_search(asset_id, source_id, filename, stem, directory, relative_path)
-        VALUES (?, ?, ?, ?, ?, ?)
-        """,
-        [
-            (
-                prepared.pending.asset_id,
-                prepared.pending.source.id,
-                prepared.pending.file_path.name,
-                prepared.pending.file_path.stem,
-                prepared.pending.directory,
-                prepared.pending.relative_path,
-            )
-            for prepared in prepared_assets
-        ],
-    )
     if progress is not None:
         progress(
             IndexEvent(
@@ -856,6 +848,62 @@ def _needs_thumbnail(pending: PendingAsset) -> bool:
     if pending.media_type == "image":
         return True
     return False
+
+
+def _refresh_asset_search(
+    db: sqlite3.Connection,
+    source_id: str,
+    *,
+    progress: ProgressReporter | None = None,
+) -> int:
+    started = time.monotonic()
+    db.execute(
+        "DELETE FROM asset_search WHERE source_id = ?",
+        (source_id,),
+    )
+    rows = db.execute(
+        """
+        SELECT
+          asset_id,
+          source_id,
+          filename,
+          stem,
+          directory,
+          relative_path
+        FROM assets
+        WHERE source_id = ? AND stale = 0
+        """,
+        (source_id,),
+    ).fetchall()
+    if rows:
+        db.executemany(
+            """
+            INSERT INTO asset_search(
+              asset_id, source_id, filename, stem, directory, relative_path
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    row["asset_id"],
+                    row["source_id"],
+                    row["filename"],
+                    row["stem"],
+                    row["directory"],
+                    row["relative_path"],
+                )
+                for row in rows
+            ],
+        )
+    if progress is not None:
+        progress(
+            IndexEvent(
+                kind="asset-search-refreshed",
+                source_id=source_id,
+                message=f"count={len(rows)} elapsed={time.monotonic()-started:.3f}s",
+            )
+        )
+    return len(rows)
 
 
 def _thumbnail_status(prepared: PreparedAsset) -> str:
@@ -899,15 +947,6 @@ def _mark_missing_stale(
             WHERE source_id = ? AND stale = 0
             """,
             (source_id,),
-        )
-        db.execute(
-            """
-            DELETE FROM asset_search
-            WHERE source_id = ? AND asset_id IN (
-                SELECT asset_id FROM assets WHERE source_id = ? AND stale = 1
-            )
-            """,
-            (source_id, source_id),
         )
         if progress is not None:
             progress(
@@ -954,18 +993,6 @@ def _mark_missing_stale(
     db.executemany(
         "UPDATE assets SET stale = 1, indexed_at = CURRENT_TIMESTAMP WHERE source_id = ? AND relative_path = ?",
         [(source_id, relative_path) for relative_path in missing],
-    )
-    db.execute(
-        """
-        DELETE FROM asset_search
-        WHERE source_id = ?
-          AND asset_id IN (
-            SELECT asset_id
-            FROM assets
-            WHERE source_id = ? AND stale = 1
-          )
-        """,
-        (source_id, source_id),
     )
     if progress is not None:
         progress(

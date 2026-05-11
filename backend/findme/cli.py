@@ -539,6 +539,24 @@ class _IndexLogger:
                     f"source={event.source_id} "
                     f"{event.message}"
                 )
+            elif event.kind == "upsert-batch-start":
+                self.log(
+                    "index upsert batch start: "
+                    f"source={event.source_id} "
+                    f"{event.message}"
+                )
+            elif event.kind == "asset-search-refreshed":
+                self.log(
+                    "index asset_search refreshed: "
+                    f"source={event.source_id} "
+                    f"{event.message}"
+                )
+            elif event.kind == "asset-search-refresh":
+                self.log(
+                    "index asset search refresh: "
+                    f"source={event.source_id} "
+                    f"{event.message}"
+                )
         if event.kind == "file-queued":
             self.log(
                 "index file queued: "
