@@ -144,6 +144,34 @@ async function revealSampleFolder(page: Page) {
   await expect(page.getByRole('group', { name: 'maps folder' })).toBeVisible()
 }
 
+async function gridColumnCount(page: Page) {
+  return page.locator('.tile-grid').evaluate((grid) => {
+    const columns = window.getComputedStyle(grid).gridTemplateColumns
+    if (!columns || columns === 'none') return 1
+    return columns.split(' ').filter(Boolean).length
+  })
+}
+
+async function disableAutomaticInfiniteScroll(page: Page) {
+  await page.addInitScript(() => {
+    class ManualIntersectionObserver {
+      constructor(_callback: IntersectionObserverCallback) {}
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+      takeRecords() {
+        return []
+      }
+    }
+
+    Object.defineProperty(window, 'IntersectionObserver', {
+      configurable: true,
+      writable: true,
+      value: ManualIntersectionObserver,
+    })
+  })
+}
+
 test.beforeEach(async ({ page }) => {
   let directoryQuality = 4
   let directorySelectionState: FilterRuleState | null = null
@@ -237,6 +265,19 @@ test('searches through the real browser UI', async ({ page }) => {
   await expect(page.getByRole('button', { name: /castle\.png/i })).toBeVisible()
 })
 
+test('changes the number of visible grid columns from the toolbar', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.getByRole('button', { name: /castle\.png/i })).toBeVisible()
+
+  const initialColumns = await gridColumnCount(page)
+
+  await page.getByRole('button', { name: 'Show more cards in grid' }).click()
+  await expect.poll(() => gridColumnCount(page)).toBeGreaterThan(initialColumns)
+
+  await page.getByRole('button', { name: 'Show fewer cards in grid' }).click()
+  await expect.poll(() => gridColumnCount(page)).toBe(initialColumns)
+})
+
 test('renders the initial card page before refreshing directory state', async ({ page }) => {
   const searchRequests: string[] = []
   let initialSearchCompleted = false
@@ -271,7 +312,15 @@ test('renders the initial card page before refreshing directory state', async ({
 })
 
 test('uses the server next offset when loading more search results', async ({ page }) => {
+  await disableAutomaticInfiniteScroll(page)
   const searchRequests: string[] = []
+  const secondPageAsset = {
+    ...sampleAsset,
+    asset_id: 'asset-tower',
+    relative_path: 'maps/tower.png',
+    filename: 'tower.png',
+    stem: 'tower',
+  }
 
   await page.unroute('**/api/search?*')
   await page.route('**/api/search?*', async (route) => {
@@ -282,7 +331,7 @@ test('uses the server next offset when loading more search results', async ({ pa
       json: {
         total: 150,
         next_offset: offset === 0 ? 100 : 150,
-        cards: [{ kind: 'asset', asset: sampleAsset }],
+        cards: [{ kind: 'asset', asset: offset === 0 ? sampleAsset : secondPageAsset }],
       },
     })
   })
@@ -310,6 +359,7 @@ test('uses the server next offset when loading more search results', async ({ pa
 })
 
 test('keeps loading past grouped exact search results', async ({ page }) => {
+  await disableAutomaticInfiniteScroll(page)
   const collection = {
     kind: 'collection',
     collection_key: 'goblin-variants',

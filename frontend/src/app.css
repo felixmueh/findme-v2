@@ -55,7 +55,7 @@ button:disabled {
 
 .toolbar {
   display: grid;
-  grid-template-columns: 90px minmax(240px, 1fr) 210px minmax(260px, 360px) 110px;
+  grid-template-columns: 90px minmax(220px, 1fr) 210px minmax(260px, 360px) 98px 110px;
   gap: 8px;
   align-items: center;
   padding: 7px 10px;
@@ -96,6 +96,40 @@ button:disabled {
   color: var(--muted);
   background: transparent;
   border-color: var(--border);
+}
+
+.grid-width-controls {
+  min-width: 0;
+  height: 36px;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) 30px;
+  gap: 4px;
+  align-items: center;
+}
+
+.grid-width-controls button {
+  width: 30px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface-alt);
+  color: var(--text);
+}
+
+.grid-width-controls button:disabled {
+  color: var(--faint);
+  background: transparent;
+  border-color: var(--border);
+}
+
+.grid-width-controls span {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+  white-space: nowrap;
 }
 
 .lane-tabs {
@@ -205,7 +239,7 @@ a:focus-visible {
   min-height: 0;
   overflow: auto;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(136px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(var(--asset-card-min-width, 136px), 1fr));
   gap: 10px;
   align-content: start;
   align-items: start;
@@ -1039,7 +1073,7 @@ button.folder-row.retained {
 
   .toolbar {
     grid-template-columns: 1fr;
-    grid-template-rows: repeat(5, auto);
+    grid-template-rows: repeat(6, auto);
   }
 
   .status {

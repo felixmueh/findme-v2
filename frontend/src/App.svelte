@@ -13,6 +13,7 @@
     Image as ImageIcon,
     Layers2,
     LoaderCircle,
+    Minus,
     Search,
     Plus,
     RotateCcw,
@@ -165,10 +166,15 @@
   let viewDirectory = $state<Pick<DirectoryNode, 'source_id' | 'path'> | null>(null)
 
   const pageSize = 100
+  const gridCardMinWidthMin = 104
+  const gridCardMinWidthMax = 216
+  const gridCardMinWidthStep = 16
+  const gridCardMinWidthStorageKey = 'findme.gridCardMinWidth'
   const searchSessionId =
     typeof crypto !== 'undefined' && 'randomUUID' in crypto
       ? crypto.randomUUID()
       : `${Date.now()}-${Math.random()}`
+  let gridCardMinWidth = $state(initialGridCardMinWidth())
 
   const selectedAssetId = $derived(selected?.asset.asset_id ?? '')
   const selectedDirectoryKey = $derived(
@@ -188,6 +194,7 @@
       : ''
   )
   const resultLabel = $derived(`${resultTotal} ${resultTotal === 1 ? 'card' : 'cards'}`)
+  const gridWidthStyle = $derived(`--asset-card-min-width: ${gridCardMinWidth}px`)
   const activeDirectories = $derived.by(() => {
     activeDirectoryRevision
     const ids = activeDirectoryIds
@@ -294,6 +301,33 @@
 
   function setSearchMode(mode: SearchMode) {
     searchMode = mode
+  }
+
+  function initialGridCardMinWidth() {
+    if (typeof window === 'undefined') return 136
+    const savedValue = window.localStorage.getItem(gridCardMinWidthStorageKey)
+    if (savedValue === null) return 136
+    const saved = Number(savedValue)
+    return clampGridCardMinWidth(Number.isFinite(saved) ? saved : 136)
+  }
+
+  function clampGridCardMinWidth(value: number) {
+    return Math.min(gridCardMinWidthMax, Math.max(gridCardMinWidthMin, value))
+  }
+
+  function setGridCardMinWidth(value: number) {
+    const nextWidth = clampGridCardMinWidth(value)
+    if (nextWidth === gridCardMinWidth) return
+    gridCardMinWidth = nextWidth
+    window.localStorage.setItem(gridCardMinWidthStorageKey, String(nextWidth))
+  }
+
+  function showMoreGridCards() {
+    setGridCardMinWidth(gridCardMinWidth - gridCardMinWidthStep)
+  }
+
+  function showFewerGridCards() {
+    setGridCardMinWidth(gridCardMinWidth + gridCardMinWidthStep)
   }
 
   async function loadAssets(revision = searchRevision) {
@@ -1351,6 +1385,28 @@
       </button>
     </div>
 
+    <div class="grid-width-controls" role="group" aria-label="Grid width">
+      <button
+        type="button"
+        aria-label="Show fewer cards in grid"
+        title="Show fewer cards"
+        onclick={showFewerGridCards}
+        disabled={gridCardMinWidth >= gridCardMinWidthMax}
+      >
+        <Minus size={15} />
+      </button>
+      <span>{gridCardMinWidth}px</span>
+      <button
+        type="button"
+        aria-label="Show more cards in grid"
+        title="Show more cards"
+        onclick={showMoreGridCards}
+        disabled={gridCardMinWidth <= gridCardMinWidthMin}
+      >
+        <Plus size={15} />
+      </button>
+    </div>
+
     <div class="status" class:busy={loading} class:error={error}>
       {#if loading}
         <LoaderCircle size={15} />
@@ -1361,7 +1417,7 @@
 
   <section class="workspace">
     <section class="main-region" aria-label="Assets">
-      <div class="tile-grid" bind:this={tileGridElement}>
+      <div class="tile-grid" bind:this={tileGridElement} style={gridWidthStyle}>
         {#each visibleEntries as entry (visibleEntryKey(entry))}
           {#if entry.kind === 'collection'}
             {@const collection = entry.collection}
