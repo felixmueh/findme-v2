@@ -1,11 +1,14 @@
 from pathlib import Path
+import os
+
+import pytest
 
 from PIL import Image
 
 from findme.config import AppConfig, SourceConfig
 from findme.db import connect, initialize_database
 from findme.indexer import index_sources
-from findme.thumbnails import thumbnail_cache_path
+from findme.thumbnails import ThumbnailError, generate_video_poster, thumbnail_cache_path
 
 from helpers import write_image, write_video
 
@@ -161,3 +164,31 @@ def test_index_sources_generates_video_poster_thumbnail(tmp_path: Path) -> None:
         assert red > 200
         assert green < 80
         assert blue < 80
+
+
+def test_video_poster_generation_times_out_stuck_ffmpeg(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_ffmpeg = fake_bin / "ffmpeg"
+    fake_ffmpeg.write_text("#!/bin/sh\nsleep 5\n", encoding="utf-8")
+    fake_ffmpeg.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setattr("findme.thumbnails.VIDEO_POSTER_TIMEOUT_SECONDS", 0.1)
+    video_path = tmp_path / "slow.webm"
+    video_path.write_bytes(b"not important")
+
+    with pytest.raises(ThumbnailError, match="timed out"):
+        generate_video_poster(
+            video_path,
+            tmp_path / "data",
+            asset_id="slow-video",
+            source_id="dnd",
+            relative_path="slow.webm",
+            size_bytes=video_path.stat().st_size,
+            mtime_ns=video_path.stat().st_mtime_ns,
+        )
+
+    assert not list((tmp_path / "data" / "cache" / "thumbs").rglob("poster-*.png"))

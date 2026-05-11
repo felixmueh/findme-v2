@@ -12,6 +12,7 @@ from PIL import Image, UnidentifiedImageError
 THUMBNAIL_MAX_SIZE = (256, 256)
 THUMBNAIL_QUALITY = 82
 THUMBNAIL_WEBP_METHOD = 2
+VIDEO_POSTER_TIMEOUT_SECONDS = 30.0
 
 
 class ThumbnailError(RuntimeError):
@@ -139,7 +140,14 @@ def _extract_first_video_frame(ffmpeg: str, source_path: Path, cache_dir: Path) 
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             text=True,
+            timeout=VIDEO_POSTER_TIMEOUT_SECONDS,
         )
+    except subprocess.TimeoutExpired as exc:
+        frame_path.unlink(missing_ok=True)
+        raise ThumbnailError(
+            f"could not extract first video frame for {source_path}: "
+            f"ffmpeg timed out after {VIDEO_POSTER_TIMEOUT_SECONDS:.1f}s"
+        ) from exc
     except OSError as exc:
         frame_path.unlink(missing_ok=True)
         raise ThumbnailError(

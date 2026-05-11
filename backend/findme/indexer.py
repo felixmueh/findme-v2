@@ -92,6 +92,7 @@ class PreparedAsset:
 @dataclass(frozen=True)
 class CurrentAsset:
     media_type: str
+    thumbnail_path: Path | None
     thumbnail: ThumbnailResult | None
 
 
@@ -240,7 +241,11 @@ def _prepare_assets(
             current = _current_asset(db, pending)
             if current is not None and (
                 current.media_type == pending.media_type
-                and (current.thumbnail is not None or not _needs_thumbnail(pending))
+                and (
+                    current.thumbnail is not None
+                    or current.thumbnail_path is None
+                    or not _needs_thumbnail(pending)
+                )
             ):
                 yield PreparedAsset(
                     pending=pending,
@@ -346,9 +351,9 @@ def _current_asset(
     ).fetchone()
     if row is None:
         return None
+    thumbnail_path = Path(row["thumbnail_path"]) if row["thumbnail_path"] is not None else None
     thumbnail = None
-    if row["thumbnail_path"] is not None:
-        thumbnail_path = Path(row["thumbnail_path"])
+    if thumbnail_path is not None:
         if thumbnail_path.is_file():
             thumbnail = ThumbnailResult(
                 thumbnail_path,
@@ -356,7 +361,11 @@ def _current_asset(
                 row["thumbnail_height"],
                 generated=False,
             )
-    return CurrentAsset(media_type=row["media_type"], thumbnail=thumbnail)
+    return CurrentAsset(
+        media_type=row["media_type"],
+        thumbnail_path=thumbnail_path,
+        thumbnail=thumbnail,
+    )
 
 
 def _needs_thumbnail(pending: PendingAsset) -> bool:
