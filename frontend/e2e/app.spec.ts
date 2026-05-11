@@ -360,6 +360,55 @@ test('wheels over cards to scroll normally and ctrl-wheel grid width', async ({ 
   await expect(page.getByLabel('12 cards per row')).toBeVisible()
 })
 
+test('loads the full image after the thumbnail when a card is larger than its thumbnail', async ({ page }) => {
+  let releaseFullImage!: () => void
+  let fullImageRequested = false
+  const fullImageCanFinish = new Promise<void>((resolve) => {
+    releaseFullImage = resolve
+  })
+  const highResAsset = {
+    ...sampleAsset,
+    asset_id: 'asset-hires',
+    relative_path: 'maps/hires.png',
+    filename: 'hires.png',
+    stem: 'hires',
+    thumbnail_url: '/thumbs/hires-small.png',
+    thumbnail_width: 12,
+    thumbnail_height: 12,
+  }
+
+  await page.route('**/api/search?*', async (route) => {
+    await route.fulfill({ json: { total: 1, cards: [{ kind: 'asset', asset: highResAsset }] } })
+  })
+  await page.route('**/api/search-with-directory-counts?*', async (route) => {
+    await route.fulfill({ json: { directories: [sampleRootDirectory(), sampleDirectory()] } })
+  })
+  await page.route('**/thumbs/hires-small.png', async (route) => {
+    await route.fulfill({
+      contentType: 'image/gif',
+      body: Buffer.from('R0lGODlhAQABAPAAAP///wAAACH5BAAAAAAALAAAAAABAAEAAAICRAEAOw==', 'base64'),
+    })
+  })
+  await page.route('**/api/assets/asset-hires/file', async (route) => {
+    fullImageRequested = true
+    await fullImageCanFinish
+    await route.fulfill({
+      contentType: 'image/gif',
+      body: Buffer.from('R0lGODlhAQABAPAAAP///wAAACH5BAAAAAAALAAAAAABAAEAAAICRAEAOw==', 'base64'),
+    })
+  })
+
+  await page.goto('/')
+  const image = page.getByRole('button', { name: /hires\.png/i }).locator('img')
+  await expect(image).toHaveAttribute('src', '/thumbs/hires-small.png')
+  await expect.poll(() => fullImageRequested).toBe(true)
+  await expect(image).toHaveAttribute('src', '/thumbs/hires-small.png')
+
+  releaseFullImage()
+
+  await expect(image).toHaveAttribute('src', '/api/assets/asset-hires/file')
+})
+
 test('renders the initial card page before refreshing directory state', async ({ page }) => {
   const searchRequests: string[] = []
   let initialSearchCompleted = false

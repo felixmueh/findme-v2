@@ -31,6 +31,7 @@
     collectionColor,
     visibleEntriesForCards,
   } from './lib/result-cards'
+  import ProgressiveAssetImage from './lib/ProgressiveAssetImage.svelte'
   import SearchLaneTabs, { type SearchMode } from './lib/SearchLaneTabs.svelte'
 
   type DirectoryNode = {
@@ -1439,7 +1440,11 @@
             >
               <span class="tile-thumb">
                 {#if displayAsset.thumbnail_url}
-                  <img src={displayAsset.thumbnail_url} alt="" loading="lazy" decoding="async" />
+                  <ProgressiveAssetImage
+                    asset={displayAsset}
+                    thumbnailUrl={displayAsset.thumbnail_url}
+                    fullUrl={assetFileUrl(displayAsset)}
+                  />
                 {:else}
                   <Icon size={28} />
                 {/if}
@@ -1488,7 +1493,11 @@
                 >
                   <span class="tile-thumb">
                     {#if asset.thumbnail_url}
-                      <img src={asset.thumbnail_url} alt="" loading="lazy" decoding="async" />
+                      <ProgressiveAssetImage
+                        asset={asset}
+                        thumbnailUrl={asset.thumbnail_url}
+                        fullUrl={assetFileUrl(asset)}
+                      />
                     {:else}
                       <Icon size={28} />
                     {/if}
@@ -1541,7 +1550,11 @@
               >
                 <span class="tile-thumb">
                   {#if asset.thumbnail_url}
-                    <img src={asset.thumbnail_url} alt="" loading="lazy" decoding="async" />
+                    <ProgressiveAssetImage
+                      asset={asset}
+                      thumbnailUrl={asset.thumbnail_url}
+                      fullUrl={assetFileUrl(asset)}
+                    />
                   {:else}
                     <Icon size={28} />
                   {/if}
