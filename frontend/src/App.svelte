@@ -141,6 +141,12 @@
   let errorTimer: number | undefined
   let requestId = 0
   let directoryRequestId = 0
+  let directoriesById = new Map<number, DirectoryNode>()
+  let directoriesByKey = new Map<string, DirectoryNode>()
+  let selectionRuleKeysByState: Record<FilterRuleState, Set<string>> = {
+    whitelist: new Set(),
+    blacklist: new Set(),
+  }
   let searchRevision = 0
   let collectionCycleTimer: number | undefined
   let assetRequestController: AbortController | undefined
@@ -400,7 +406,7 @@
       if (currentRequest !== directoryRequestId || revision !== searchRevision) return
       if (Array.isArray(body.directories)) {
         const nextDirectories = body.directories as DirectoryNode[]
-        directories = nextDirectories
+        replaceDirectories(nextDirectories)
         activeDirectoryIds = new Set(nextDirectories.map((directory) => directory.id))
         if (!hasInitializedFolderCollapse) {
           collapsedDirectories = initiallyCollapsedDirectoryKeys(nextDirectories)
@@ -409,6 +415,7 @@
       } else if (Array.isArray(body.directory_states)) {
         const nextStates = body.directory_states as DirectoryState[]
         directories = mergeDirectoryStates(directories, nextStates)
+        refreshSelectionRuleKeys()
         activeDirectoryIds = new Set(nextStates.map((state) => state[0]))
       }
     } catch (caught) {
@@ -786,7 +793,6 @@
   }
 
   function mergeDirectoryStates(directoryList: DirectoryNode[], states: DirectoryState[]) {
-    const directoriesById = new Map(directoryList.map((directory) => [directory.id, directory]))
     for (const state of states) {
       const directory = directoriesById.get(state[0])
       if (!directory) continue
@@ -803,46 +809,100 @@
     return directoryList
   }
 
+  function replaceDirectories(nextDirectories: DirectoryNode[]) {
+    directories = nextDirectories
+    reindexDirectories()
+    refreshSelectionRuleKeys()
+  }
+
+  function reindexDirectories() {
+    directoriesById = new Map(directories.map((directory) => [directory.id, directory]))
+    directoriesByKey = new Map(directories.map((directory) => [directoryKey(directory), directory]))
+  }
+
+  function refreshSelectionRuleKeys() {
+    const whitelist = new Set<string>()
+    const blacklist = new Set<string>()
+    for (const directory of directories) {
+      if (directory.selection_state === 'whitelist') {
+        whitelist.add(directoryKey(directory))
+      } else if (directory.selection_state === 'blacklist') {
+        blacklist.add(directoryKey(directory))
+      }
+    }
+    selectionRuleKeysByState = { whitelist, blacklist }
+  }
+
   function applyOptimisticFolderSetting(
     target: DirectoryNode,
     patch: { quality_override?: number | null; selection_state?: FilterRuleState | null }
   ) {
+    const previousRuleKeysByState = {
+      whitelist: new Set(selectionRuleKeysByState.whitelist),
+      blacklist: new Set(selectionRuleKeysByState.blacklist),
+    }
+    const previousValues = new Map<string, DirectoryNode>()
+    const capture = (directory: DirectoryNode | undefined) => {
+      if (!directory) return
+      const key = directoryKey(directory)
+      if (!previousValues.has(key)) previousValues.set(key, { ...directory })
+    }
     const targetKey = directoryKey(target)
     const dirtyKeys = directoryAncestorKeysForDirectory(target)
-    directories = directories.map((directory) => {
-      const next = { ...directory }
-      if (directoryKey(next) === targetKey) {
-        if ('quality_override' in patch) {
-          next.quality_override = patch.quality_override ?? null
-          next.quality = patch.quality_override ?? 5
+    const targetDirectory = directoriesByKey.get(targetKey)
+    capture(targetDirectory)
+    if (targetDirectory) {
+      if ('quality_override' in patch) {
+        targetDirectory.quality_override = patch.quality_override ?? null
+        targetDirectory.quality = patch.quality_override ?? 5
+      }
+      if ('selection_state' in patch) {
+        if (targetDirectory.selection_state) {
+          selectionRuleKeysByState[targetDirectory.selection_state].delete(targetKey)
         }
-        if ('selection_state' in patch) {
-          next.selection_state = patch.selection_state ?? null
+        targetDirectory.selection_state = patch.selection_state ?? null
+        if (targetDirectory.selection_state) {
+          selectionRuleKeysByState[targetDirectory.selection_state].add(targetKey)
         }
       }
-      if (dirtyKeys.has(directoryKey(next))) {
-        next.profile_dirty = true
+    }
+    const signalKeys = new Set(dirtyKeys)
+    signalKeys.add(targetKey)
+    for (const key of dirtyKeys) {
+      const directory = directoriesByKey.get(key)
+      capture(directory)
+      if (directory) directory.profile_dirty = true
+    }
+    refreshOptimisticDirectorySelectionSignals(signalKeys, capture)
+    return () => {
+      for (const [key, previous] of previousValues) {
+        const directory = directoriesByKey.get(key)
+        if (directory) Object.assign(directory, previous)
       }
-      return next
-    })
-    refreshOptimisticDirectorySelectionSignals()
+      selectionRuleKeysByState = previousRuleKeysByState
+    }
   }
 
-  function refreshOptimisticDirectorySelectionSignals() {
-    const selectedDirectories = directories.filter((directory) => directory.selection_state)
-    directories = directories.map((directory) => {
-      const next = { ...directory }
-      next.has_descendant_whitelist = selectedDirectories.some(
-        (candidate) =>
-          candidate.selection_state === 'whitelist' && isStrictDescendantDirectory(candidate, next)
-      )
-      next.has_descendant_blacklist = selectedDirectories.some(
-        (candidate) =>
-          candidate.selection_state === 'blacklist' && isStrictDescendantDirectory(candidate, next)
-      )
-      next.selection_effective = next.selection_state !== 'whitelist' || !next.has_descendant_whitelist
-      return next
-    })
+  function refreshOptimisticDirectorySelectionSignals(
+    keys: Set<string>,
+    capture: (directory: DirectoryNode | undefined) => void
+  ) {
+    for (const key of keys) {
+      const directory = directoriesByKey.get(key)
+      if (!directory) continue
+      capture(directory)
+      directory.has_descendant_whitelist = hasDescendantRule(directory, 'whitelist')
+      directory.has_descendant_blacklist = hasDescendantRule(directory, 'blacklist')
+      directory.selection_effective = directory.selection_state !== 'whitelist' || !directory.has_descendant_whitelist
+    }
+  }
+
+  function hasDescendantRule(directory: DirectoryNode, state: FilterRuleState) {
+    for (const key of selectionRuleKeysByState[state]) {
+      const selectedDirectory = directoriesByKey.get(key)
+      if (selectedDirectory && isStrictDescendantDirectory(selectedDirectory, directory)) return true
+    }
+    return false
   }
 
   function isStrictDescendantDirectory(child: DirectoryNode, parent: DirectoryNode) {
@@ -924,9 +984,27 @@
 
   function toggleDirectoryView(directory: DirectoryNode) {
     const key = directoryKey(directory)
-    viewDirectory = viewDirectoryKey === key
+    const nextView = viewDirectoryKey === key
       ? null
       : { source_id: directory.source_id, path: directory.path }
+    viewDirectory = nextView
+    activeDirectoryIds = activeDirectoryIdsForView(nextView)
+  }
+
+  function activeDirectoryIdsForView(view: Pick<DirectoryNode, 'source_id' | 'path'> | null) {
+    if (!view) return new Set(directories.map((directory) => directory.id))
+    return new Set(
+      directories
+        .filter(
+          (directory) =>
+            directory.source_id === view.source_id && isDirectoryWithinPath(directory.path, view.path)
+        )
+        .map((directory) => directory.id)
+    )
+  }
+
+  function isDirectoryWithinPath(path: string, parent: string) {
+    return path === parent || (parent === '' ? path !== '' : path.startsWith(`${parent}/`))
   }
 
   function toggleDirectoryCollapse(event: MouseEvent, directory: DirectoryNode) {
@@ -946,7 +1024,6 @@
     directory: DirectoryNode,
     patch: { quality_override?: number | null; selection_state?: FilterRuleState | null }
   ) {
-    const previousDirectories = directories.map((item) => ({ ...item }))
     const responsePromise = fetch('/api/search-profile/settings', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -957,11 +1034,11 @@
         ...patch,
       }),
     })
-    applyOptimisticFolderSetting(directory, patch)
+    const rollbackOptimisticFolderSetting = applyOptimisticFolderSetting(directory, patch)
     try {
       const response = await responsePromise
       if (!response.ok) {
-        directories = previousDirectories
+        rollbackOptimisticFolderSetting()
         showError('Could not update profile')
         return
       }
@@ -970,7 +1047,7 @@
       const revision = ++searchRevision
       await loadAssets(revision)
     } catch {
-      directories = previousDirectories
+      rollbackOptimisticFolderSetting()
       showError('Could not update profile')
     }
   }

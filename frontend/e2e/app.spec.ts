@@ -288,6 +288,80 @@ test('uses folder rows as transient view scopes', async ({ page }) => {
   await scopedSearchRequest
 })
 
+test('updates folder view tree before scoped responses arrive', async ({ page }) => {
+  let releaseScopedSearch!: () => void
+  let releaseScopedDirectoryState!: () => void
+  const scopedSearchCanFinish = new Promise<void>((resolve) => {
+    releaseScopedSearch = resolve
+  })
+  const scopedDirectoryStateCanFinish = new Promise<void>((resolve) => {
+    releaseScopedDirectoryState = resolve
+  })
+  const tokenDirectory = {
+    id: 2,
+    source_id: 'sample',
+    path: 'tokens',
+    name: 'tokens',
+    depth: 1,
+    asset_count: 1,
+    matched_asset_count: 1,
+    included_asset_count: 1,
+    quality: 5,
+    quality_override: null,
+    selection_state: null,
+    selection_effective: true,
+    profile_dirty: false,
+    has_descendant_whitelist: false,
+    has_descendant_blacklist: false,
+  }
+
+  await page.unroute('**/api/search?*')
+  await page.unroute('**/api/search-with-directory-counts?*')
+  await page.route('**/api/search?*', async (route) => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('view_directory') === 'maps') {
+      await scopedSearchCanFinish
+    }
+    await route.fulfill({ json: { total: 1, cards: [{ kind: 'asset', asset: sampleAsset }] } })
+  })
+  await page.route('**/api/search-with-directory-counts?*', async (route) => {
+    const url = new URL(route.request().url())
+    const directories = [sampleRootDirectory(), sampleDirectory(), tokenDirectory]
+    if (url.searchParams.get('view_directory') === 'maps') {
+      await scopedDirectoryStateCanFinish
+    }
+    await route.fulfill({
+      json: {
+        ...(url.searchParams.get('directory_state_only') === 'true'
+          ? { directory_states: directories.map(directoryState) }
+          : { directories }),
+      },
+    })
+  })
+
+  await page.goto('/')
+  await expect(page.getByRole('button', { name: /castle\.png/i })).toBeVisible()
+  await revealSampleFolder(page)
+  await expect(page.getByRole('group', { name: 'tokens folder' })).toBeVisible()
+
+  const viewRequest = page.waitForRequest((request) => {
+    const url = new URL(request.url())
+    return (
+      url.pathname === '/api/search' &&
+      url.searchParams.get('view_source_id') === 'sample' &&
+      url.searchParams.get('view_directory') === 'maps'
+    )
+  })
+  await page.getByRole('group', { name: 'maps folder' }).getByRole('button', { name: 'maps', exact: true }).click()
+  await viewRequest
+
+  await expect(page.getByRole('group', { name: 'maps folder' })).toHaveClass(/view-folder/)
+  await expect(page.getByRole('group', { name: 'tokens folder' })).toHaveCount(0)
+
+  releaseScopedSearch()
+  releaseScopedDirectoryState()
+})
+
 test('sends sidebar whitelist and blacklist rules with folder shortcuts', async ({ page }) => {
   await page.goto('/')
   await expect(page.getByRole('button', { name: /castle\.png/i })).toBeVisible()
