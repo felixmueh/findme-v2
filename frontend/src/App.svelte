@@ -132,6 +132,7 @@
   let cyclingVariantIndex = $state(0)
   let loading = $state(false)
   let loadingMore = $state(false)
+  let fillingInitialPage = $state(false)
   let hasMoreAssets = $state(false)
   let resultTotal = $state(0)
   let error = $state('')
@@ -139,9 +140,11 @@
   let debounceTimer: number | undefined
   let errorTimer: number | undefined
   let requestId = 0
+  let directoryRequestId = 0
   let searchRevision = 0
   let collectionCycleTimer: number | undefined
   let assetRequestController: AbortController | undefined
+  let directoryRequestController: AbortController | undefined
   let hoverAudioElement = $state<HTMLAudioElement>()
   let hoverPreviewMuted = $state(true)
   let hoverPreviewVolume = $state(0.5)
@@ -154,6 +157,8 @@
   let hasInitializedFolderCollapse = false
   let viewDirectory = $state<Pick<DirectoryNode, 'source_id' | 'path'> | null>(null)
 
+  const initialPageSize = 30
+  const initialFillTarget = 100
   const pageSize = 100
   const searchSessionId =
     typeof crypto !== 'undefined' && 'randomUUID' in crypto
@@ -209,8 +214,6 @@
     query
     searchMode
     viewDirectoryKey
-    profileSession?.active_profile_id
-    profileSession?.dirty
     const revision = ++searchRevision
     window.clearTimeout(debounceTimer)
     debounceTimer = window.setTimeout(() => {
@@ -278,38 +281,66 @@
   }
 
   async function loadAssets(revision = searchRevision) {
-    await loadAssetPage({ offset: 0, append: false, revision })
+    fillingInitialPage = true
+    try {
+      const loaded = await loadAssetPage({ offset: 0, append: false, revision, limit: initialPageSize })
+      if (!loaded || revision !== searchRevision) return
+      void loadDirectoryState(revision)
+      await tick()
+      if (revision !== searchRevision) return
+      const target = Math.min(initialFillTarget, resultTotal)
+      if (cards.length < target) {
+        await loadAssetPage({
+          offset: cards.length,
+          append: true,
+          revision,
+          limit: target - cards.length,
+        })
+      }
+    } finally {
+      if (revision === searchRevision) fillingInitialPage = false
+    }
   }
 
   async function loadMoreAssets() {
-    if (!hasMoreAssets || loading || loadingMore) return
-    await loadAssetPage({ offset: cards.length, append: true, revision: searchRevision })
+    if (!hasMoreAssets || loading || loadingMore || fillingInitialPage) return
+    await loadAssetPage({ offset: cards.length, append: true, revision: searchRevision, limit: pageSize })
   }
 
-  async function loadAssetPage({ offset, append, revision }: { offset: number; append: boolean; revision: number }) {
-    const currentRequest = ++requestId
-    assetRequestController?.abort()
-    const controller = new AbortController()
-    assetRequestController = controller
+  function searchParamsFor(revision: number, offset?: number, limit?: number) {
     const params = new URLSearchParams()
-    params.set('limit', String(pageSize))
-    params.set('offset', String(offset))
+    if (limit !== undefined) params.set('limit', String(limit))
+    if (offset !== undefined) params.set('offset', String(offset))
     params.set('search_session', searchSessionId)
-    const trimmed = query.trim()
-    const includeDirectoryCounts = !append && offset === 0
-    const path = includeDirectoryCounts ? '/api/search-with-directory-counts' : '/api/search'
-    if (includeDirectoryCounts && directories.length > 0) {
-      params.set('directory_state_only', 'true')
-    }
     if (viewDirectory) {
       params.set('view_source_id', viewDirectory.source_id)
       params.set('view_directory', viewDirectory.path)
     }
+    const trimmed = query.trim()
     if (trimmed) {
       params.set('q', trimmed)
       params.set('mode', searchMode)
       params.set('search_revision', String(revision))
     }
+    return params
+  }
+
+  async function loadAssetPage({
+    offset,
+    append,
+    revision,
+    limit,
+  }: {
+    offset: number
+    append: boolean
+    revision: number
+    limit: number
+  }) {
+    const currentRequest = ++requestId
+    assetRequestController?.abort()
+    const controller = new AbortController()
+    assetRequestController = controller
+    const params = searchParamsFor(revision, offset, limit)
 
     if (append) {
       loadingMore = true
@@ -320,27 +351,14 @@
     }
     clearError()
     try {
-      const response = await fetch(`${path}?${params}`, { signal: controller.signal })
-      if (response.status === 204) return
+      const response = await fetch(`/api/search?${params}`, { signal: controller.signal })
+      if (response.status === 204) return false
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       const body = await response.json()
-      if (currentRequest !== requestId) return
+      if (currentRequest !== requestId) return false
       const nextCards = body.cards as ResultCard[]
       resultTotal = Number(body.total ?? nextCards.length)
       cards = append ? [...cards, ...nextCards] : nextCards
-      if (includeDirectoryCounts && Array.isArray(body.directories)) {
-        const nextDirectories = body.directories as DirectoryNode[]
-        directories = nextDirectories
-        activeDirectoryIds = new Set(nextDirectories.map((directory) => directory.id))
-        if (!hasInitializedFolderCollapse) {
-          collapsedDirectories = initiallyCollapsedDirectoryKeys(nextDirectories)
-          hasInitializedFolderCollapse = true
-        }
-      } else if (includeDirectoryCounts && Array.isArray(body.directory_states)) {
-        const nextStates = body.directory_states as DirectoryState[]
-        directories = mergeDirectoryStates(directories, nextStates)
-        activeDirectoryIds = new Set(nextStates.map((state) => state[0]))
-      }
       hasMoreAssets = cards.length < resultTotal
       if (!append) {
         expandedCollections = new Set()
@@ -351,8 +369,10 @@
       } else if (!append && selected && !cards.some((card) => cardContainsAsset(card, selectedAssetId))) {
         selected = null
       }
+      return true
     } catch (caught) {
       if (!isAbortError(caught) && currentRequest === requestId) showError('Search failed')
+      return false
     } finally {
       if (currentRequest === requestId) {
         loading = false
@@ -360,6 +380,42 @@
       }
       if (assetRequestController === controller) {
         assetRequestController = undefined
+      }
+    }
+  }
+
+  async function loadDirectoryState(revision = searchRevision) {
+    const currentRequest = ++directoryRequestId
+    directoryRequestController?.abort()
+    const controller = new AbortController()
+    directoryRequestController = controller
+    const params = searchParamsFor(revision)
+    params.set('directory_only', 'true')
+    if (directories.length > 0) params.set('directory_state_only', 'true')
+    try {
+      const response = await fetch(`/api/search-with-directory-counts?${params}`, { signal: controller.signal })
+      if (response.status === 204) return
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const body = await response.json()
+      if (currentRequest !== directoryRequestId || revision !== searchRevision) return
+      if (Array.isArray(body.directories)) {
+        const nextDirectories = body.directories as DirectoryNode[]
+        directories = nextDirectories
+        activeDirectoryIds = new Set(nextDirectories.map((directory) => directory.id))
+        if (!hasInitializedFolderCollapse) {
+          collapsedDirectories = initiallyCollapsedDirectoryKeys(nextDirectories)
+          hasInitializedFolderCollapse = true
+        }
+      } else if (Array.isArray(body.directory_states)) {
+        const nextStates = body.directory_states as DirectoryState[]
+        directories = mergeDirectoryStates(directories, nextStates)
+        activeDirectoryIds = new Set(nextStates.map((state) => state[0]))
+      }
+    } catch (caught) {
+      if (!isAbortError(caught) && currentRequest === directoryRequestId) showError('Folder state failed')
+    } finally {
+      if (directoryRequestController === controller) {
+        directoryRequestController = undefined
       }
     }
   }
@@ -509,7 +565,7 @@
   async function refreshSearchFromInput() {
     window.clearTimeout(debounceTimer)
     const revision = ++searchRevision
-    await loadAssetPage({ offset: 0, append: false, revision })
+    await loadAssets(revision)
   }
 
   function handleKeydown(event: KeyboardEvent) {
@@ -698,6 +754,16 @@
     return keys
   }
 
+  function directoryAncestorKeysForDirectory(directory: Pick<DirectoryNode, 'source_id' | 'path'>) {
+    const keys = new Set<string>([directoryKey({ source_id: directory.source_id, path: '' })])
+    if (!directory.path) return keys
+    const parts = directory.path.split('/')
+    for (let index = 1; index <= parts.length; index += 1) {
+      keys.add(directoryKey({ source_id: directory.source_id, path: parts.slice(0, index).join('/') }))
+    }
+    return keys
+  }
+
   function directoryParentKeys(directoryList: DirectoryNode[]) {
     const paths = new Set<string>()
     for (const directory of directoryList) {
@@ -735,6 +801,54 @@
       directory.has_descendant_blacklist = state[9]
     }
     return directoryList
+  }
+
+  function applyOptimisticFolderSetting(
+    target: DirectoryNode,
+    patch: { quality_override?: number | null; selection_state?: FilterRuleState | null }
+  ) {
+    const targetKey = directoryKey(target)
+    const dirtyKeys = directoryAncestorKeysForDirectory(target)
+    directories = directories.map((directory) => {
+      const next = { ...directory }
+      if (directoryKey(next) === targetKey) {
+        if ('quality_override' in patch) {
+          next.quality_override = patch.quality_override ?? null
+          next.quality = patch.quality_override ?? 5
+        }
+        if ('selection_state' in patch) {
+          next.selection_state = patch.selection_state ?? null
+        }
+      }
+      if (dirtyKeys.has(directoryKey(next))) {
+        next.profile_dirty = true
+      }
+      return next
+    })
+    refreshOptimisticDirectorySelectionSignals()
+  }
+
+  function refreshOptimisticDirectorySelectionSignals() {
+    const selectedDirectories = directories.filter((directory) => directory.selection_state)
+    directories = directories.map((directory) => {
+      const next = { ...directory }
+      next.has_descendant_whitelist = selectedDirectories.some(
+        (candidate) =>
+          candidate.selection_state === 'whitelist' && isStrictDescendantDirectory(candidate, next)
+      )
+      next.has_descendant_blacklist = selectedDirectories.some(
+        (candidate) =>
+          candidate.selection_state === 'blacklist' && isStrictDescendantDirectory(candidate, next)
+      )
+      next.selection_effective = next.selection_state !== 'whitelist' || !next.has_descendant_whitelist
+      return next
+    })
+  }
+
+  function isStrictDescendantDirectory(child: DirectoryNode, parent: DirectoryNode) {
+    if (child.source_id !== parent.source_id || child.path === parent.path) return false
+    if (!parent.path) return child.path !== ''
+    return child.path.startsWith(`${parent.path}/`)
   }
 
   function directoryRuleState(directory: DirectoryNode) {
@@ -832,7 +946,8 @@
     directory: DirectoryNode,
     patch: { quality_override?: number | null; selection_state?: FilterRuleState | null }
   ) {
-    const response = await fetch('/api/search-profile/settings', {
+    const previousDirectories = directories.map((item) => ({ ...item }))
+    const responsePromise = fetch('/api/search-profile/settings', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -842,14 +957,22 @@
         ...patch,
       }),
     })
-    if (!response.ok) {
+    applyOptimisticFolderSetting(directory, patch)
+    try {
+      const response = await responsePromise
+      if (!response.ok) {
+        directories = previousDirectories
+        showError('Could not update profile')
+        return
+      }
+      const body = (await response.json()) as { session: SearchProfileSession }
+      profileSession = body.session
+      const revision = ++searchRevision
+      await loadAssets(revision)
+    } catch {
+      directories = previousDirectories
       showError('Could not update profile')
-      return
     }
-    const body = (await response.json()) as { session: SearchProfileSession }
-    profileSession = body.session
-    const revision = ++searchRevision
-    await loadAssetPage({ offset: 0, append: false, revision })
   }
 
   async function setFolderQuality(directory: DirectoryNode, quality: number) {
@@ -995,7 +1118,7 @@
     const body = (await response.json()) as { session: SearchProfileSession }
     profileSession = body.session
     const revision = ++searchRevision
-    await loadAssetPage({ offset: 0, append: false, revision })
+    await loadAssets(revision)
   }
 
   async function selectProfileById(profileId: string, discard = false) {
@@ -1011,7 +1134,7 @@
     const body = (await response.json()) as { session: SearchProfileSession }
     profileSession = body.session
     const revision = ++searchRevision
-    await loadAssetPage({ offset: 0, append: false, revision })
+    await loadAssets(revision)
   }
 
   async function saveProfile() {
@@ -1028,7 +1151,7 @@
     }
     await loadSearchProfiles()
     const revision = ++searchRevision
-    await loadAssetPage({ offset: 0, append: false, revision })
+    await loadAssets(revision)
   }
 
   async function createProfile() {
@@ -1067,7 +1190,7 @@
     }
     await loadSearchProfiles()
     const revision = ++searchRevision
-    await loadAssetPage({ offset: 0, append: false, revision })
+    await loadAssets(revision)
   }
 
   async function profileCommand(path: string) {
@@ -1083,7 +1206,7 @@
     const body = (await response.json()) as { session: SearchProfileSession }
     profileSession = body.session
     const revision = ++searchRevision
-    await loadAssetPage({ offset: 0, append: false, revision })
+    await loadAssets(revision)
   }
 
 </script>
@@ -1170,7 +1293,7 @@
             >
               <span class="tile-thumb">
                 {#if displayAsset.thumbnail_url}
-                  <img src={displayAsset.thumbnail_url} alt="" loading="lazy" />
+                  <img src={displayAsset.thumbnail_url} alt="" loading="lazy" decoding="async" />
                 {:else}
                   <Icon size={28} />
                 {/if}
@@ -1219,7 +1342,7 @@
                 >
                   <span class="tile-thumb">
                     {#if asset.thumbnail_url}
-                      <img src={asset.thumbnail_url} alt="" loading="lazy" />
+                      <img src={asset.thumbnail_url} alt="" loading="lazy" decoding="async" />
                     {:else}
                       <Icon size={28} />
                     {/if}
@@ -1272,7 +1395,7 @@
               >
                 <span class="tile-thumb">
                   {#if asset.thumbnail_url}
-                    <img src={asset.thumbnail_url} alt="" loading="lazy" />
+                    <img src={asset.thumbnail_url} alt="" loading="lazy" decoding="async" />
                   {:else}
                     <Icon size={28} />
                   {/if}
@@ -1307,7 +1430,7 @@
           onmouseleave={clearHoverPreview}
         >
           {#if hoverPreviewAsset.thumbnail_url}
-            <img src={hoverPreviewAsset.thumbnail_url} alt="" />
+            <img src={hoverPreviewAsset.thumbnail_url} alt="" decoding="async" />
           {:else}
             <div class="file-preview">
               <HoverIcon size={30} />
@@ -1329,7 +1452,7 @@
             style={selectedPreviewStyle(selected.asset)}
           >
             {#if selected.asset.media_type === 'image'}
-              <img src={actions.open.url} alt={selected.asset.filename} />
+              <img src={actions.open.url} alt={selected.asset.filename} decoding="async" />
             {:else if selected.asset.media_type === 'video'}
               <!-- svelte-ignore a11y_media_has_caption -->
               <video src={actions.open.url} controls preload="metadata" autoplay muted loop playsinline></video>

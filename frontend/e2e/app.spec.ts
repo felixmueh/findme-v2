@@ -228,7 +228,7 @@ test('searches through the real browser UI', async ({ page }) => {
 
   const searchRequest = page.waitForRequest((request) => {
     const url = new URL(request.url())
-    return url.pathname === '/api/search-with-directory-counts' && url.searchParams.get('q') === 'castle'
+    return url.pathname === '/api/search' && url.searchParams.get('q') === 'castle'
   })
 
   await page.getByRole('searchbox', { name: 'Search assets' }).fill('castle')
@@ -246,7 +246,7 @@ test('searches with the selected lane mode', async ({ page }) => {
   const domainSearchRequest = page.waitForRequest((request) => {
     const url = new URL(request.url())
     return (
-      url.pathname === '/api/search-with-directory-counts' &&
+      url.pathname === '/api/search' &&
       url.searchParams.get('q') === 'castle' &&
       url.searchParams.get('mode') === 'domain'
     )
@@ -266,10 +266,9 @@ test('uses folder rows as transient view scopes', async ({ page }) => {
   const viewRequest = page.waitForRequest((request) => {
     const url = new URL(request.url())
     return (
-      url.pathname === '/api/search-with-directory-counts' &&
+      url.pathname === '/api/search' &&
       url.searchParams.get('view_source_id') === 'sample' &&
-      url.searchParams.get('view_directory') === 'maps' &&
-      url.searchParams.get('directory_state_only') === 'true'
+      url.searchParams.get('view_directory') === 'maps'
     )
   })
   await page.getByRole('group', { name: 'maps folder' }).getByRole('button', { name: 'maps', exact: true }).click()
@@ -279,11 +278,10 @@ test('uses folder rows as transient view scopes', async ({ page }) => {
   const scopedSearchRequest = page.waitForRequest((request) => {
     const url = new URL(request.url())
     return (
-      url.pathname === '/api/search-with-directory-counts' &&
+      url.pathname === '/api/search' &&
       url.searchParams.get('q') === 'castle' &&
       url.searchParams.get('view_source_id') === 'sample' &&
-      url.searchParams.get('view_directory') === 'maps' &&
-      url.searchParams.get('directory_state_only') === 'true'
+      url.searchParams.get('view_directory') === 'maps'
     )
   })
   await page.getByRole('searchbox', { name: 'Search assets' }).fill('castle')
@@ -325,6 +323,43 @@ test('sends sidebar whitelist and blacklist rules with folder shortcuts', async 
     selection_state: 'blacklist',
   })
   await expect(page.getByRole('group', { name: 'maps folder' })).toBeVisible()
+})
+
+test('updates folder selection state before refreshed results arrive', async ({ page }) => {
+  let releasePatch!: () => void
+  const patchCanFinish = new Promise<void>((resolve) => {
+    releasePatch = resolve
+  })
+  await page.route('**/api/search-profile/settings', async (route) => {
+    await patchCanFinish
+    await route.fulfill({
+      json: { session: profileSession(false, true) },
+    })
+  })
+
+  await page.goto('/')
+  await expect(page.getByRole('button', { name: /castle\.png/i })).toBeVisible()
+  await revealSampleFolder(page)
+
+  const whitelistSettingRequest = waitForProfileSetting(page, {
+    source_id: 'sample',
+    directory: 'maps',
+    selection_state: 'whitelist',
+  })
+  await page.getByRole('group', { name: 'maps folder' }).getByRole('button', { name: 'maps', exact: true }).click({
+    modifiers: ['Shift'],
+  })
+  await whitelistSettingRequest
+
+  await expect(page.getByRole('button', { name: 'Folder controls for maps, focused, quality 4' })).toBeVisible()
+  await expect(page.getByRole('button', { name: /castle\.png/i })).toBeVisible()
+
+  const patchResponse = page.waitForResponse((response) => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/search-profile/settings'
+  })
+  releasePatch()
+  await patchResponse
 })
 
 test('combines folder filtering and quality in one control popover', async ({ page }) => {
@@ -599,7 +634,7 @@ test('keeps sidebar rules across search text and lane changes', async ({ page })
   const filteredSearchRequest = page.waitForRequest((request) => {
     const url = new URL(request.url())
     return (
-      url.pathname === '/api/search-with-directory-counts' &&
+      url.pathname === '/api/search' &&
       url.searchParams.get('q') === 'castle' &&
       url.searchParams.get('search_session') === searchSession
     )
@@ -610,7 +645,7 @@ test('keeps sidebar rules across search text and lane changes', async ({ page })
   const domainSearchRequest = page.waitForRequest((request) => {
     const url = new URL(request.url())
     return (
-      url.pathname === '/api/search-with-directory-counts' &&
+      url.pathname === '/api/search' &&
       url.searchParams.get('q') === 'castle' &&
       url.searchParams.get('mode') === 'domain' &&
       url.searchParams.get('search_session') === searchSession
@@ -929,6 +964,9 @@ test('selecting an asset unfolds and scrolls to its folder path without refoldin
   await page.route('**/api/search-with-directory-counts?*', async (route) => {
     await route.fulfill({ json: { total: 1, cards: [{ kind: 'asset', asset: farAsset }], directories } })
   })
+  await page.route('**/api/search?*', async (route) => {
+    await route.fulfill({ json: { total: 1, cards: [{ kind: 'asset', asset: farAsset }] } })
+  })
   await page.route('**/api/assets/asset-obelisk', async (route) => {
     await route.fulfill({
       json: {
@@ -1157,7 +1195,7 @@ test('updates folder quality through the picker and refreshes ranked search resu
 
   const initialSearchRequest = page.waitForRequest((request) => {
     const url = new URL(request.url())
-    return url.pathname === '/api/search-with-directory-counts' && url.searchParams.get('q') === 'castle'
+    return url.pathname === '/api/search' && url.searchParams.get('q') === 'castle'
   })
   await page.getByRole('searchbox', { name: 'Search assets' }).fill('castle')
   await initialSearchRequest
@@ -1168,7 +1206,7 @@ test('updates folder quality through the picker and refreshes ranked search resu
   })
   const refreshedSearchRequest = page.waitForRequest((request) => {
     const url = new URL(request.url())
-    return url.pathname === '/api/search-with-directory-counts' && url.searchParams.get('q') === 'castle'
+    return url.pathname === '/api/search' && url.searchParams.get('q') === 'castle'
   })
 
   await page.getByRole('button', { name: 'Folder controls for maps, quality 4' }).click()

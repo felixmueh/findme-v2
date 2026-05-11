@@ -457,6 +457,7 @@ def create_app(
         search_session: str | None = None,
         search_revision: int | None = None,
         directory_state_only: bool = False,
+        directory_only: bool = False,
     ) -> object:
         source_id, directory, directory_prefix = resolve_view_scope(
             source_id=source_id,
@@ -487,14 +488,6 @@ def create_app(
             return Response(status_code=204)
         trimmed_query = _trimmed_query(q)
         if not trimmed_query:
-            cards, total = card_page_for_browse_scope(
-                preferences=preferences,
-                source_id=source_id,
-                directory=directory,
-                directory_prefix=directory_prefix,
-                offset=offset,
-                limit=limit,
-            )
             try:
                 directories = search_index.directory_responses_for_scope(
                     preferences=preferences,
@@ -508,6 +501,18 @@ def create_app(
                 )
             except SearchSuperseded:
                 return Response(status_code=204)
+            if directory_only:
+                return JSONResponse(
+                    _directory_payload(directories, state_only=directory_state_only)
+                )
+            cards, total = card_page_for_browse_scope(
+                preferences=preferences,
+                source_id=source_id,
+                directory=directory,
+                directory_prefix=directory_prefix,
+                offset=offset,
+                limit=limit,
+            )
             return JSONResponse(
                 {
                     "cards": cards,
@@ -516,6 +521,26 @@ def create_app(
                 }
             )
         domain_vocabulary = _load_domain_vocabulary(config)
+        if directory_only:
+            try:
+                directories = search_index.directory_responses_for_search(
+                    trimmed_query,
+                    source_id=source_id,
+                    directory=directory,
+                    directory_prefix=directory_prefix,
+                    preferences=preferences,
+                    domain_vocabulary=domain_vocabulary,
+                    mode=mode,
+                    dirty_folder_subtree_keys=dirty_folder_subtree_keys,
+                    descendant_whitelist_keys=descendant_whitelist_keys,
+                    descendant_blacklist_keys=descendant_blacklist_keys,
+                    control=control,
+                )
+            except SearchSuperseded:
+                return Response(status_code=204)
+            return JSONResponse(
+                _directory_payload(directories, state_only=directory_state_only)
+            )
         try:
             search_response = search_index.search_with_directory_responses(
                 trimmed_query,
