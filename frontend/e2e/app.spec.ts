@@ -47,6 +47,7 @@ function sampleDirectory(
   hasDescendantBlacklist = false
 ) {
   return {
+    id: 1,
     source_id: 'sample',
     path: 'maps',
     name: 'maps',
@@ -66,6 +67,7 @@ function sampleDirectory(
 
 function sampleRootDirectory() {
   return {
+    id: 0,
     source_id: 'sample',
     path: '',
     name: 'Sample Assets',
@@ -81,6 +83,21 @@ function sampleRootDirectory() {
     has_descendant_whitelist: false,
     has_descendant_blacklist: false,
   }
+}
+
+function directoryState(directory: ReturnType<typeof sampleRootDirectory>) {
+  return [
+    directory.id,
+    directory.matched_asset_count,
+    directory.included_asset_count,
+    directory.quality,
+    directory.quality_override,
+    directory.selection_state,
+    directory.selection_effective,
+    directory.profile_dirty,
+    directory.has_descendant_whitelist,
+    directory.has_descendant_blacklist,
+  ]
 }
 
 function profileSession(dirtyScoring = false, dirtySelection = false) {
@@ -178,14 +195,18 @@ test.beforeEach(async ({ page }) => {
   })
 
   await page.route('**/api/search-with-directory-counts?*', async (route) => {
+    const url = new URL(route.request().url())
+    const directories = [
+      sampleRootDirectory(),
+      sampleDirectory(directoryQuality, directoryQuality === 4 ? null : directoryQuality, directorySelectionState),
+    ]
     await route.fulfill({
       json: {
         total: 1,
         cards: [{ kind: 'asset', asset: sampleAsset }],
-        directories: [
-          sampleRootDirectory(),
-          sampleDirectory(directoryQuality, directoryQuality === 4 ? null : directoryQuality, directorySelectionState),
-        ],
+        ...(url.searchParams.get('directory_state_only') === 'true'
+          ? { directory_states: directories.map(directoryState) }
+          : { directories }),
       },
     })
   })
@@ -247,7 +268,8 @@ test('uses folder rows as transient view scopes', async ({ page }) => {
     return (
       url.pathname === '/api/search-with-directory-counts' &&
       url.searchParams.get('view_source_id') === 'sample' &&
-      url.searchParams.get('view_directory') === 'maps'
+      url.searchParams.get('view_directory') === 'maps' &&
+      url.searchParams.get('directory_state_only') === 'true'
     )
   })
   await page.getByRole('group', { name: 'maps folder' }).getByRole('button', { name: 'maps', exact: true }).click()
@@ -260,7 +282,8 @@ test('uses folder rows as transient view scopes', async ({ page }) => {
       url.pathname === '/api/search-with-directory-counts' &&
       url.searchParams.get('q') === 'castle' &&
       url.searchParams.get('view_source_id') === 'sample' &&
-      url.searchParams.get('view_directory') === 'maps'
+      url.searchParams.get('view_directory') === 'maps' &&
+      url.searchParams.get('directory_state_only') === 'true'
     )
   })
   await page.getByRole('searchbox', { name: 'Search assets' }).fill('castle')

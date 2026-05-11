@@ -33,6 +33,7 @@
   import SearchLaneTabs, { type SearchMode } from './lib/SearchLaneTabs.svelte'
 
   type DirectoryNode = {
+    id: number
     source_id: string
     path: string
     name: string
@@ -48,6 +49,19 @@
     has_descendant_whitelist: boolean
     has_descendant_blacklist: boolean
   }
+
+  type DirectoryState = [
+    id: number,
+    matchedAssetCount: number,
+    includedAssetCount: number,
+    quality: number,
+    qualityOverride: number | null,
+    selectionState: FilterRuleState | null,
+    selectionEffective: boolean,
+    profileDirty: boolean,
+    hasDescendantWhitelist: boolean,
+    hasDescendantBlacklist: boolean,
+  ]
 
   type FilterRuleState = 'whitelist' | 'blacklist'
 
@@ -105,6 +119,7 @@
   let profiles = $state<SearchProfile[]>([])
   let profileSession = $state<SearchProfileSession | null>(null)
   let directories = $state<DirectoryNode[]>([])
+  let activeDirectoryIds = $state<Set<number>>(new Set())
   let collapsedDirectories = $state<Set<string>>(new Set())
   let cards = $state<ResultCard[]>([])
   let expandedCollections = $state<Set<string>>(new Set())
@@ -163,7 +178,8 @@
       : ''
   )
   const resultLabel = $derived(`${resultTotal} ${resultTotal === 1 ? 'card' : 'cards'}`)
-  const visibleDirectories = $derived(directories.filter((directory) => isDirectoryVisible(directory)))
+  const activeDirectories = $derived(directories.filter((directory) => activeDirectoryIds.has(directory.id)))
+  const visibleDirectories = $derived(activeDirectories.filter((directory) => isDirectoryVisible(directory)))
   const hoveredAssetAncestorKeys = $derived.by(() => {
     const asset = hoverPreviewAsset
     const keys = new Set<string>()
@@ -182,11 +198,11 @@
   })
   const qualityTargetDirectory = $derived.by(
     () =>
-      directories.find(
+      activeDirectories.find(
         (directory) => directoryKey(directory) === (qualityHoverKey || qualityTargetKey)
       ) ?? null
   )
-  const directoryPathsWithChildren = $derived.by(() => directoryParentKeys(directories))
+  const directoryPathsWithChildren = $derived.by(() => directoryParentKeys(activeDirectories))
   void loadSearchProfiles()
 
   $effect(() => {
@@ -282,6 +298,9 @@
     const trimmed = query.trim()
     const includeDirectoryCounts = !append && offset === 0
     const path = includeDirectoryCounts ? '/api/search-with-directory-counts' : '/api/search'
+    if (includeDirectoryCounts && directories.length > 0) {
+      params.set('directory_state_only', 'true')
+    }
     if (viewDirectory) {
       params.set('view_source_id', viewDirectory.source_id)
       params.set('view_directory', viewDirectory.path)
@@ -312,10 +331,15 @@
       if (includeDirectoryCounts && Array.isArray(body.directories)) {
         const nextDirectories = body.directories as DirectoryNode[]
         directories = nextDirectories
+        activeDirectoryIds = new Set(nextDirectories.map((directory) => directory.id))
         if (!hasInitializedFolderCollapse) {
           collapsedDirectories = initiallyCollapsedDirectoryKeys(nextDirectories)
           hasInitializedFolderCollapse = true
         }
+      } else if (includeDirectoryCounts && Array.isArray(body.directory_states)) {
+        const nextStates = body.directory_states as DirectoryState[]
+        directories = mergeDirectoryStates(directories, nextStates)
+        activeDirectoryIds = new Set(nextStates.map((state) => state[0]))
       }
       hasMoreAssets = cards.length < resultTotal
       if (!append) {
@@ -693,6 +717,24 @@
         .map((directory) => directoryKey(directory))
         .filter((key) => parentKeys.has(key))
     )
+  }
+
+  function mergeDirectoryStates(directoryList: DirectoryNode[], states: DirectoryState[]) {
+    const directoriesById = new Map(directoryList.map((directory) => [directory.id, directory]))
+    for (const state of states) {
+      const directory = directoriesById.get(state[0])
+      if (!directory) continue
+      directory.matched_asset_count = state[1]
+      directory.included_asset_count = state[2]
+      directory.quality = state[3]
+      directory.quality_override = state[4]
+      directory.selection_state = state[5]
+      directory.selection_effective = state[6]
+      directory.profile_dirty = state[7]
+      directory.has_descendant_whitelist = state[8]
+      directory.has_descendant_blacklist = state[9]
+    }
+    return directoryList
   }
 
   function directoryRuleState(directory: DirectoryNode) {

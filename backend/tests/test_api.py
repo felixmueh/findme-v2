@@ -1501,6 +1501,71 @@ def test_api_view_scope_browse_uses_numeric_asset_indexes(
     ]
 
 
+def test_api_can_return_compact_directory_state_updates(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    write_image(source_root / "Maps" / "Keep.png")
+    write_image(source_root / "Tokens" / "Skip.png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+    rebuild_search_corpus(config, db_path)
+    client = TestClient(create_app(config, db_path))
+
+    full_body = client.get("/api/search-with-directory-counts").json()
+    compact_body = client.get(
+        "/api/search-with-directory-counts",
+        params={
+            "view_source_id": "dnd",
+            "view_directory": "Maps",
+            "directory_state_only": "true",
+        },
+    ).json()
+    full_by_path = {directory["path"]: directory for directory in full_body["directories"]}
+
+    assert "directories" not in compact_body
+    assert len(compact_body["cards"]) == 1
+    assert compact_body["total"] == 1
+    assert compact_body["directory_states"] == [
+        [
+            full_by_path[""]["id"],
+            1,
+            1,
+            5,
+            None,
+            None,
+            True,
+            False,
+            False,
+            False,
+        ],
+        [
+            full_by_path["Maps"]["id"],
+            1,
+            1,
+            5,
+            None,
+            None,
+            True,
+            False,
+            False,
+            False,
+        ],
+    ]
+
+
 def test_api_search_uses_startup_search_index_until_app_restart(tmp_path: Path) -> None:
     source_root = tmp_path / "assets"
     source_root.mkdir()

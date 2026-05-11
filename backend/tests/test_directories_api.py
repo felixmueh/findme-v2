@@ -18,6 +18,7 @@ def _stable_directory(directory: dict[str, object]) -> dict[str, object]:
         if key
         not in {
             "included_asset_count",
+            "id",
             "selection_state",
             "selection_effective",
             "profile_dirty",

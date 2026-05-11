@@ -1268,6 +1268,7 @@ class SearchIndex:
             quality, quality_override = preferences.folder_quality(source_id, path)
             responses.append(
                 {
+                    "id": int(directory_id),
                     "source_id": source_id,
                     "path": path,
                     "name": runtime.names[directory_id],

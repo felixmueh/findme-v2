@@ -456,6 +456,7 @@ def create_app(
         offset: int = Query(default=0, ge=0),
         search_session: str | None = None,
         search_revision: int | None = None,
+        directory_state_only: bool = False,
     ) -> object:
         source_id, directory, directory_prefix = resolve_view_scope(
             source_id=source_id,
@@ -511,7 +512,7 @@ def create_app(
                 {
                     "cards": cards,
                     "total": total,
-                    "directories": directories,
+                    **_directory_payload(directories, state_only=directory_state_only),
                 }
             )
         domain_vocabulary = _load_domain_vocabulary(config)
@@ -542,7 +543,10 @@ def create_app(
             {
                 "cards": cards,
                 "total": search_response.page.total,
-                "directories": search_response.directories,
+                **_directory_payload(
+                    search_response.directories,
+                    state_only=directory_state_only,
+                ),
             }
         )
 
@@ -630,6 +634,35 @@ def _load_asset_or_404(db: sqlite3.Connection, config: AppConfig, asset_id: str)
 
 def _search_response(result: SearchResult) -> dict[str, object]:
     return _asset_search_response(result, score=result.score)
+
+
+def _directory_payload(
+    directories: list[dict[str, object]],
+    *,
+    state_only: bool,
+) -> dict[str, object]:
+    if state_only:
+        return {
+            "directory_states": [
+                _directory_state_response(directory) for directory in directories
+            ]
+        }
+    return {"directories": directories}
+
+
+def _directory_state_response(directory: dict[str, object]) -> list[object]:
+    return [
+        directory["id"],
+        directory["matched_asset_count"],
+        directory["included_asset_count"],
+        directory["quality"],
+        directory["quality_override"],
+        directory["selection_state"],
+        directory["selection_effective"],
+        directory["profile_dirty"],
+        directory["has_descendant_whitelist"],
+        directory["has_descendant_blacklist"],
+    ]
 
 
 def _asset_search_response(result, *, score: float) -> dict[str, object]:
