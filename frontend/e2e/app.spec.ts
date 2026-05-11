@@ -314,9 +314,14 @@ test('changes the number of visible grid columns from the toolbar', async ({ pag
   await expect.poll(() => gridColumnCount(page)).toBe(1)
   await expect(page.getByLabel('1 card per row')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Show fewer cards in grid' })).toBeDisabled()
+
+  await page.reload()
+  await expect(page.getByRole('button', { name: /castle\.png/i })).toBeVisible()
+  await expect.poll(() => gridColumnCount(page)).toBe(12)
+  await expect(page.getByLabel('12 cards per row')).toBeVisible()
 })
 
-test('scrolls the asset grid when wheeling over a card', async ({ page }) => {
+test('wheels over cards to scroll normally and ctrl-wheel grid width', async ({ page }) => {
   const assets = Array.from({ length: 240 }, (_, index) => sampleAssetAt(index))
   const cards = assets.map((asset) => ({ kind: 'asset', asset }))
   const root = { ...sampleRootDirectory(), asset_count: assets.length, matched_asset_count: assets.length, included_asset_count: assets.length }
@@ -341,6 +346,18 @@ test('scrolls the asset grid when wheeling over a card', async ({ page }) => {
   await page.mouse.wheel(0, 520)
 
   await expect.poll(() => grid.evaluate((element) => element.scrollTop)).toBeGreaterThan(initialScrollTop)
+
+  await page.keyboard.down('Control')
+  await page.mouse.wheel(0, 520)
+  await page.keyboard.up('Control')
+  await expect.poll(() => gridColumnCount(page)).toBe(13)
+  await expect(page.getByLabel('13 cards per row')).toBeVisible()
+
+  await page.keyboard.down('Control')
+  await page.mouse.wheel(0, -520)
+  await page.keyboard.up('Control')
+  await expect.poll(() => gridColumnCount(page)).toBe(12)
+  await expect(page.getByLabel('12 cards per row')).toBeVisible()
 })
 
 test('renders the initial card page before refreshing directory state', async ({ page }) => {

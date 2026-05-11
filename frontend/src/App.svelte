@@ -169,12 +169,11 @@
   const gridCardsPerRowMin = 1
   const gridCardsPerRowMax = 15
   const gridCardsPerRowDefault = 12
-  const gridCardsPerRowStorageKey = 'findme.gridCardsPerRow.v2'
   const searchSessionId =
     typeof crypto !== 'undefined' && 'randomUUID' in crypto
       ? crypto.randomUUID()
       : `${Date.now()}-${Math.random()}`
-  let gridCardsPerRow = $state(initialGridCardsPerRow())
+  let gridCardsPerRow = $state(gridCardsPerRowDefault)
 
   const selectedAssetId = $derived(selected?.asset.asset_id ?? '')
   const selectedDirectoryKey = $derived(
@@ -306,14 +305,6 @@
     searchMode = mode
   }
 
-  function initialGridCardsPerRow() {
-    if (typeof window === 'undefined') return gridCardsPerRowDefault
-    const savedValue = window.localStorage.getItem(gridCardsPerRowStorageKey)
-    if (savedValue === null) return gridCardsPerRowDefault
-    const saved = Number(savedValue)
-    return clampGridCardsPerRow(Number.isFinite(saved) ? saved : gridCardsPerRowDefault)
-  }
-
   function clampGridCardsPerRow(value: number) {
     return Math.min(gridCardsPerRowMax, Math.max(gridCardsPerRowMin, Math.round(value)))
   }
@@ -322,7 +313,6 @@
     const nextCount = clampGridCardsPerRow(value)
     if (nextCount === gridCardsPerRow) return
     gridCardsPerRow = nextCount
-    window.localStorage.setItem(gridCardsPerRowStorageKey, String(nextCount))
   }
 
   function showMoreGridCards() {
@@ -334,19 +324,12 @@
   }
 
   function scrollTileGridWithWheel(event: WheelEvent) {
-    const grid = tileGridElement
-    if (!grid || event.defaultPrevented) return
-    const deltaScale = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? grid.clientHeight : 1
-    const topDelta = event.deltaY * deltaScale
-    const leftDelta = event.deltaX * deltaScale
-    if (topDelta === 0 && leftDelta === 0) return
-
-    const previousTop = grid.scrollTop
-    const previousLeft = grid.scrollLeft
-    grid.scrollTop += topDelta
-    grid.scrollLeft += leftDelta
-    if (grid.scrollTop !== previousTop || grid.scrollLeft !== previousLeft) {
-      event.preventDefault()
+    if (!event.ctrlKey || event.defaultPrevented || event.deltaY === 0) return
+    event.preventDefault()
+    if (event.deltaY > 0) {
+      showMoreGridCards()
+    } else {
+      showFewerGridCards()
     }
   }
 
