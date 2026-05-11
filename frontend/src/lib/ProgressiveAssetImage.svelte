@@ -18,14 +18,23 @@
 
   onMount(() => {
     let cancelled = false
+    let fullImageRequested = false
     let idleId: number | undefined
     let timeoutId: ReturnType<typeof setTimeout> | undefined
+    let resizeObserver: ResizeObserver | undefined
 
     async function maybeLoadFullImage() {
       await tick()
-      if (cancelled || asset.media_type !== 'image' || !asset.thumbnail_width || !asset.thumbnail_height) return
+      if (
+        cancelled ||
+        fullImageRequested ||
+        asset.media_type !== 'image' ||
+        !asset.thumbnail_width ||
+        !asset.thumbnail_height
+      ) return
       const bounds = imageElement.getBoundingClientRect()
       if (bounds.width <= asset.thumbnail_width && bounds.height <= asset.thumbnail_height) return
+      fullImageRequested = true
 
       const loadFullImage = () => {
         const fullImage = new Image()
@@ -44,9 +53,16 @@
     }
 
     void maybeLoadFullImage()
+    if ('ResizeObserver' in window) {
+      resizeObserver = new ResizeObserver(() => {
+        void maybeLoadFullImage()
+      })
+      resizeObserver.observe(imageElement)
+    }
 
     return () => {
       cancelled = true
+      resizeObserver?.disconnect()
       if (idleId !== undefined && 'cancelIdleCallback' in window) window.cancelIdleCallback(idleId)
       globalThis.clearTimeout(timeoutId)
     }

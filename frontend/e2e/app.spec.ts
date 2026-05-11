@@ -409,6 +409,53 @@ test('loads the full image after the thumbnail when a card is larger than its th
   await expect(image).toHaveAttribute('src', '/api/assets/asset-hires/file')
 })
 
+test('loads the full image after resizing a card larger than its thumbnail', async ({ page }) => {
+  let fullImageRequested = false
+  const resizeAsset = {
+    ...sampleAsset,
+    asset_id: 'asset-resize-hires',
+    relative_path: 'maps/resize-hires.png',
+    filename: 'resize-hires.png',
+    stem: 'resize-hires',
+    thumbnail_url: '/thumbs/resize-hires-small.png',
+    thumbnail_width: 120,
+    thumbnail_height: 120,
+  }
+
+  await page.route('**/api/search?*', async (route) => {
+    await route.fulfill({ json: { total: 1, cards: [{ kind: 'asset', asset: resizeAsset }] } })
+  })
+  await page.route('**/api/search-with-directory-counts?*', async (route) => {
+    await route.fulfill({ json: { directories: [sampleRootDirectory(), sampleDirectory()] } })
+  })
+  await page.route('**/thumbs/resize-hires-small.png', async (route) => {
+    await route.fulfill({
+      contentType: 'image/gif',
+      body: Buffer.from('R0lGODlhAQABAPAAAP///wAAACH5BAAAAAAALAAAAAABAAEAAAICRAEAOw==', 'base64'),
+    })
+  })
+  await page.route('**/api/assets/asset-resize-hires/file', async (route) => {
+    fullImageRequested = true
+    await route.fulfill({
+      contentType: 'image/gif',
+      body: Buffer.from('R0lGODlhAQABAPAAAP///wAAACH5BAAAAAAALAAAAAABAAEAAAICRAEAOw==', 'base64'),
+    })
+  })
+
+  await page.goto('/')
+  await expect(page.getByRole('button', { name: /resize-hires\.png/i })).toBeVisible()
+  const image = page.getByRole('button', { name: /resize-hires\.png/i }).locator('img')
+  await expect(image).toHaveAttribute('src', '/thumbs/resize-hires-small.png')
+  await expect.poll(() => fullImageRequested).toBe(false)
+
+  for (let index = 12; index > 5; index -= 1) {
+    await page.getByRole('button', { name: 'Show fewer cards in grid' }).click()
+  }
+
+  await expect.poll(() => fullImageRequested).toBe(true)
+  await expect(image).toHaveAttribute('src', '/api/assets/asset-resize-hires/file')
+})
+
 test('renders the initial card page before refreshing directory state', async ({ page }) => {
   const searchRequests: string[] = []
   let initialSearchCompleted = false
