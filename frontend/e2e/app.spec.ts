@@ -314,20 +314,37 @@ test('updates folder view tree before scoped responses arrive', async ({ page })
     has_descendant_whitelist: false,
     has_descendant_blacklist: false,
   }
+  const nestedMapDirectory = {
+    id: 3,
+    source_id: 'sample',
+    path: 'maps/sub',
+    name: 'sub',
+    depth: 2,
+    asset_count: 1,
+    matched_asset_count: 1,
+    included_asset_count: 1,
+    quality: 5,
+    quality_override: null,
+    selection_state: null,
+    selection_effective: true,
+    profile_dirty: false,
+    has_descendant_whitelist: false,
+    has_descendant_blacklist: false,
+  }
 
   await page.unroute('**/api/search?*')
   await page.unroute('**/api/search-with-directory-counts?*')
   await page.route('**/api/search?*', async (route) => {
     const url = new URL(route.request().url())
-    if (url.searchParams.get('view_directory') === 'maps') {
+    if (url.searchParams.get('view_directory') === 'maps/sub') {
       await scopedSearchCanFinish
     }
     await route.fulfill({ json: { total: 1, cards: [{ kind: 'asset', asset: sampleAsset }] } })
   })
   await page.route('**/api/search-with-directory-counts?*', async (route) => {
     const url = new URL(route.request().url())
-    const directories = [sampleRootDirectory(), sampleDirectory(), tokenDirectory]
-    if (url.searchParams.get('view_directory') === 'maps') {
+    const directories = [sampleRootDirectory(), sampleDirectory(), nestedMapDirectory, tokenDirectory]
+    if (url.searchParams.get('view_directory') === 'maps/sub') {
       await scopedDirectoryStateCanFinish
     }
     await route.fulfill({
@@ -342,6 +359,7 @@ test('updates folder view tree before scoped responses arrive', async ({ page })
   await page.goto('/')
   await expect(page.getByRole('button', { name: /castle\.png/i })).toBeVisible()
   await revealSampleFolder(page)
+  await expect(page.getByRole('group', { name: 'sub folder' })).toBeVisible()
   await expect(page.getByRole('group', { name: 'tokens folder' })).toBeVisible()
 
   const viewRequest = page.waitForRequest((request) => {
@@ -349,13 +367,15 @@ test('updates folder view tree before scoped responses arrive', async ({ page })
     return (
       url.pathname === '/api/search' &&
       url.searchParams.get('view_source_id') === 'sample' &&
-      url.searchParams.get('view_directory') === 'maps'
+      url.searchParams.get('view_directory') === 'maps/sub'
     )
   })
-  await page.getByRole('group', { name: 'maps folder' }).getByRole('button', { name: 'maps', exact: true }).click()
+  await page.getByRole('group', { name: 'sub folder' }).getByRole('button', { name: 'sub', exact: true }).click()
   await viewRequest
 
-  await expect(page.getByRole('group', { name: 'maps folder' })).toHaveClass(/view-folder/)
+  await expect(page.getByRole('group', { name: 'Sample Assets folder' })).toBeVisible()
+  await expect(page.getByRole('group', { name: 'maps folder' })).toBeVisible()
+  await expect(page.getByRole('group', { name: 'sub folder' })).toHaveClass(/view-folder/)
   await expect(page.getByRole('group', { name: 'tokens folder' })).toHaveCount(0)
 
   releaseScopedSearch()

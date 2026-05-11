@@ -120,6 +120,7 @@
   let profileSession = $state<SearchProfileSession | null>(null)
   let directories = $state<DirectoryNode[]>([])
   let activeDirectoryIds = $state<Set<number>>(new Set())
+  let activeDirectoryRevision = $state(0)
   let collapsedDirectories = $state<Set<string>>(new Set())
   let cards = $state<ResultCard[]>([])
   let expandedCollections = $state<Set<string>>(new Set())
@@ -189,7 +190,18 @@
       : ''
   )
   const resultLabel = $derived(`${resultTotal} ${resultTotal === 1 ? 'card' : 'cards'}`)
-  const activeDirectories = $derived(directories.filter((directory) => activeDirectoryIds.has(directory.id)))
+  const activeDirectories = $derived.by(() => {
+    activeDirectoryRevision
+    const ids = activeDirectoryIds
+    const view = viewDirectory
+    return directories.filter((directory) => {
+      if (!view) return ids.has(directory.id)
+      if (directory.source_id !== view.source_id) return false
+      const isViewAncestor = isDirectoryWithinPath(view.path, directory.path)
+      const isInsideView = isDirectoryWithinPath(directory.path, view.path)
+      return (isInsideView && ids.has(directory.id)) || isViewAncestor
+    })
+  })
   const visibleDirectories = $derived(activeDirectories.filter((directory) => isDirectoryVisible(directory)))
   const hoveredAssetAncestorKeys = $derived.by(() => {
     const asset = hoverPreviewAsset
@@ -407,7 +419,7 @@
       if (Array.isArray(body.directories)) {
         const nextDirectories = body.directories as DirectoryNode[]
         replaceDirectories(nextDirectories)
-        activeDirectoryIds = new Set(nextDirectories.map((directory) => directory.id))
+        setActiveDirectoryIds(new Set(nextDirectories.map((directory) => directory.id)))
         if (!hasInitializedFolderCollapse) {
           collapsedDirectories = initiallyCollapsedDirectoryKeys(nextDirectories)
           hasInitializedFolderCollapse = true
@@ -416,7 +428,7 @@
         const nextStates = body.directory_states as DirectoryState[]
         directories = mergeDirectoryStates(directories, nextStates)
         refreshSelectionRuleKeys()
-        activeDirectoryIds = new Set(nextStates.map((state) => state[0]))
+        setActiveDirectoryIds(new Set(nextStates.map((state) => state[0])))
       }
     } catch (caught) {
       if (!isAbortError(caught) && currentRequest === directoryRequestId) showError('Folder state failed')
@@ -820,6 +832,11 @@
     directoriesByKey = new Map(directories.map((directory) => [directoryKey(directory), directory]))
   }
 
+  function setActiveDirectoryIds(ids: Set<number>) {
+    activeDirectoryIds = ids
+    activeDirectoryRevision += 1
+  }
+
   function refreshSelectionRuleKeys() {
     const whitelist = new Set<string>()
     const blacklist = new Set<string>()
@@ -988,7 +1005,7 @@
       ? null
       : { source_id: directory.source_id, path: directory.path }
     viewDirectory = nextView
-    activeDirectoryIds = activeDirectoryIdsForView(nextView)
+    setActiveDirectoryIds(activeDirectoryIdsForView(nextView))
   }
 
   function activeDirectoryIdsForView(view: Pick<DirectoryNode, 'source_id' | 'path'> | null) {
@@ -997,7 +1014,8 @@
       directories
         .filter(
           (directory) =>
-            directory.source_id === view.source_id && isDirectoryWithinPath(directory.path, view.path)
+            directory.source_id === view.source_id &&
+            (isDirectoryWithinPath(directory.path, view.path) || isDirectoryWithinPath(view.path, directory.path))
         )
         .map((directory) => directory.id)
     )
