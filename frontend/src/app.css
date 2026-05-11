@@ -239,7 +239,7 @@ a:focus-visible {
   min-height: 0;
   overflow: auto;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(var(--asset-card-min-width, 136px), 1fr));
+  grid-template-columns: repeat(var(--asset-grid-columns, 6), minmax(0, 1fr));
   gap: 10px;
   align-content: start;
   align-items: start;
@@ -261,7 +261,7 @@ a:focus-visible {
 }
 
 .asset-tile {
-  grid-template-rows: 126px auto auto;
+  grid-template-rows: auto auto auto;
 }
 
 .asset-card {
@@ -272,7 +272,7 @@ a:focus-visible {
 .asset-card-main {
   min-width: 0;
   display: grid;
-  grid-template-rows: 126px auto auto;
+  grid-template-rows: auto auto auto;
   gap: 6px;
   padding: 0;
   border: 0;
@@ -421,6 +421,8 @@ a:focus-visible {
 
 .tile-thumb {
   position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
   min-width: 0;
   min-height: 0;
   display: grid;

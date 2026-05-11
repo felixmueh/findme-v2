@@ -152,6 +152,12 @@ async function gridColumnCount(page: Page) {
   })
 }
 
+async function tileThumbSize(page: Page) {
+  const box = await page.locator('.tile-thumb').first().boundingBox()
+  if (!box) throw new Error('tile thumb is missing')
+  return box
+}
+
 async function disableAutomaticInfiniteScroll(page: Page) {
   await page.addInitScript(() => {
     class ManualIntersectionObserver {
@@ -270,12 +276,27 @@ test('changes the number of visible grid columns from the toolbar', async ({ pag
   await expect(page.getByRole('button', { name: /castle\.png/i })).toBeVisible()
 
   const initialColumns = await gridColumnCount(page)
+  await expect(page.getByLabel(`${initialColumns} cards per row`)).toBeVisible()
+  await expect(page.locator('.grid-width-controls')).not.toContainText('px')
+  const initialThumb = await tileThumbSize(page)
+  expect(Math.abs(initialThumb.width - initialThumb.height)).toBeLessThanOrEqual(1)
 
   await page.getByRole('button', { name: 'Show more cards in grid' }).click()
-  await expect.poll(() => gridColumnCount(page)).toBeGreaterThan(initialColumns)
+  await expect.poll(() => gridColumnCount(page)).toBe(initialColumns + 1)
+  await expect(page.getByLabel(`${initialColumns + 1} cards per row`)).toBeVisible()
+  const denserThumb = await tileThumbSize(page)
+  expect(denserThumb.width).toBeLessThan(initialThumb.width)
+  expect(Math.abs(denserThumb.width - denserThumb.height)).toBeLessThanOrEqual(1)
 
   await page.getByRole('button', { name: 'Show fewer cards in grid' }).click()
   await expect.poll(() => gridColumnCount(page)).toBe(initialColumns)
+
+  for (let index = 1; index < initialColumns; index += 1) {
+    await page.getByRole('button', { name: 'Show fewer cards in grid' }).click()
+  }
+  await expect.poll(() => gridColumnCount(page)).toBe(1)
+  await expect(page.getByLabel('1 card per row')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Show fewer cards in grid' })).toBeDisabled()
 })
 
 test('renders the initial card page before refreshing directory state', async ({ page }) => {

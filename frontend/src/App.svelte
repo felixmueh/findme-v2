@@ -166,15 +166,15 @@
   let viewDirectory = $state<Pick<DirectoryNode, 'source_id' | 'path'> | null>(null)
 
   const pageSize = 100
-  const gridCardMinWidthMin = 104
-  const gridCardMinWidthMax = 216
-  const gridCardMinWidthStep = 16
-  const gridCardMinWidthStorageKey = 'findme.gridCardMinWidth'
+  const gridCardsPerRowMin = 1
+  const gridCardsPerRowMax = 12
+  const gridCardsPerRowDefault = 6
+  const gridCardsPerRowStorageKey = 'findme.gridCardsPerRow'
   const searchSessionId =
     typeof crypto !== 'undefined' && 'randomUUID' in crypto
       ? crypto.randomUUID()
       : `${Date.now()}-${Math.random()}`
-  let gridCardMinWidth = $state(initialGridCardMinWidth())
+  let gridCardsPerRow = $state(initialGridCardsPerRow())
 
   const selectedAssetId = $derived(selected?.asset.asset_id ?? '')
   const selectedDirectoryKey = $derived(
@@ -194,7 +194,10 @@
       : ''
   )
   const resultLabel = $derived(`${resultTotal} ${resultTotal === 1 ? 'card' : 'cards'}`)
-  const gridWidthStyle = $derived(`--asset-card-min-width: ${gridCardMinWidth}px`)
+  const gridWidthStyle = $derived(`--asset-grid-columns: ${gridCardsPerRow}`)
+  const gridCardsPerRowLabel = $derived(
+    `${gridCardsPerRow} ${gridCardsPerRow === 1 ? 'card' : 'cards'} per row`
+  )
   const activeDirectories = $derived.by(() => {
     activeDirectoryRevision
     const ids = activeDirectoryIds
@@ -303,31 +306,31 @@
     searchMode = mode
   }
 
-  function initialGridCardMinWidth() {
-    if (typeof window === 'undefined') return 136
-    const savedValue = window.localStorage.getItem(gridCardMinWidthStorageKey)
-    if (savedValue === null) return 136
+  function initialGridCardsPerRow() {
+    if (typeof window === 'undefined') return gridCardsPerRowDefault
+    const savedValue = window.localStorage.getItem(gridCardsPerRowStorageKey)
+    if (savedValue === null) return gridCardsPerRowDefault
     const saved = Number(savedValue)
-    return clampGridCardMinWidth(Number.isFinite(saved) ? saved : 136)
+    return clampGridCardsPerRow(Number.isFinite(saved) ? saved : gridCardsPerRowDefault)
   }
 
-  function clampGridCardMinWidth(value: number) {
-    return Math.min(gridCardMinWidthMax, Math.max(gridCardMinWidthMin, value))
+  function clampGridCardsPerRow(value: number) {
+    return Math.min(gridCardsPerRowMax, Math.max(gridCardsPerRowMin, Math.round(value)))
   }
 
-  function setGridCardMinWidth(value: number) {
-    const nextWidth = clampGridCardMinWidth(value)
-    if (nextWidth === gridCardMinWidth) return
-    gridCardMinWidth = nextWidth
-    window.localStorage.setItem(gridCardMinWidthStorageKey, String(nextWidth))
+  function setGridCardsPerRow(value: number) {
+    const nextCount = clampGridCardsPerRow(value)
+    if (nextCount === gridCardsPerRow) return
+    gridCardsPerRow = nextCount
+    window.localStorage.setItem(gridCardsPerRowStorageKey, String(nextCount))
   }
 
   function showMoreGridCards() {
-    setGridCardMinWidth(gridCardMinWidth - gridCardMinWidthStep)
+    setGridCardsPerRow(gridCardsPerRow + 1)
   }
 
   function showFewerGridCards() {
-    setGridCardMinWidth(gridCardMinWidth + gridCardMinWidthStep)
+    setGridCardsPerRow(gridCardsPerRow - 1)
   }
 
   async function loadAssets(revision = searchRevision) {
@@ -1391,17 +1394,17 @@
         aria-label="Show fewer cards in grid"
         title="Show fewer cards"
         onclick={showFewerGridCards}
-        disabled={gridCardMinWidth >= gridCardMinWidthMax}
+        disabled={gridCardsPerRow <= gridCardsPerRowMin}
       >
         <Minus size={15} />
       </button>
-      <span>{gridCardMinWidth}px</span>
+      <span aria-label={gridCardsPerRowLabel}>{gridCardsPerRow} / row</span>
       <button
         type="button"
         aria-label="Show more cards in grid"
         title="Show more cards"
         onclick={showMoreGridCards}
-        disabled={gridCardMinWidth <= gridCardMinWidthMin}
+        disabled={gridCardsPerRow >= gridCardsPerRowMax}
       >
         <Plus size={15} />
       </button>
