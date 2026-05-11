@@ -364,6 +364,64 @@ class SearchIndex:
         ):
             yield asset.asset_index
 
+    def browse_asset_index_array(
+        self,
+        *,
+        source_id: str | None = None,
+        directory: str | None = None,
+        directory_prefix: str | None = None,
+        preferences: SearchPreferences | None = None,
+        control: SearchControl | None = None,
+    ) -> np.ndarray:
+        preferences = preferences or empty_search_preferences(self.assets)
+        if control and control.is_cancelled():
+            raise SearchSuperseded
+
+        if source_id is None and directory is None and directory_prefix is None:
+            if preferences.included_asset_index_order is not None:
+                return np.fromiter(
+                    preferences.included_asset_index_order,
+                    dtype=np.int32,
+                    count=len(preferences.included_asset_index_order),
+                )
+            return np.arange(len(self.assets), dtype=np.int32)
+
+        if source_id is not None and directory is None:
+            indexes = np.fromiter(
+                self.directory_subtree_asset_indexes.get(
+                    (source_id, directory_prefix or ""),
+                    (),
+                ),
+                dtype=np.int32,
+            )
+        elif source_id is not None and directory is not None:
+            directory_id = self.directory_runtime.id_by_key.get((source_id, directory))
+            indexes = (
+                np.empty(0, dtype=np.int32)
+                if directory_id is None
+                else np.flatnonzero(self.asset_directory_ids == directory_id).astype(
+                    np.int32,
+                    copy=False,
+                )
+            )
+        else:
+            indexes = np.fromiter(
+                self.browse_asset_indexes(
+                    source_id=source_id,
+                    directory=directory,
+                    directory_prefix=directory_prefix,
+                    preferences=empty_search_preferences(self.assets),
+                    control=control,
+                ),
+                dtype=np.int32,
+            )
+
+        if preferences.included_asset_mask is not None:
+            indexes = indexes[preferences.included_asset_mask[indexes]]
+        if control and control.is_cancelled():
+            raise SearchSuperseded
+        return indexes
+
     def compile_preferences(
         self,
         *,
@@ -633,26 +691,12 @@ class SearchIndex:
         preferences: SearchPreferences,
         control: SearchControl | None = None,
     ) -> np.ndarray:
-        if source_id is not None and directory is None:
-            indexes = np.fromiter(
-                self.directory_subtree_asset_indexes.get(
-                    (source_id, directory_prefix or ""),
-                    (),
-                ),
-                dtype=np.int32,
-            )
-            if preferences.included_asset_mask is not None:
-                indexes = indexes[preferences.included_asset_mask[indexes]]
-            return indexes
-        return np.fromiter(
-            self.browse_asset_indexes(
-                source_id=source_id,
-                directory=directory,
-                directory_prefix=directory_prefix,
-                preferences=preferences,
-                control=control,
-            ),
-            dtype=np.int32,
+        return self.browse_asset_index_array(
+            source_id=source_id,
+            directory=directory,
+            directory_prefix=directory_prefix,
+            preferences=preferences,
+            control=control,
         )
 
     def directory_responses_for_search(

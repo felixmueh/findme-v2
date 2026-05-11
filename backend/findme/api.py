@@ -181,14 +181,14 @@ def create_app(
                 card_counts_by_directory,
             )
             if total is not None:
-                return card_resolver.page_for_asset_indexes(
-                    preferences.included_asset_index_order,
+                return card_resolver.page_for_asset_index_array(
+                    search_index.browse_asset_index_array(preferences=preferences),
                     offset=offset,
                     limit=limit,
                     total=total,
                 )
-        return card_resolver.page_for_asset_indexes(
-            search_index.browse_asset_indexes(
+        return card_resolver.page_for_asset_index_array(
+            search_index.browse_asset_index_array(
                 source_id=source_id,
                 directory=directory,
                 directory_prefix=directory_prefix,

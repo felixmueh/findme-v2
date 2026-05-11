@@ -1453,6 +1453,54 @@ def test_api_view_scope_ignores_sibling_whitelist_and_keeps_descendant_rules(
     assert scoped_search_body["total"] == 0
 
 
+def test_api_view_scope_browse_uses_numeric_asset_indexes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source_root = tmp_path / "assets"
+    write_image(source_root / "Maps" / "Goblin.png")
+    write_image(source_root / "Maps" / "Goblin2.png")
+    write_image(source_root / "Maps" / "Orc.png")
+    write_image(source_root / "Tokens" / "Goblin.png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+    rebuild_search_corpus(config, db_path)
+
+    def fail_browse_asset_indexes(*_args, **_kwargs):
+        raise AssertionError("folder view browse should use numeric asset indexes")
+
+    monkeypatch.setattr(SearchIndex, "browse_asset_indexes", fail_browse_asset_indexes)
+    client = TestClient(create_app(config, db_path))
+
+    body = client.get(
+        "/api/search-with-directory-counts",
+        params={
+            "view_source_id": "dnd",
+            "view_directory": "Maps",
+        },
+    ).json()
+
+    assert body["total"] == 2
+    assert [_card_asset(card)["relative_path"] for card in body["cards"]] == [
+        "Maps/Goblin.png",
+        "Maps/Orc.png",
+    ]
+
+
 def test_api_search_uses_startup_search_index_until_app_restart(tmp_path: Path) -> None:
     source_root = tmp_path / "assets"
     source_root.mkdir()

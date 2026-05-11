@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from hashlib import blake2b
 from typing import Any
 
+import numpy as np
+
 
 AssetResponse = dict[str, Any]
 ResultCard = dict[str, Any]
@@ -33,6 +35,7 @@ class ResultCardResolver:
     by_asset_index: tuple[_GroupedAsset, ...]
     collection_counts: dict[str, int]
     has_variant_asset: dict[str, bool]
+    card_index_by_asset_index: np.ndarray
     browse_cards: tuple[ResultCard, ...] = ()
 
     @classmethod
@@ -70,18 +73,27 @@ class ResultCardResolver:
             ),
             collection_counts=collection_counts,
             has_variant_asset=has_variant_asset,
+            card_index_by_asset_index=np.empty(0, dtype=np.int32),
         )
-        browse_cards, _total = resolver.page_for(
-            ordered_assets,
-            offset=0,
-            limit=None,
-        )
+        browse_cards: list[ResultCard] = []
+        card_index_by_key: dict[str, int] = {}
+        asset_card_indexes = np.empty(len(ordered_assets), dtype=np.int32)
+        for asset_index in range(len(ordered_assets)):
+            grouped = resolver.by_asset_index[asset_index]
+            card_key = resolver.card_key_for_asset_index(asset_index)
+            card_index = card_index_by_key.get(card_key)
+            if card_index is None:
+                card_index = len(browse_cards)
+                card_index_by_key[card_key] = card_index
+                browse_cards.append(resolver._card_for_grouped_asset(grouped))
+            asset_card_indexes[asset_index] = card_index
         return cls(
             by_collection=resolver.by_collection,
             by_asset_id=resolver.by_asset_id,
             by_asset_index=resolver.by_asset_index,
             collection_counts=resolver.collection_counts,
             has_variant_asset=resolver.has_variant_asset,
+            card_index_by_asset_index=asset_card_indexes,
             browse_cards=tuple(browse_cards),
         )
 
@@ -120,6 +132,26 @@ class ResultCardResolver:
             offset=offset,
             limit=limit,
             total=total,
+        )
+
+    def page_for_asset_index_array(
+        self,
+        asset_indexes: np.ndarray,
+        *,
+        offset: int,
+        limit: int | None,
+        total: int | None = None,
+    ) -> tuple[list[ResultCard], int]:
+        if len(asset_indexes) == 0:
+            return [], 0 if total is None else total
+        card_indexes = self.card_index_by_asset_index[asset_indexes]
+        unique_positions = np.unique(card_indexes, return_index=True)[1]
+        ordered_card_indexes = card_indexes[np.sort(unique_positions)]
+        end = None if limit is None else offset + limit
+        page_card_indexes = ordered_card_indexes[offset:end]
+        return (
+            [self.browse_cards[int(card_index)] for card_index in page_card_indexes],
+            len(ordered_card_indexes) if total is None else total,
         )
 
     def _page_for_grouped_assets(
@@ -176,6 +208,24 @@ class ResultCardResolver:
         ):
             return f"asset:{grouped.asset['asset_id']}"
         return f"collection:{grouped.collection_key}"
+
+    def _card_for_grouped_asset(self, grouped: _GroupedAsset) -> ResultCard:
+        if (
+            self.collection_counts[grouped.collection_key] < 2
+            or not self.has_variant_asset[grouped.collection_key]
+        ):
+            return {"kind": "asset", "asset": grouped.asset}
+        variants = self.by_collection[grouped.collection_key]
+        representative = grouped
+        if float(grouped.asset.get("score", 0)) == 0:
+            representative = variants[0]
+        return {
+            "kind": "collection",
+            "collection_key": _public_collection_key(grouped.collection_key),
+            "representative": representative.asset,
+            "variants": [item.asset for item in variants],
+            "count": len(variants),
+        }
 
     def _grouped_for_asset(self, asset: AssetResponse) -> _GroupedAsset:
         cached = self.by_asset_id.get(str(asset["asset_id"]))
