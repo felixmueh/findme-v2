@@ -56,6 +56,17 @@ def run(argv: list[str]) -> int:
                 if args.thumbnail_workers is not None
                 else config.thumbnail_workers
             )
+            source_ids = frozenset(args.source) if args.source is not None else None
+            if source_ids is not None:
+                configured_sources = {source.id for source in config.sources}
+                unknown_sources = sorted(source_ids - configured_sources)
+                if unknown_sources:
+                    print(
+                        "unknown source id(s): "
+                        + ", ".join(unknown_sources),
+                        file=sys.stderr,
+                    )
+                    return 2
             thumbnail_worker_timeout_seconds = args.thumbnail_worker_timeout_seconds
             if thumbnail_worker_timeout_seconds is not None:
                 if thumbnail_worker_timeout_seconds < 0:
@@ -74,7 +85,11 @@ def run(argv: list[str]) -> int:
                 shutil.rmtree(config.data_root / "cache" / "thumbs", ignore_errors=True)
             logger = _IndexLogger(stream=sys.stdout, verbosity=args.verbose)
             logger.log("counting indexable files started")
-            total_files = count_indexable_files(config, progress=logger.event)
+            total_files = count_indexable_files(
+                config,
+                source_ids=source_ids,
+                progress=logger.event,
+            )
             logger = _IndexLogger(
                 stream=sys.stdout,
                 total_files=total_files,
@@ -98,6 +113,7 @@ def run(argv: list[str]) -> int:
                 summary = index_sources(
                     db,
                     config,
+                    source_ids=source_ids,
                     thumbnail_workers=thumbnail_workers,
                     retry_failed_thumbnails=args.retry_failed_thumbnails,
                     thumbnail_worker_timeout_seconds=thumbnail_worker_timeout_seconds,
@@ -265,6 +281,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default=0,
         help="increase index logging verbosity; -v logs each file queued and completed",
     )
+    index.add_argument(
+        "--source",
+        action="append",
+        dest="source",
+        help="limit index run to one or more source ids",
+    )
 
     rebuild_search = subparsers.add_parser(
         "rebuild-search-corpus",
@@ -374,6 +396,12 @@ class _IndexLogger:
             if event.kind == "thumbnail-timeout":
                 self.log(
                     "index thumbnail timeout: "
+                    f"source={event.source_id} "
+                    f"{event.message}"
+                )
+            if event.kind == "source-assets-loaded":
+                self.log(
+                    "index source assets loaded: "
                     f"source={event.source_id} "
                     f"{event.message}"
                 )
@@ -502,6 +530,12 @@ class _IndexLogger:
             elif event.kind == "stale-mark-complete":
                 self.log(
                     "index stale mark complete: "
+                    f"source={event.source_id} "
+                    f"{event.message}"
+                )
+            elif event.kind == "upsert-batch":
+                self.log(
+                    "index upsert batch: "
                     f"source={event.source_id} "
                     f"{event.message}"
                 )

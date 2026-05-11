@@ -72,6 +72,46 @@ def test_count_indexable_files_matches_indexed_media_scope(tmp_path: Path) -> No
     assert count_indexable_files(config) == 2
 
 
+def test_count_and_index_source_ids_filter_only_target_source(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    (source_root / "tokens").mkdir(parents=True)
+    (source_root / "maps").mkdir(parents=True)
+    write_image(source_root / "tokens" / "Goblin.png")
+    write_image(source_root / "maps" / "Dragon.jpg")
+
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="tokens",
+                display_name="Tokens",
+                root=source_root / "tokens",
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+            SourceConfig(
+                id="maps",
+                display_name="Maps",
+                root=source_root / "maps",
+                priority=5,
+                media_extensions=frozenset({".jpg"}),
+            ),
+        ),
+    )
+
+    assert count_indexable_files(config, source_ids=frozenset({"maps"})) == 1
+
+    with connect(tmp_path / "findme.sqlite3") as db:
+        initialize_database(db)
+        summary = index_sources(db, config, source_ids=frozenset({"maps"}))
+        rows = db.execute("SELECT source_id FROM assets").fetchall()
+
+    assert summary.scanned_files == 1
+    assert summary.upserted_assets == 1
+    assert len(rows) == 1
+    assert rows[0]["source_id"] == "maps"
+
+
 def test_index_sources_marks_missing_assets_stale(tmp_path: Path) -> None:
     source_root = tmp_path / "assets"
     source_root.mkdir()

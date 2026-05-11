@@ -278,6 +278,74 @@ media_extensions = [".png"]
     assert "thumbnail failed: dnd:broken.png" in captured.err
 
 
+def test_cli_index_source_filter_runs_selected_source_only(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    token_dir = source_root / "tokens"
+    map_dir = source_root / "maps"
+    token_dir.mkdir(parents=True)
+    map_dir.mkdir(parents=True)
+
+    write_image(token_dir / "goblin.png")
+    write_image(map_dir / "cave.png")
+
+    config_path = tmp_path / "findme.toml"
+    data_root = tmp_path / "data"
+    config_path.write_text(
+        f"""
+[app]
+data_root = "{data_root}"
+
+[[sources]]
+id = "tokens"
+display_name = "Tokens"
+root = "{token_dir}"
+priority = 10
+media_extensions = [".png"]
+
+[[sources]]
+id = "maps"
+display_name = "Maps"
+root = "{map_dir}"
+priority = 8
+media_extensions = [".png"]
+""",
+        encoding="utf-8",
+    )
+
+    assert run(["index", "--config", str(config_path), "--source", "maps"]) == 0
+
+    with connect(data_root / "findme.sqlite3") as db:
+        rows = db.execute("SELECT source_id FROM assets").fetchall()
+
+    assert len(rows) == 1
+    assert rows[0]["source_id"] == "maps"
+
+
+def test_cli_index_unknown_source_is_error(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    write_image(source_root / "goblin.png")
+
+    config_path = tmp_path / "findme.toml"
+    data_root = tmp_path / "data"
+    config_path.write_text(
+        f"""
+[app]
+data_root = "{data_root}"
+
+[[sources]]
+id = "tokens"
+display_name = "Tokens"
+root = "{source_root}"
+priority = 10
+media_extensions = [".png"]
+""",
+        encoding="utf-8",
+    )
+
+    assert run(["index", "--config", str(config_path), "--source", "missing"]) == 2
+
+
 def test_cli_index_accepts_thumbnail_worker_timeout_arg(tmp_path: Path) -> None:
     source_root = tmp_path / "assets"
     source_root.mkdir()

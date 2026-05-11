@@ -19,6 +19,7 @@ from findme.thumbnails import (
     generate_video_poster,
 )
 
+UPSERT_BATCH_SIZE = 512
 
 IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif"})
 VIDEO_EXTENSIONS = frozenset({".webm", ".mp4"})
@@ -99,14 +100,18 @@ class PreparedAsset:
 @dataclass(frozen=True)
 class CurrentAsset:
     media_type: str
+    size_bytes: int
+    mtime_ns: int
     thumbnail_path: Path | None
-    thumbnail: ThumbnailResult | None
+    thumbnail_width: int | None
+    thumbnail_height: int | None
 
 
 def index_sources(
     db: sqlite3.Connection,
     config: AppConfig,
     *,
+    source_ids: frozenset[str] | None = None,
     thumbnail_workers: int | None = None,
     retry_failed_thumbnails: bool = False,
     thumbnail_worker_timeout_seconds: float | None = None,
@@ -125,7 +130,12 @@ def index_sources(
     ):
         thumbnail_worker_timeout_seconds = None
 
-    for source in config.sources:
+    for source in _filter_sources(config.sources, source_ids):
+        source_assets = _load_source_assets(
+            db,
+            source,
+            progress=progress,
+        )
         source_scan_started = time.monotonic()
         db.execute(
             """
@@ -148,10 +158,12 @@ def index_sources(
                     message=f"seen={len(seen_paths)}",
                 )
             )
+        upsert_batch: list[PreparedAsset] = []
         for prepared in _prepare_assets(
             db,
             config,
             source,
+            source_assets=source_assets,
             max_workers=worker_count,
             retry_failed_thumbnails=retry_failed_thumbnails,
             thumbnail_worker_timeout_seconds=thumbnail_worker_timeout_seconds,
@@ -160,7 +172,14 @@ def index_sources(
             seen_paths.add(prepared.pending.relative_path)
             scanned += 1
             if prepared.upsert_required:
-                upserted += _upsert_asset(db, prepared)
+                upsert_batch.append(prepared)
+                if len(upsert_batch) >= UPSERT_BATCH_SIZE:
+                    upserted += _upsert_assets(
+                        db,
+                        upsert_batch,
+                        progress=progress,
+                    )
+                    upsert_batch = []
             if prepared.thumbnail is not None and prepared.thumbnail.generated:
                 thumbnails += 1
             if prepared.thumbnail_failure is not None:
@@ -183,6 +202,12 @@ def index_sources(
                     )
                 )
 
+        if upsert_batch:
+            upserted += _upsert_assets(
+                db,
+                upsert_batch,
+                progress=progress,
+            )
         if progress is not None:
             progress(
                 IndexEvent(
@@ -234,11 +259,12 @@ def index_sources(
 def count_indexable_files(
     config: AppConfig,
     *,
+    source_ids: frozenset[str] | None = None,
     progress: ProgressReporter | None = None,
     log_interval: int = 50_000,
 ) -> int:
     total = 0
-    for source in config.sources:
+    for source in _filter_sources(config.sources, source_ids):
         if progress is not None:
             progress(
                 IndexEvent(
@@ -270,6 +296,18 @@ def count_indexable_files(
     return total
 
 
+def _filter_sources(
+    sources: tuple[SourceConfig, ...],
+    source_ids: frozenset[str] | None,
+) -> tuple[SourceConfig, ...]:
+    if source_ids is None:
+        return sources
+    selected_sources = [
+        source for source in sources if source.id in source_ids
+    ]
+    return tuple(selected_sources)
+
+
 def _iter_source_files(source: SourceConfig) -> Iterator[Path]:
     extensions = source.media_extensions
     for dirpath, dirnames, filenames in os.walk(source.root, topdown=True):
@@ -287,6 +325,7 @@ def _prepare_assets(
     config: AppConfig,
     source: SourceConfig,
     *,
+    source_assets: dict[str, CurrentAsset],
     max_workers: int,
     retry_failed_thumbnails: bool = False,
     thumbnail_worker_timeout_seconds: float | None = None,
@@ -494,38 +533,53 @@ def _prepare_assets(
                         relative_path=file_path.as_posix(),
                         message=f"seen={scan_count} in_flight={len(in_flight)}",
                     )
-                )
+            )
             pending = _pending_asset(source, file_path)
-            current = _current_asset(db, pending)
+            current = source_assets.get(pending.relative_path)
             if current is not None and (
                 current.media_type == pending.media_type
-                and (
-                    current.thumbnail is not None
-                    or (current.thumbnail_path is None and not retry_failed_thumbnails)
-                    or not _needs_thumbnail(pending)
-                )
+                and current.size_bytes == pending.size_bytes
+                and current.mtime_ns == pending.mtime_ns
             ):
-                if current.thumbnail is not None:
-                    skip_reason = "cached-thumbnail"
-                elif not _needs_thumbnail(pending):
-                    skip_reason = "media-type-no-thumbnail"
-                else:
-                    skip_reason = "failed-thumbnail-skipped"
-                if progress is not None:
-                    progress(
-                        IndexEvent(
-                            kind="file-skip",
-                            source_id=source.id,
-                            relative_path=pending.relative_path,
-                            message=skip_reason,
-                        )
-                    )
-                yield PreparedAsset(
-                    pending=pending,
-                    thumbnail=current.thumbnail,
-                    upsert_required=False,
+                needs_thumbnail = _needs_thumbnail(pending)
+                has_cached_thumbnail = (
+                    current.thumbnail_path is not None
+                    and current.thumbnail_path.is_file()
                 )
-                continue
+                if needs_thumbnail and has_cached_thumbnail:
+                    skip_reason = "cached-thumbnail"
+                    thumbnail = ThumbnailResult(
+                        path=current.thumbnail_path,
+                        width=current.thumbnail_width,
+                        height=current.thumbnail_height,
+                        generated=False,
+                    )
+                elif needs_thumbnail and current.thumbnail_path is None and not retry_failed_thumbnails:
+                    skip_reason = "failed-thumbnail-skipped"
+                    thumbnail = None
+                elif not needs_thumbnail:
+                    skip_reason = "media-type-no-thumbnail"
+                    thumbnail = None
+                else:
+                    skip_reason = None
+                    thumbnail = None
+
+                if skip_reason is not None:
+                    if progress is not None:
+                        progress(
+                            IndexEvent(
+                                kind="file-skip",
+                                source_id=source.id,
+                                relative_path=pending.relative_path,
+                                message=skip_reason,
+                            )
+                        )
+                    yield PreparedAsset(
+                        pending=pending,
+                        thumbnail=thumbnail,
+                        upsert_required=False,
+                    )
+                    continue
 
             if progress is not None:
                 progress(
@@ -662,68 +716,65 @@ def _prepare_asset(
         )
 
 
-def _current_asset(
+def _load_source_assets(
     db: sqlite3.Connection,
-    pending: PendingAsset,
-) -> CurrentAsset | None:
-    row = db.execute(
+    source: SourceConfig,
+    *,
+    progress: ProgressReporter | None = None,
+) -> dict[str, CurrentAsset]:
+    started = time.monotonic()
+    rows = db.execute(
         """
-        SELECT media_type, thumbnail_path, thumbnail_width, thumbnail_height
+        SELECT
+          relative_path,
+          size_bytes,
+          mtime_ns,
+          media_type,
+          thumbnail_path,
+          thumbnail_width,
+          thumbnail_height
         FROM assets
-        WHERE source_id = ?
-          AND relative_path = ?
-          AND size_bytes = ?
-          AND mtime_ns = ?
-          AND stale = 0
+        WHERE source_id = ? AND stale = 0
         """,
-        (
-            pending.source.id,
-            pending.relative_path,
-            pending.size_bytes,
-            pending.mtime_ns,
-        ),
-    ).fetchone()
-    if row is None:
-        return None
-    thumbnail_path = Path(row["thumbnail_path"]) if row["thumbnail_path"] is not None else None
-    thumbnail = None
-    if thumbnail_path is not None:
-        if thumbnail_path.is_file():
-            thumbnail = ThumbnailResult(
-                thumbnail_path,
-                row["thumbnail_width"],
-                row["thumbnail_height"],
-                generated=False,
+        (source.id,),
+    ).fetchall()
+    source_assets: dict[str, CurrentAsset] = {}
+    for row in rows:
+        thumbnail_path = (
+            Path(row["thumbnail_path"]) if row["thumbnail_path"] is not None else None
+        )
+        source_assets[row["relative_path"]] = CurrentAsset(
+            media_type=row["media_type"],
+            size_bytes=row["size_bytes"],
+            mtime_ns=row["mtime_ns"],
+            thumbnail_path=thumbnail_path,
+            thumbnail_width=row["thumbnail_width"],
+            thumbnail_height=row["thumbnail_height"],
+        )
+    if progress is not None:
+        progress(
+            IndexEvent(
+                kind="source-assets-loaded",
+                source_id=source.id,
+                message=(
+                    f"count={len(source_assets)} "
+                    f"elapsed={time.monotonic() - started:.3f}s"
+                ),
             )
-    return CurrentAsset(
-        media_type=row["media_type"],
-        thumbnail_path=thumbnail_path,
-        thumbnail=thumbnail,
-    )
+        )
+    return source_assets
 
 
-def _needs_thumbnail(pending: PendingAsset) -> bool:
-    if pending.media_type == "video":
-        return True
-    if pending.media_type == "image":
-        return True
-    return False
-
-
-def _thumbnail_status(prepared: PreparedAsset) -> str:
-    if prepared.thumbnail_failure is not None:
-        return "failed"
-    if prepared.thumbnail is None:
-        return "none"
-    if prepared.thumbnail.generated:
-        return "generated"
-    return "cached"
-
-
-def _upsert_asset(db: sqlite3.Connection, prepared: PreparedAsset) -> int:
-    pending = prepared.pending
-    thumbnail = prepared.thumbnail
-    db.execute(
+def _upsert_assets(
+    db: sqlite3.Connection,
+    prepared_assets: list[PreparedAsset],
+    *,
+    progress: ProgressReporter | None = None,
+) -> int:
+    if not prepared_assets:
+        return 0
+    started = time.monotonic()
+    db.executemany(
         """
         INSERT INTO assets(
           asset_id, source_id, relative_path, absolute_path, filename, stem,
@@ -747,39 +798,74 @@ def _upsert_asset(db: sqlite3.Connection, prepared: PreparedAsset) -> int:
           stale = 0,
           indexed_at = CURRENT_TIMESTAMP
         """,
-        (
-            pending.asset_id,
-            pending.source.id,
-            pending.relative_path,
-            str(pending.file_path),
-            pending.file_path.name,
-            pending.file_path.stem,
-            pending.extension,
-            pending.directory,
-            pending.size_bytes,
-            pending.mtime_ns,
-            pending.media_type,
-            str(thumbnail.path) if thumbnail else None,
-            thumbnail.width if thumbnail else None,
-            thumbnail.height if thumbnail else None,
-        ),
+        [
+            (
+                prepared.pending.asset_id,
+                prepared.pending.source.id,
+                prepared.pending.relative_path,
+                str(prepared.pending.file_path),
+                prepared.pending.file_path.name,
+                prepared.pending.file_path.stem,
+                prepared.pending.extension,
+                prepared.pending.directory,
+                prepared.pending.size_bytes,
+                prepared.pending.mtime_ns,
+                prepared.pending.media_type,
+                str(prepared.thumbnail.path) if prepared.thumbnail else None,
+                prepared.thumbnail.width if prepared.thumbnail else None,
+                prepared.thumbnail.height if prepared.thumbnail else None,
+            )
+            for prepared in prepared_assets
+        ],
     )
-    db.execute("DELETE FROM asset_search WHERE asset_id = ?", (pending.asset_id,))
-    db.execute(
+    db.executemany(
+        "DELETE FROM asset_search WHERE asset_id = ?",
+        [(prepared.pending.asset_id,) for prepared in prepared_assets],
+    )
+    db.executemany(
         """
         INSERT INTO asset_search(asset_id, source_id, filename, stem, directory, relative_path)
         VALUES (?, ?, ?, ?, ?, ?)
         """,
-        (
-            pending.asset_id,
-            pending.source.id,
-            pending.file_path.name,
-            pending.file_path.stem,
-            pending.directory,
-            pending.relative_path,
-        ),
+        [
+            (
+                prepared.pending.asset_id,
+                prepared.pending.source.id,
+                prepared.pending.file_path.name,
+                prepared.pending.file_path.stem,
+                prepared.pending.directory,
+                prepared.pending.relative_path,
+            )
+            for prepared in prepared_assets
+        ],
     )
-    return 1
+    if progress is not None:
+        progress(
+            IndexEvent(
+                kind="upsert-batch",
+                source_id=prepared_assets[0].pending.source.id,
+                message=f"batch={len(prepared_assets)} elapsed={time.monotonic()-started:.3f}s",
+            )
+        )
+    return len(prepared_assets)
+
+
+def _needs_thumbnail(pending: PendingAsset) -> bool:
+    if pending.media_type == "video":
+        return True
+    if pending.media_type == "image":
+        return True
+    return False
+
+
+def _thumbnail_status(prepared: PreparedAsset) -> str:
+    if prepared.thumbnail_failure is not None:
+        return "failed"
+    if prepared.thumbnail is None:
+        return "none"
+    if prepared.thumbnail.generated:
+        return "generated"
+    return "cached"
 
 
 def _mark_missing_stale(
