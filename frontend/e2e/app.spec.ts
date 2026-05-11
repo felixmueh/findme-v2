@@ -237,6 +237,39 @@ test('searches through the real browser UI', async ({ page }) => {
   await expect(page.getByRole('button', { name: /castle\.png/i })).toBeVisible()
 })
 
+test('renders the initial card page before refreshing directory state', async ({ page }) => {
+  const searchRequests: string[] = []
+  let initialSearchCompleted = false
+  let directoryRefreshStarted = false
+
+  await page.unroute('**/api/search?*')
+  await page.unroute('**/api/search-with-directory-counts?*')
+  await page.route('**/api/search?*', async (route) => {
+    const url = new URL(route.request().url())
+    searchRequests.push(url.search)
+    await route.fulfill({ json: { total: 1, cards: [{ kind: 'asset', asset: sampleAsset }] } })
+    initialSearchCompleted = true
+  })
+  await page.route('**/api/search-with-directory-counts?*', async (route) => {
+    directoryRefreshStarted = true
+    expect(initialSearchCompleted).toBe(true)
+    await route.fulfill({
+      json: {
+        directories: [sampleRootDirectory(), sampleDirectory()],
+      },
+    })
+  })
+
+  await page.goto('/')
+  await expect(page.getByRole('button', { name: /castle\.png/i })).toBeVisible()
+  await expect.poll(() => directoryRefreshStarted).toBe(true)
+
+  const firstSearch = new URLSearchParams(searchRequests[0])
+  expect(firstSearch.get('limit')).toBe('100')
+  expect(firstSearch.get('offset')).toBe('0')
+  expect(searchRequests.some((request) => new URLSearchParams(request).get('offset') === '30')).toBe(false)
+})
+
 test('searches with the selected lane mode', async ({ page }) => {
   await page.goto('/')
 

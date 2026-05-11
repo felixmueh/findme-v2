@@ -133,7 +133,6 @@
   let cyclingVariantIndex = $state(0)
   let loading = $state(false)
   let loadingMore = $state(false)
-  let fillingInitialPage = $state(false)
   let hasMoreAssets = $state(false)
   let resultTotal = $state(0)
   let error = $state('')
@@ -164,8 +163,6 @@
   let hasInitializedFolderCollapse = false
   let viewDirectory = $state<Pick<DirectoryNode, 'source_id' | 'path'> | null>(null)
 
-  const initialPageSize = 30
-  const initialFillTarget = 100
   const pageSize = 100
   const searchSessionId =
     typeof crypto !== 'undefined' && 'randomUUID' in crypto
@@ -299,30 +296,21 @@
   }
 
   async function loadAssets(revision = searchRevision) {
-    fillingInitialPage = true
-    try {
-      const loaded = await loadAssetPage({ offset: 0, append: false, revision, limit: initialPageSize })
-      if (!loaded || revision !== searchRevision) return
-      void loadDirectoryState(revision)
-      await tick()
-      if (revision !== searchRevision) return
-      const target = Math.min(initialFillTarget, resultTotal)
-      if (cards.length < target) {
-        await loadAssetPage({
-          offset: cards.length,
-          append: true,
-          revision,
-          limit: target - cards.length,
-        })
-      }
-    } finally {
-      if (revision === searchRevision) fillingInitialPage = false
-    }
+    const loaded = await loadAssetPage({ offset: 0, append: false, revision, limit: pageSize })
+    if (!loaded || revision !== searchRevision) return
+    await tick()
+    await nextAnimationFrame()
+    if (revision !== searchRevision) return
+    await loadDirectoryState(revision)
   }
 
   async function loadMoreAssets() {
-    if (!hasMoreAssets || loading || loadingMore || fillingInitialPage) return
+    if (!hasMoreAssets || loading || loadingMore) return
     await loadAssetPage({ offset: cards.length, append: true, revision: searchRevision, limit: pageSize })
+  }
+
+  function nextAnimationFrame() {
+    return new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
   }
 
   function searchParamsFor(revision: number, offset?: number, limit?: number) {
