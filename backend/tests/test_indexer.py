@@ -1,8 +1,13 @@
 from pathlib import Path
 
+import time
+
 from findme.config import AppConfig, SourceConfig
 from findme.db import connect, initialize_database
 from findme.indexer import count_indexable_files, index_sources
+from findme import thumbnails
+
+import findme.indexer as indexer
 
 from helpers import write_image, write_video
 
@@ -322,3 +327,214 @@ def test_index_sources_does_not_retry_unchanged_thumbnail_failures(
     assert rows[0]["thumbnail_path"] is None
     assert rows[1]["relative_path"] == "valid.png"
     assert rows[1]["thumbnail_path"] is not None
+
+
+def test_index_sources_records_non_thumbnail_errors_as_failures(tmp_path: Path, monkeypatch) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    write_image(source_root / "dragon.png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+
+    def broken_thumbnail_for(*_: object, **__: object) -> None:
+        raise ValueError("boom")
+
+    monkeypatch.setattr(indexer, "_thumbnail_for", broken_thumbnail_for)
+
+    with connect(tmp_path / "findme.sqlite3") as db:
+        initialize_database(db)
+        summary = index_sources(db, config)
+
+    assert summary.scanned_files == 1
+    assert summary.upserted_assets == 1
+    assert len(summary.thumbnail_failures) == 1
+    assert summary.thumbnail_failures[0].relative_path == "dragon.png"
+    assert "boom" in summary.thumbnail_failures[0].message
+
+
+def test_index_sources_marks_worker_timeout_as_failure(tmp_path: Path, monkeypatch) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    write_image(source_root / "dragon.png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+
+    def slow_thumbnail(
+        source_path: Path,
+        source: object,
+        *,
+        data_root: Path,
+        asset_id: str,
+        relative_path: str,
+        size_bytes: int,
+        mtime_ns: int,
+        media_type: str,
+        ) -> thumbnails.ThumbnailResult:
+        time.sleep(0.2)
+        return thumbnails.generate_thumbnail(
+            source_path,
+            data_root,
+            asset_id=asset_id,
+            source_id="dnd",
+            relative_path=relative_path,
+            size_bytes=size_bytes,
+            mtime_ns=mtime_ns,
+        )
+
+    monkeypatch.setattr(indexer, "_thumbnail_for", slow_thumbnail)
+
+    with connect(tmp_path / "findme.sqlite3") as db:
+        initialize_database(db)
+        summary = index_sources(
+            db,
+            config,
+            thumbnail_workers=1,
+            thumbnail_worker_timeout_seconds=0.1,
+        )
+
+        assert summary.scanned_files == 1
+        assert summary.upserted_assets == 1
+        assert len(summary.thumbnail_failures) == 1
+        assert summary.thumbnail_failures[0].relative_path == "dragon.png"
+        assert "timed out" in summary.thumbnail_failures[0].message.lower()
+
+        no_retry = index_sources(
+            db,
+            config,
+            thumbnail_workers=1,
+            thumbnail_worker_timeout_seconds=0.1,
+        )
+        assert no_retry.scanned_files == 1
+        assert no_retry.upserted_assets == 0
+        assert len(no_retry.thumbnail_failures) == 0
+
+
+def test_index_sources_disables_zero_second_timeout(tmp_path: Path, monkeypatch) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    write_image(source_root / "dragon.png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+
+    original_generate_thumbnail = thumbnails.generate_thumbnail
+
+    def slow_thumbnail(
+        source_path: Path,
+        source: object,
+        *,
+        data_root: Path,
+        asset_id: str,
+        relative_path: str,
+        size_bytes: int,
+        mtime_ns: int,
+        media_type: str,
+    ) -> thumbnails.ThumbnailResult:
+        time.sleep(0.2)
+        return original_generate_thumbnail(
+            source_path,
+            data_root,
+            asset_id=asset_id,
+            source_id="dnd",
+            relative_path=relative_path,
+            size_bytes=size_bytes,
+            mtime_ns=mtime_ns,
+        )
+
+    monkeypatch.setattr(indexer, "_thumbnail_for", slow_thumbnail)
+
+    start = time.monotonic()
+    with connect(tmp_path / "findme.sqlite3") as db:
+        initialize_database(db)
+        summary = index_sources(
+            db,
+            config,
+            thumbnail_workers=1,
+            thumbnail_worker_timeout_seconds=0.0,
+        )
+    elapsed = time.monotonic() - start
+
+    assert summary.generated_thumbnails == 1
+    assert len(summary.thumbnail_failures) == 0
+    assert elapsed >= 0.2
+
+
+def test_index_sources_continues_after_one_worker_times_out(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    fast_path = source_root / "fast.png"
+    slow_path = source_root / "slow.png"
+    write_image(fast_path)
+    write_image(slow_path)
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+
+    call_count = {"calls": 0}
+
+    original_generate_thumbnail = thumbnails.generate_thumbnail
+
+    def slow_first_call(*args, **kwargs):  # type: ignore[override]
+        call_count["calls"] += 1
+        if call_count["calls"] == 1:
+            time.sleep(1)
+        return original_generate_thumbnail(*args, **kwargs)
+
+    monkeypatch.setattr(indexer, "_thumbnail_for", slow_first_call)
+
+    start = time.monotonic()
+    with connect(tmp_path / "findme.sqlite3") as db:
+        initialize_database(db)
+        summary = index_sources(
+            db,
+            config,
+            thumbnail_workers=2,
+            thumbnail_worker_timeout_seconds=0.1,
+        )
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 0.8
+    assert summary.scanned_files == 2
+    assert summary.upserted_assets == 2
+    assert summary.thumbnail_failures

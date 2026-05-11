@@ -278,6 +278,117 @@ media_extensions = [".png"]
     assert "thumbnail failed: dnd:broken.png" in captured.err
 
 
+def test_cli_index_accepts_thumbnail_worker_timeout_arg(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    write_image(source_root / "dragon.png")
+    config_path = tmp_path / "findme.toml"
+    data_root = tmp_path / "data"
+    config_path.write_text(
+        f"""
+[app]
+data_root = "{data_root}"
+
+[[sources]]
+id = "dnd"
+display_name = "DND"
+root = "{source_root}"
+priority = 10
+media_extensions = [".png"]
+""",
+        encoding="utf-8",
+    )
+
+    assert (
+        run(
+            [
+                "index",
+                "--config",
+                str(config_path),
+                "--thumbnail-worker-timeout-seconds",
+                "0.1",
+                "--thumbnail-workers",
+                "1",
+            ]
+        )
+        == 0
+    )
+
+
+def test_cli_index_disables_thumbnail_worker_timeout_with_zero(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    write_image(source_root / "dragon.png")
+    config_path = tmp_path / "findme.toml"
+    data_root = tmp_path / "data"
+    config_path.write_text(
+        f"""
+[app]
+data_root = "{data_root}"
+
+[[sources]]
+id = "dnd"
+display_name = "DND"
+root = "{source_root}"
+priority = 10
+media_extensions = [".png"]
+""",
+        encoding="utf-8",
+    )
+
+    assert (
+        run(
+            [
+                "index",
+                "--config",
+                str(config_path),
+                "--thumbnail-worker-timeout-seconds",
+                "0",
+                "--thumbnail-workers",
+                "1",
+            ]
+        )
+        == 0
+    )
+
+
+def test_cli_index_rejects_negative_thumbnail_worker_timeout_arg(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    write_image(source_root / "dragon.png")
+    config_path = tmp_path / "findme.toml"
+    data_root = tmp_path / "data"
+    config_path.write_text(
+        f"""
+[app]
+data_root = "{data_root}"
+
+[[sources]]
+id = "dnd"
+display_name = "DND"
+root = "{source_root}"
+priority = 10
+media_extensions = [".png"]
+""",
+        encoding="utf-8",
+    )
+
+    assert (
+        run(
+            [
+                "index",
+                "--config",
+                str(config_path),
+                "--thumbnail-worker-timeout-seconds",
+                "-1",
+                "--thumbnail-workers",
+                "1",
+            ]
+        )
+        == 2
+    )
+
+
 def test_cli_index_can_retry_failed_thumbnails(tmp_path: Path, capsys) -> None:
     source_root = tmp_path / "assets"
     source_root.mkdir()

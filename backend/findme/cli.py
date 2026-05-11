@@ -56,6 +56,17 @@ def run(argv: list[str]) -> int:
                 if args.thumbnail_workers is not None
                 else config.thumbnail_workers
             )
+            thumbnail_worker_timeout_seconds = args.thumbnail_worker_timeout_seconds
+            if thumbnail_worker_timeout_seconds is not None:
+                if thumbnail_worker_timeout_seconds < 0:
+                    print(
+                        "--thumbnail-worker-timeout-seconds must be non-negative "
+                        "(0 disables timeouts)",
+                        file=sys.stderr,
+                    )
+                    return 2
+                if thumbnail_worker_timeout_seconds == 0:
+                    thumbnail_worker_timeout_seconds = None
             if thumbnail_workers < 1:
                 print("--thumbnail-workers must be a positive integer", file=sys.stderr)
                 return 2
@@ -63,7 +74,7 @@ def run(argv: list[str]) -> int:
                 shutil.rmtree(config.data_root / "cache" / "thumbs", ignore_errors=True)
             logger = _IndexLogger(stream=sys.stdout, verbosity=args.verbose)
             logger.log("counting indexable files started")
-            total_files = count_indexable_files(config)
+            total_files = count_indexable_files(config, progress=logger.event)
             logger = _IndexLogger(
                 stream=sys.stdout,
                 total_files=total_files,
@@ -73,8 +84,13 @@ def run(argv: list[str]) -> int:
             logger.log(
                 f"index started: files={total_files} thumbnail_workers={thumbnail_workers}"
             )
+            progress_bar = (
+                _IndexProgressBar(total_files=total_files)
+                if args.verbose < 2
+                else None
+            )
             progress = _IndexProgressReporter(
-                bar=_IndexProgressBar(total_files=total_files),
+                bar=progress_bar,
                 logger=logger,
             )
             with connect(db_path) as db:
@@ -84,6 +100,7 @@ def run(argv: list[str]) -> int:
                     config,
                     thumbnail_workers=thumbnail_workers,
                     retry_failed_thumbnails=args.retry_failed_thumbnails,
+                    thumbnail_worker_timeout_seconds=thumbnail_worker_timeout_seconds,
                     progress=progress,
                 )
             progress.finish()
@@ -233,6 +250,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="retry thumbnail generation for unchanged assets that previously failed",
     )
     index.add_argument(
+        "--thumbnail-worker-timeout-seconds",
+        type=float,
+        default=None,
+        help=(
+            "mark thumbnail generation as failed and continue if a worker exceeds this many seconds "
+            "(0 disables timeouts; no value means no timeout)"
+        ),
+    )
+    index.add_argument(
         "-v",
         "--verbose",
         action="count",
@@ -344,6 +370,141 @@ class _IndexLogger:
             return
         if self._verbosity < 1:
             return
+        if self._verbosity >= 2:
+            if event.kind == "thumbnail-timeout":
+                self.log(
+                    "index thumbnail timeout: "
+                    f"source={event.source_id} "
+                    f"{event.message}"
+                )
+            if event.kind == "index-count-start":
+                self.log(
+                    "index count start: "
+                    f"source={event.source_id}"
+                )
+            elif event.kind == "index-count-checkpoint":
+                self.log(
+                    "index count checkpoint: "
+                    f"source={event.source_id} "
+                    f"{event.message}"
+                )
+            elif event.kind == "index-count-complete":
+                self.log(
+                    "index count complete: "
+                    f"source={event.source_id} "
+                    f"{event.message}"
+                )
+            if event.kind == "scan-checkpoint":
+                self.log(
+                    "index scan checkpoint: "
+                    f"source={event.source_id} "
+                    f"path={event.relative_path} "
+                    f"{event.message}"
+                )
+            elif event.kind == "thumbnail-worker-started":
+                self.log(
+                    "index thumbnail worker start: "
+                    f"source={event.source_id} "
+                    f"path={event.relative_path} "
+                    f"{event.message}"
+                )
+            if event.kind == "source-scan-complete":
+                self.log(
+                    "index source scan complete: "
+                    f"source={event.source_id} "
+                    f"{event.message}"
+                )
+            if event.kind == "file-skip":
+                self.log(
+                    "index file skip: "
+                    f"source={event.source_id} "
+                    f"path={event.relative_path} "
+                    f"reason={event.message}"
+                )
+            elif event.kind in {"file-scheduled", "file-submitted"}:
+                self.log(
+                    "index file scheduled: "
+                    f"source={event.source_id} "
+                    f"path={event.relative_path} "
+                    f"{event.message}"
+                )
+            if event.kind == "file-submitted":
+                wait_ms = (
+                    f"{event.wait_seconds:.2f}s"
+                    if event.wait_seconds is not None
+                    else "n/a"
+                )
+                self.log(
+                    "index file submitted: "
+                    f"source={event.source_id} "
+                    f"path={event.relative_path} "
+                    f"worker={event.worker_id or 'n/a'} "
+                    f"wait={wait_ms} "
+                    f"{event.message}"
+                )
+            if event.kind == "file-failed":
+                queue_wait_ms = (
+                    f"{event.wait_seconds:.2f}s"
+                    if event.wait_seconds is not None
+                    else "n/a"
+                )
+                self.log(
+                    "index file failed: "
+                    f"source={event.source_id} "
+                    f"path={event.relative_path} "
+                    f"queue_wait={queue_wait_ms} "
+                    f"{event.message}"
+                )
+            elif event.kind == "file-completed":
+                queue_wait_ms = (
+                    f"{event.wait_seconds:.2f}s"
+                    if event.wait_seconds is not None
+                    else "n/a"
+                )
+                worker_ms = (
+                    f"{event.worker_elapsed_seconds:.2f}s"
+                    if event.worker_elapsed_seconds is not None
+                    else "n/a"
+                )
+                self.log(
+                    "index file completed: "
+                    f"source={event.source_id} "
+                    f"path={event.relative_path} "
+                    f"worker={event.worker_id or 'n/a'} "
+                    f"worker_elapsed={worker_ms} "
+                    f"queue_wait={queue_wait_ms} "
+                    f"{event.message}"
+                )
+            elif event.kind == "stale-scan-start":
+                self.log(
+                    "index stale scan start: "
+                    f"source={event.source_id} "
+                    f"{event.message}"
+                )
+            elif event.kind == "stale-scan-complete":
+                self.log(
+                    "index stale scan complete: "
+                    f"source={event.source_id} "
+                    f"{event.message}"
+                )
+            elif event.kind == "stale-mark-start":
+                self.log(
+                    "index stale mark start: "
+                    f"source={event.source_id} "
+                    f"{event.message}"
+                )
+            elif event.kind == "stale-mark-checkpoint":
+                self.log(
+                    "index stale mark checkpoint: "
+                    f"source={event.source_id} "
+                    f"{event.message}"
+                )
+            elif event.kind == "stale-mark-complete":
+                self.log(
+                    "index stale mark complete: "
+                    f"source={event.source_id} "
+                    f"{event.message}"
+                )
         if event.kind == "file-queued":
             self.log(
                 "index file queued: "
@@ -395,7 +556,12 @@ class _IndexLogger:
 
 
 class _IndexProgressReporter:
-    def __init__(self, *, bar: "_IndexProgressBar", logger: _IndexLogger) -> None:
+    def __init__(
+        self,
+        *,
+        bar: "_IndexProgressBar | None",
+        logger: _IndexLogger,
+    ) -> None:
         self._bar = bar
         self._logger = logger
 
@@ -403,11 +569,13 @@ class _IndexProgressReporter:
         if isinstance(progress, IndexEvent):
             self._logger.event(progress)
             return
-        self._bar(progress)
+        if self._bar is not None:
+            self._bar(progress)
         self._logger.progress(progress)
 
     def finish(self) -> None:
-        self._bar.finish()
+        if self._bar is not None:
+            self._bar.finish()
 
 
 class _IndexProgressBar:
