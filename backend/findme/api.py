@@ -198,6 +198,43 @@ def create_app(
             limit=limit,
         )
 
+    def card_page_for_search(
+        *,
+        query: str,
+        mode: SearchMode,
+        source_id: str | None,
+        directory: str | None,
+        directory_prefix: str | None,
+        preferences,
+        domain_vocabulary,
+        offset: int,
+        limit: int,
+        control: SearchControl | None,
+    ) -> tuple[list[dict[str, object]], int, int, bool]:
+        raw_limit = max(offset + limit, limit)
+        while True:
+            page = search_index.search(
+                query,
+                source_id=source_id,
+                directory=directory,
+                directory_prefix=directory_prefix,
+                preferences=preferences,
+                domain_vocabulary=domain_vocabulary,
+                mode=mode,
+                limit=raw_limit,
+                offset=0,
+                control=control,
+            )
+            cards, _observed_total = card_resolver.page_for(
+                [_search_response(result) for result in page.assets],
+                offset=offset,
+                limit=limit,
+            )
+            raw_exhausted = raw_limit >= page.total
+            if len(cards) >= limit or raw_exhausted:
+                return cards, page.total, offset + len(cards), not raw_exhausted
+            raw_limit = min(page.total, raw_limit + max(limit, raw_limit))
+
     app = FastAPI(title="Findme V2")
 
     @app.get("/api/health")
@@ -419,29 +456,33 @@ def create_app(
                 offset=offset,
                 limit=limit,
             )
-            return JSONResponse({"cards": cards, "total": total})
+            return JSONResponse(
+                {"cards": cards, "total": total, "next_offset": offset + len(cards)}
+            )
         domain_vocabulary = _load_domain_vocabulary(config)
         try:
-            page = search_index.search(
-                trimmed_query,
+            cards, total, next_offset, has_more = card_page_for_search(
+                query=trimmed_query,
+                mode=mode,
                 source_id=source_id,
                 directory=directory,
                 directory_prefix=directory_prefix,
                 preferences=preferences,
                 domain_vocabulary=domain_vocabulary,
-                mode=mode,
-                limit=limit,
                 offset=offset,
+                limit=limit,
                 control=control,
             )
         except SearchSuperseded:
             return Response(status_code=204)
-        cards, _card_total = card_resolver.page_for(
-            [_search_response(result) for result in page.assets],
-            offset=0,
-            limit=limit,
+        return JSONResponse(
+            {
+                "cards": cards,
+                "total": total,
+                "next_offset": next_offset,
+                "has_more": has_more,
+            }
         )
-        return JSONResponse({"cards": cards, "total": page.total})
 
     @app.get("/api/search-with-directory-counts")
     def search_with_directory_counts(
@@ -517,6 +558,7 @@ def create_app(
                 {
                     "cards": cards,
                     "total": total,
+                    "next_offset": offset + len(cards),
                     **_directory_payload(directories, state_only=directory_state_only),
                 }
             )
@@ -551,23 +593,32 @@ def create_app(
                 domain_vocabulary=domain_vocabulary,
                 mode=mode,
                 limit=limit,
-                offset=offset,
+                offset=0,
                 dirty_folder_subtree_keys=dirty_folder_subtree_keys,
                 descendant_whitelist_keys=descendant_whitelist_keys,
                 descendant_blacklist_keys=descendant_blacklist_keys,
                 control=control,
             )
+            cards, total, next_offset, has_more = card_page_for_search(
+                query=trimmed_query,
+                mode=mode,
+                source_id=source_id,
+                directory=directory,
+                directory_prefix=directory_prefix,
+                preferences=preferences,
+                domain_vocabulary=domain_vocabulary,
+                offset=offset,
+                limit=limit,
+                control=control,
+            )
         except SearchSuperseded:
             return Response(status_code=204)
-        cards, _card_total = card_resolver.page_for(
-            [_search_response(result) for result in search_response.page.assets],
-            offset=0,
-            limit=limit,
-        )
         return JSONResponse(
             {
                 "cards": cards,
-                "total": search_response.page.total,
+                "total": total,
+                "next_offset": next_offset,
+                "has_more": has_more,
                 **_directory_payload(
                     search_response.directories,
                     state_only=directory_state_only,

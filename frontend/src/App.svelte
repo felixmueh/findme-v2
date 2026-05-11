@@ -134,6 +134,7 @@
   let loading = $state(false)
   let loadingMore = $state(false)
   let hasMoreAssets = $state(false)
+  let nextAssetOffset = $state(0)
   let resultTotal = $state(0)
   let error = $state('')
   let copied = $state('')
@@ -306,7 +307,7 @@
 
   async function loadMoreAssets() {
     if (!hasMoreAssets || loading || loadingMore) return
-    await loadAssetPage({ offset: cards.length, append: true, revision: searchRevision, limit: pageSize })
+    await loadAssetPage({ offset: nextAssetOffset, append: true, revision: searchRevision, limit: pageSize })
   }
 
   function nextAnimationFrame() {
@@ -353,6 +354,7 @@
     } else {
       loading = true
       hasMoreAssets = false
+      nextAssetOffset = 0
       resultTotal = 0
     }
     clearError()
@@ -363,9 +365,11 @@
       const body = await response.json()
       if (currentRequest !== requestId) return false
       const nextCards = body.cards as ResultCard[]
+      const nextOffset = Number(body.next_offset ?? offset + nextCards.length)
       resultTotal = Number(body.total ?? nextCards.length)
       cards = append ? [...cards, ...nextCards] : nextCards
-      hasMoreAssets = cards.length < resultTotal
+      nextAssetOffset = nextOffset
+      hasMoreAssets = typeof body.has_more === 'boolean' ? body.has_more : nextAssetOffset < resultTotal
       if (!append) {
         expandedCollections = new Set()
         stopCollectionCycle()

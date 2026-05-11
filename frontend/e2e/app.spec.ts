@@ -270,6 +270,94 @@ test('renders the initial card page before refreshing directory state', async ({
   expect(searchRequests.some((request) => new URLSearchParams(request).get('offset') === '30')).toBe(false)
 })
 
+test('uses the server next offset when loading more search results', async ({ page }) => {
+  const searchRequests: string[] = []
+
+  await page.unroute('**/api/search?*')
+  await page.route('**/api/search?*', async (route) => {
+    const url = new URL(route.request().url())
+    searchRequests.push(url.search)
+    const offset = Number(url.searchParams.get('offset') ?? 0)
+    await route.fulfill({
+      json: {
+        total: 150,
+        next_offset: offset === 0 ? 100 : 150,
+        cards: [{ kind: 'asset', asset: sampleAsset }],
+      },
+    })
+  })
+
+  await page.goto('/')
+  const typedSearchRequest = page.waitForRequest((request) => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/search' && url.searchParams.get('q') === 'castle' && url.searchParams.get('offset') === '0'
+  })
+  await page.getByRole('searchbox', { name: 'Search assets' }).fill('castle')
+  await typedSearchRequest
+  await expect(page.getByRole('button', { name: 'Load more' })).toBeVisible()
+
+  const loadMoreRequest = page.waitForRequest((request) => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/search' && url.searchParams.get('q') === 'castle' && url.searchParams.get('offset') === '100'
+  })
+  await page.getByRole('button', { name: 'Load more' }).click()
+  await loadMoreRequest
+
+  await expect
+    .poll(() => searchRequests.map((request) => new URLSearchParams(request).get('offset')))
+    .toContain('100')
+  expect(searchRequests.map((request) => new URLSearchParams(request).get('offset'))).not.toContain('1')
+})
+
+test('keeps loading past grouped exact search results', async ({ page }) => {
+  const collection = {
+    kind: 'collection',
+    collection_key: 'goblin-variants',
+    representative: sampleAsset,
+    variants: [sampleAsset, { ...sampleAsset, asset_id: 'asset-goblin-2', filename: 'goblin2.png' }],
+    count: 2,
+  }
+  const archer = {
+    ...sampleAsset,
+    asset_id: 'asset-goblin-archer',
+    filename: 'goblin archer.png',
+    stem: 'goblin archer',
+    relative_path: 'maps/goblin archer.png',
+  }
+  const searchRequests: string[] = []
+
+  await page.unroute('**/api/search?*')
+  await page.route('**/api/search?*', async (route) => {
+    const url = new URL(route.request().url())
+    searchRequests.push(url.search)
+    const offset = Number(url.searchParams.get('offset') ?? 0)
+    await route.fulfill({
+      json: {
+        total: 3,
+        next_offset: offset === 0 ? 1 : 2,
+        has_more: offset === 0,
+        cards: offset === 0 ? [collection] : [{ kind: 'asset', asset: archer }],
+      },
+    })
+  })
+
+  await page.goto('/')
+  const typedSearchRequest = page.waitForRequest((request) => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/search' && url.searchParams.get('q') === 'Goblin' && url.searchParams.get('offset') === '0'
+  })
+  await page.getByRole('searchbox', { name: 'Search assets' }).fill('Goblin')
+  await typedSearchRequest
+  await expect(page.getByRole('button', { name: /castle\.png/i })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Load more' })).toBeVisible()
+
+  await page.getByRole('button', { name: 'Load more' }).click()
+
+  await expect(page.getByRole('button', { name: /goblin archer\.png/i })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Loading' })).toHaveCount(0)
+  expect(searchRequests.map((request) => new URLSearchParams(request).get('offset'))).toContain('1')
+})
+
 test('searches with the selected lane mode', async ({ page }) => {
   await page.goto('/')
 

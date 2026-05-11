@@ -909,8 +909,49 @@ def test_api_result_totals_ignore_limit_and_offset(tmp_path: Path) -> None:
 
     assert assets_body["total"] == 3
     assert len(assets_body["cards"]) == 1
+    assert assets_body["next_offset"] == 2
     assert search_body["total"] == 2
     assert len(search_body["cards"]) == 1
+    assert search_body["next_offset"] == 2
+
+
+def test_api_search_paginates_grouped_cards_without_repeating_collection_keys(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    write_image(source_root / "Goblin.png")
+    write_image(source_root / "Goblin2.png")
+    write_image(source_root / "Goblin Archer.png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+    rebuild_search_corpus(config, db_path)
+    client = TestClient(create_app(config, db_path))
+
+    first = client.get("/api/search", params={"q": "goblin", "limit": 1}).json()
+    second = client.get(
+        "/api/search",
+        params={"q": "goblin", "limit": 1, "offset": first["next_offset"]},
+    ).json()
+
+    assert first["cards"][0]["kind"] == "collection"
+    assert second["cards"][0]["kind"] == "asset"
+    assert first["next_offset"] == 1
+    assert second["next_offset"] == 2
 
 
 def test_api_applies_profile_selection_before_pagination(tmp_path: Path) -> None:
