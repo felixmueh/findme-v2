@@ -241,7 +241,7 @@ Hard requirements:
 - user-defined source/directory quality is applied as a final ranking
   adjustment, not inside retrieval lanes
 - selected source/directory scope is a hard filter before or during retrieval
-- stale assets are hidden from normal search
+- removed assets disappear from search after source/full index replacement
 - diagnostics expose enough signals to tune ranking
 
 Raw scores from different lanes should not be assumed comparable.

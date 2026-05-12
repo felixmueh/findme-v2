@@ -8,7 +8,7 @@ from pathlib import Path
 import sqlite3
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 @contextmanager
@@ -88,26 +88,15 @@ def initialize_database(db: sqlite3.Connection) -> None:
           thumbnail_path TEXT,
           thumbnail_width INTEGER,
           thumbnail_height INTEGER,
-          stale INTEGER NOT NULL DEFAULT 0 CHECK (stale IN (0, 1)),
           indexed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
           UNIQUE (source_id, relative_path)
         );
 
-        CREATE INDEX IF NOT EXISTS idx_assets_source_stale
-          ON assets (source_id, stale);
+        CREATE INDEX IF NOT EXISTS idx_assets_source
+          ON assets (source_id);
 
         CREATE INDEX IF NOT EXISTS idx_assets_directory
-          ON assets (source_id, directory, stale);
-
-        CREATE VIRTUAL TABLE IF NOT EXISTS asset_search USING fts5(
-          asset_id UNINDEXED,
-          source_id UNINDEXED,
-          filename,
-          stem,
-          directory,
-          relative_path,
-          tokenize = 'unicode61 tokenchars ''_-'''
-        );
+          ON assets (source_id, directory);
         """
     )
     db.execute(
@@ -117,6 +106,7 @@ def initialize_database(db: sqlite3.Connection) -> None:
     _ensure_column(db, "assets", "thumbnail_path", "TEXT")
     _ensure_column(db, "assets", "thumbnail_width", "INTEGER")
     _ensure_column(db, "assets", "thumbnail_height", "INTEGER")
+    _drop_legacy_indexing_schema(db)
     _ensure_builtin_search_profiles(db)
     _migrate_folder_quality_overrides(db)
 
@@ -125,6 +115,19 @@ def _ensure_column(db: sqlite3.Connection, table: str, column: str, definition: 
     columns = {row["name"] for row in db.execute(f"PRAGMA table_info({table})")}
     if column not in columns:
         db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
+def _drop_legacy_indexing_schema(db: sqlite3.Connection) -> None:
+    db.execute("DROP TABLE IF EXISTS asset_search")
+    db.execute("DROP INDEX IF EXISTS idx_assets_source_stale")
+    db.execute("DROP INDEX IF EXISTS idx_assets_directory")
+    columns = {row["name"] for row in db.execute("PRAGMA table_info(assets)")}
+    if "stale" in columns:
+        db.execute("ALTER TABLE assets DROP COLUMN stale")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_assets_source ON assets (source_id)")
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_assets_directory ON assets (source_id, directory)"
+    )
 
 
 def get_index_metadata(db: sqlite3.Connection, key: str) -> str | None:

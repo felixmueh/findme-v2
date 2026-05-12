@@ -96,7 +96,7 @@ media_extensions = [".png"]
     assert run(["index", "--config", str(config_path)]) == 0
     thumbnails = list((data_root / "cache" / "thumbs").rglob("*.webp"))
     assert thumbnails
-    thumbnails[0].write_bytes(b"stale")
+    thumbnails[0].write_bytes(b"orphaned")
 
     assert run(["index", "--config", str(config_path), "--rebuild-thumbnails"]) == 0
 
@@ -177,7 +177,7 @@ media_extensions = [".png"]
     assert any("counting indexable files finished: files=1" in line for line in lines)
     assert any("index started: files=1 thumbnail_workers=1" in line for line in lines)
     assert any("index progress: scanned=1/1" in line for line in lines)
-    assert any("asset indexing finished: scanned=1 upserted=1" in line for line in lines)
+    assert any("asset indexing finished: scanned=1 written=1" in line for line in lines)
     assert any("search preprocessing started" in line for line in lines)
     assert any("search preprocessing loaded assets: count=1" in line for line in lines)
     assert any("search lexical index build started: assets=1" in line for line in lines)
@@ -576,9 +576,7 @@ media_extensions = [".png"]
     assert not orphan.exists()
     with connect(data_root / "findme.sqlite3") as db:
         assets = db.execute("SELECT COUNT(*) FROM assets").fetchone()[0]
-        search_rows = db.execute("SELECT COUNT(*) FROM asset_search").fetchone()[0]
     assert assets == 0
-    assert search_rows == 0
 
 
 def test_cli_index_can_cleanup_thumbnails_after_successful_index(

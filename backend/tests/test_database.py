@@ -15,6 +15,9 @@ def test_initialize_database_creates_schema_and_wal_database(tmp_path: Path) -> 
                 "SELECT name FROM sqlite_master WHERE type = 'table'"
             ).fetchall()
         }
+        asset_columns = {
+            row["name"] for row in db.execute("PRAGMA table_info(assets)").fetchall()
+        }
         profiles = {
             row[0]: row[1]
             for row in db.execute("SELECT id, kind FROM search_profiles").fetchall()
@@ -28,5 +31,7 @@ def test_initialize_database_creates_schema_and_wal_database(tmp_path: Path) -> 
         "search_profile_folder_settings",
         "schema_migrations",
     } <= tables
+    assert "asset_search" not in tables
+    assert "stale" not in asset_columns
 
     assert profiles == {"none": "none", "default": "default"}

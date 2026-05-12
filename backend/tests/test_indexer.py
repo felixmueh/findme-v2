@@ -38,13 +38,13 @@ def test_index_sources_adds_media_files_and_ignores_legacy_findme_data(tmp_path:
         initialize_database(db)
         summary = index_sources(db, config)
         rows = db.execute(
-            "SELECT source_id, relative_path, filename, stem, extension, stale FROM assets"
+            "SELECT source_id, relative_path, filename, stem, extension FROM assets"
         ).fetchall()
 
     assert summary.scanned_files == 1
-    assert summary.upserted_assets == 1
+    assert summary.written_assets == 1
     assert [tuple(row) for row in rows] == [
-        ("dnd", "Tokens/Goblin Warrior.PNG", "Goblin Warrior.PNG", "Goblin Warrior", ".png", 0)
+        ("dnd", "Tokens/Goblin Warrior.PNG", "Goblin Warrior.PNG", "Goblin Warrior", ".png")
     ]
 
 
@@ -107,7 +107,7 @@ def test_count_and_index_source_ids_filter_only_target_source(tmp_path: Path) ->
         rows = db.execute("SELECT source_id FROM assets").fetchall()
 
     assert summary.scanned_files == 1
-    assert summary.upserted_assets == 1
+    assert summary.written_assets == 1
     assert len(rows) == 1
     assert rows[0]["source_id"] == "maps"
 
@@ -137,7 +137,7 @@ def test_index_sources_replaces_missing_assets_for_source(tmp_path: Path) -> Non
         summary = index_sources(db, config)
         rows = db.execute("SELECT relative_path FROM assets").fetchall()
 
-    assert summary.upserted_assets == 0
+    assert summary.written_assets == 0
     assert rows == []
 
 
@@ -186,12 +186,16 @@ def test_index_sources_replaces_removed_config_sources_on_full_index(
         initialize_database(db)
         index_sources(db, initial_config)
         summary = index_sources(db, updated_config)
-        rows = db.execute(
+        asset_rows = db.execute(
             "SELECT source_id FROM assets ORDER BY source_id"
+        ).fetchall()
+        source_rows = db.execute(
+            "SELECT id FROM sources ORDER BY id"
         ).fetchall()
 
     assert summary.scanned_files == 1
-    assert [tuple(row) for row in rows] == [("current",)]
+    assert [tuple(row) for row in asset_rows] == [("current",)]
+    assert [tuple(row) for row in source_rows] == [("current",)]
 
 
 def test_index_sources_partial_index_preserves_unselected_sources(
@@ -244,13 +248,13 @@ def test_index_sources_partial_index_preserves_unselected_sources(
             source_ids=frozenset({"current"}),
         )
         rows = db.execute(
-            "SELECT source_id, stale FROM assets ORDER BY source_id"
+            "SELECT source_id FROM assets ORDER BY source_id"
         ).fetchall()
 
-    assert [tuple(row) for row in rows] == [("current", 0), ("old", 0)]
+    assert [tuple(row) for row in rows] == [("current",), ("old",)]
 
 
-def test_index_sources_refreshes_asset_search_for_source(tmp_path: Path) -> None:
+def test_index_sources_replaces_asset_rows_for_source(tmp_path: Path) -> None:
     source_root = tmp_path / "assets"
     source_root.mkdir()
     write_image(source_root / "dragon.webp")
@@ -273,20 +277,16 @@ def test_index_sources_refreshes_asset_search_for_source(tmp_path: Path) -> None
         initialize_database(db)
         index_sources(db, config)
         count_before = db.execute(
-            "SELECT COUNT(*) FROM asset_search WHERE source_id = ?", ("dnd",)
+            "SELECT COUNT(*) FROM assets WHERE source_id = ?", ("dnd",)
         ).fetchone()[0]
         (source_root / "dragon.webp").unlink()
         index_sources(db, config)
         count_after = db.execute(
-            "SELECT COUNT(*) FROM asset_search WHERE source_id = ?", ("dnd",)
-        ).fetchone()[0]
-        asset_count = db.execute(
             "SELECT COUNT(*) FROM assets WHERE source_id = ?", ("dnd",)
         ).fetchone()[0]
 
     assert count_before == 2
     assert count_after == 1
-    assert asset_count == 1
 
 
 def test_index_sources_skips_unchanged_thumbnail_generation(tmp_path: Path) -> None:
@@ -312,9 +312,9 @@ def test_index_sources_skips_unchanged_thumbnail_generation(tmp_path: Path) -> N
         second = index_sources(db, config)
 
     assert first.generated_thumbnails == 1
-    assert first.upserted_assets == 1
+    assert first.written_assets == 1
     assert second.generated_thumbnails == 0
-    assert second.upserted_assets == 0
+    assert second.written_assets == 1
 
 
 def test_index_sources_skips_unchanged_video_poster_generation(tmp_path: Path) -> None:
@@ -340,9 +340,9 @@ def test_index_sources_skips_unchanged_video_poster_generation(tmp_path: Path) -
         second = index_sources(db, config, thumbnail_workers=1)
 
     assert first.generated_thumbnails == 1
-    assert first.upserted_assets == 1
+    assert first.written_assets == 1
     assert second.generated_thumbnails == 0
-    assert second.upserted_assets == 0
+    assert second.written_assets == 1
 
 
 def test_index_sources_classifies_audio_files(tmp_path: Path) -> None:
@@ -370,7 +370,7 @@ def test_index_sources_classifies_audio_files(tmp_path: Path) -> None:
         ).fetchone()
 
     assert summary.scanned_files == 1
-    assert summary.upserted_assets == 1
+    assert summary.written_assets == 1
     assert row["media_type"] == "audio"
     assert row["thumbnail_path"] is None
 
@@ -407,11 +407,11 @@ def test_index_sources_updates_unchanged_audio_media_type(tmp_path: Path) -> Non
             """
             INSERT INTO assets(
               asset_id, source_id, relative_path, absolute_path, filename, stem,
-              extension, directory, size_bytes, mtime_ns, media_type, stale
+              extension, directory, size_bytes, mtime_ns, media_type
             )
             VALUES (
               'old-id', 'dnd', 'thunder.mp3', ?, 'thunder.mp3', 'thunder',
-              '.mp3', '', ?, ?, 'other', 0
+              '.mp3', '', ?, ?, 'other'
             )
             """,
             (str(audio_path), stat.st_size, stat.st_mtime_ns),
@@ -423,7 +423,7 @@ def test_index_sources_updates_unchanged_audio_media_type(tmp_path: Path) -> Non
         ).fetchone()
 
     assert summary.scanned_files == 1
-    assert summary.upserted_assets == 1
+    assert summary.written_assets == 1
     assert row["media_type"] == "audio"
     assert row["thumbnail_path"] is None
 
@@ -454,7 +454,7 @@ def test_index_sources_reports_thumbnail_failures_without_aborting(tmp_path: Pat
         ).fetchone()
 
     assert summary.scanned_files == 1
-    assert summary.upserted_assets == 1
+    assert summary.written_assets == 1
     assert len(summary.thumbnail_failures) == 1
     assert summary.thumbnail_failures[0].relative_path == "broken.png"
     assert "could not generate thumbnail" in summary.thumbnail_failures[0].message
@@ -501,14 +501,14 @@ def test_index_sources_does_not_retry_unchanged_thumbnail_failures(
         ).fetchall()
 
     assert first.scanned_files == 2
-    assert first.upserted_assets == 2
+    assert first.written_assets == 2
     assert len(first.thumbnail_failures) == 1
     assert first.thumbnail_failures[0].relative_path == "broken.png"
     assert second.scanned_files == 2
-    assert second.upserted_assets == 0
+    assert second.written_assets == 2
     assert second.thumbnail_failures == ()
     assert retried.scanned_files == 2
-    assert retried.upserted_assets == 1
+    assert retried.written_assets == 2
     assert len(retried.thumbnail_failures) == 1
     assert retried.thumbnail_failures[0].relative_path == "broken.png"
     assert rows[0]["relative_path"] == "broken.png"
@@ -544,7 +544,7 @@ def test_index_sources_records_non_thumbnail_errors_as_failures(tmp_path: Path, 
         summary = index_sources(db, config)
 
     assert summary.scanned_files == 1
-    assert summary.upserted_assets == 1
+    assert summary.written_assets == 1
     assert len(summary.thumbnail_failures) == 1
     assert summary.thumbnail_failures[0].relative_path == "dragon.png"
     assert "boom" in summary.thumbnail_failures[0].message
@@ -601,7 +601,7 @@ def test_index_sources_marks_worker_timeout_as_failure(tmp_path: Path, monkeypat
         )
 
         assert summary.scanned_files == 1
-        assert summary.upserted_assets == 1
+        assert summary.written_assets == 1
         assert len(summary.thumbnail_failures) == 1
         assert summary.thumbnail_failures[0].relative_path == "dragon.png"
         assert "timed out" in summary.thumbnail_failures[0].message.lower()
@@ -613,7 +613,7 @@ def test_index_sources_marks_worker_timeout_as_failure(tmp_path: Path, monkeypat
             thumbnail_worker_timeout_seconds=0.1,
         )
         assert no_retry.scanned_files == 1
-        assert no_retry.upserted_assets == 0
+        assert no_retry.written_assets == 1
         assert len(no_retry.thumbnail_failures) == 0
 
 
@@ -724,5 +724,5 @@ def test_index_sources_continues_after_one_worker_times_out(
 
     assert elapsed < 0.8
     assert summary.scanned_files == 2
-    assert summary.upserted_assets == 2
+    assert summary.written_assets == 2
     assert summary.thumbnail_failures

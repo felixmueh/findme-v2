@@ -168,7 +168,7 @@ The tree should continue to show counts for source and directory nodes.
 
 Recommended count model:
 
-- `asset_count`: total indexed, non-stale assets under the subtree before the current text query and before red/green rules.
+- `asset_count`: total indexed assets under the subtree before the current text query and before red/green rules.
 - `matched_asset_count`: assets under the subtree matching the current text query before red/green rules.
 - `included_asset_count`: assets under the subtree that remain after applying the current red/green rules, and after the text query when one is active.
 

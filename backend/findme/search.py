@@ -21,6 +21,7 @@ from findme.search_corpus import (
     count_asset_directories,
     fetch_search_corpus_assets,
     normalize_search_text,
+    search_corpus_is_stale,
     tokenize_search_text,
 )
 
@@ -245,6 +246,10 @@ class SearchIndex:
         expected_version: str,
         lexical_index_path: Path,
     ) -> "SearchIndex":
+        if search_corpus_is_stale(db):
+            raise SearchCorpusError(
+                "search corpus is stale; run findme rebuild-search-corpus --config <config>"
+            )
         if snapshot.version != expected_version:
             raise SearchCorpusError(
                 "search corpus version mismatch "

@@ -23,9 +23,8 @@ User/profile state stays durable:
 Index-owned rows are replaceable:
 
 - `assets`
-- `asset_search`
 
-The existing `stale` column can remain in the schema for now, but normal code should not use it as an invalidation mechanism. Newly written rows should use `stale = 0`.
+The stale-row invalidation schema and the old SQLite FTS `asset_search` table are not part of the model.
 
 Add a small metadata table:
 
@@ -51,11 +50,10 @@ The corpus is stale when those values differ.
    - reuse existing thumbnail references when source-relative path, media type, size, and mtime still match and the thumbnail file exists
    - otherwise store `NULL` thumbnail fields
 4. In one DB transaction, replace index rows for the scope:
-   - full index: delete all `asset_search` and `assets` rows
-   - source index: delete `asset_search` and `assets` rows for selected sources
-   - upsert configured `sources`
+   - full index: delete all `assets` rows and remove unconfigured `sources`
+   - source index: delete `assets` rows for selected sources
+   - insert/update configured `sources`
    - insert the fresh asset rows
-   - rebuild `asset_search` for the replaced sources
 5. Generate missing thumbnails after the fresh asset rows are committed.
 6. As each thumbnail completes, update its asset row only if the asset still has the same file fingerprint.
 7. Rebuild the search corpus from the final DB state.

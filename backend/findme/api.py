@@ -88,7 +88,7 @@ def create_app(
     card_metadata_by_asset_id = snapshot.card_metadata_by_asset_id()
     profile_sessions = SearchProfileSessionManager(search_index)
     card_resolver = ResultCardResolver.from_assets(
-        [_asset_search_response(asset, score=0.0) for asset in search_index.assets],
+        [_asset_result_response(asset, score=0.0) for asset in search_index.assets],
         card_metadata_by_asset_id=card_metadata_by_asset_id,
     )
     card_counts_by_directory = _card_counts_by_directory_subtree(
@@ -709,7 +709,7 @@ def _load_asset_or_404(db: sqlite3.Connection, config: AppConfig, asset_id: str)
 
 
 def _search_response(result: SearchResult) -> dict[str, object]:
-    return _asset_search_response(result, score=result.score)
+    return _asset_result_response(result, score=result.score)
 
 
 def _directory_payload(
@@ -741,7 +741,7 @@ def _directory_state_response(directory: dict[str, object]) -> list[object]:
     ]
 
 
-def _asset_search_response(result, *, score: float) -> dict[str, object]:
+def _asset_result_response(result, *, score: float) -> dict[str, object]:
     response = {
         "asset_id": result.asset_id,
         "source_id": result.source_id,

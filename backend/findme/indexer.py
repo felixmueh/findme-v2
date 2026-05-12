@@ -20,7 +20,7 @@ from findme.thumbnails import (
     generate_video_poster,
 )
 
-UPSERT_BATCH_SIZE = 512
+INSERT_BATCH_SIZE = 512
 
 IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif"})
 VIDEO_EXTENSIONS = frozenset({".webm", ".mp4"})
@@ -31,7 +31,7 @@ IGNORED_DIRS = frozenset({".findme"})
 @dataclass(frozen=True)
 class IndexSummary:
     scanned_files: int = 0
-    upserted_assets: int = 0
+    written_assets: int = 0
     generated_thumbnails: int = 0
     thumbnail_failures: tuple["ThumbnailFailure", ...] = ()
 
@@ -51,7 +51,7 @@ class ProgressReporter(Protocol):
 @dataclass(frozen=True)
 class IndexProgress:
     scanned_files: int
-    upserted_assets: int
+    written_assets: int
     generated_thumbnails: int
     failed_thumbnails: int
     current_source_id: str
@@ -91,7 +91,7 @@ class PreparedAsset:
     pending: PendingAsset
     thumbnail: ThumbnailResult | None
     thumbnail_failure: ThumbnailFailure | None = None
-    upsert_required: bool = True
+    processing_required: bool = True
     worker_id: str = ""
     worker_elapsed_seconds: float = 0.0
 
@@ -117,7 +117,7 @@ def index_sources(
     progress: ProgressReporter | None = None,
 ) -> IndexSummary:
     scanned = 0
-    upserted = 0
+    written = 0
     thumbnails = 0
     thumbnail_failures: list[ThumbnailFailure] = []
     start = time.monotonic()
@@ -156,14 +156,14 @@ def index_sources(
                 progress(
                     IndexProgress(
                         scanned_files=scanned,
-                        upserted_assets=upserted,
+                        written_assets=written,
                         generated_thumbnails=thumbnails,
                         failed_thumbnails=len(thumbnail_failures),
                         current_source_id=source.id,
                         elapsed_seconds=time.monotonic() - start,
                         current_relative_path=prepared.pending.relative_path,
                         current_action=(
-                            "indexed" if prepared.upsert_required else "unchanged"
+                            "indexed" if prepared.processing_required else "unchanged"
                         ),
                         current_thumbnail=_thumbnail_status(prepared),
                     )
@@ -182,7 +182,7 @@ def index_sources(
                 )
             )
 
-    upserted = _replace_index_rows(
+    written = _replace_index_rows(
         db,
         config,
         selected_sources,
@@ -209,7 +209,7 @@ def index_sources(
             progress(
                 IndexProgress(
                     scanned_files=scanned,
-                    upserted_assets=upserted,
+                    written_assets=written,
                     generated_thumbnails=thumbnails,
                     failed_thumbnails=len(thumbnail_failures),
                     current_source_id=prepared.pending.source.id,
@@ -225,7 +225,7 @@ def index_sources(
 
     return IndexSummary(
         scanned_files=scanned,
-        upserted_assets=upserted,
+        written_assets=written,
         generated_thumbnails=thumbnails,
         thumbnail_failures=tuple(thumbnail_failures),
     )
@@ -320,20 +320,20 @@ def _prepare_index_asset(
                     height=current.thumbnail_height,
                     generated=False,
                 ),
-                upsert_required=False,
+                processing_required=False,
             )
         if needs_thumbnail and current.thumbnail_path is None and not retry_failed_thumbnails:
-            return PreparedAsset(pending=pending, thumbnail=None, upsert_required=False)
+            return PreparedAsset(pending=pending, thumbnail=None, processing_required=False)
         if not needs_thumbnail:
-            return PreparedAsset(pending=pending, thumbnail=None, upsert_required=False)
+            return PreparedAsset(pending=pending, thumbnail=None, processing_required=False)
 
-    return PreparedAsset(pending=pending, thumbnail=None, upsert_required=True)
+    return PreparedAsset(pending=pending, thumbnail=None, processing_required=True)
 
 
 def _should_generate_thumbnail(prepared: PreparedAsset) -> bool:
     return (
         prepared.thumbnail is None
-        and prepared.upsert_required
+        and prepared.processing_required
         and _needs_thumbnail(prepared.pending)
     )
 
@@ -348,11 +348,10 @@ def _replace_index_rows(
     progress: ProgressReporter | None = None,
 ) -> int:
     if full_index:
-        db.execute("DELETE FROM asset_search")
         db.execute("DELETE FROM assets")
+        _delete_unconfigured_sources(db, config.sources)
     else:
         for source in sources:
-            db.execute("DELETE FROM asset_search WHERE source_id = ?", (source.id,))
             db.execute("DELETE FROM assets WHERE source_id = ?", (source.id,))
 
     for source in sources:
@@ -368,18 +367,32 @@ def _replace_index_rows(
             (source.id, source.display_name, str(source.root), source.priority),
         )
 
-    upserted = 0
+    written = 0
     for source in sources:
         prepared_assets = prepared_by_source.get(source.id, [])
-        for start in range(0, len(prepared_assets), UPSERT_BATCH_SIZE):
-            upserted += _upsert_assets(
+        for start in range(0, len(prepared_assets), INSERT_BATCH_SIZE):
+            written += _insert_assets(
                 db,
-                prepared_assets[start : start + UPSERT_BATCH_SIZE],
+                prepared_assets[start : start + INSERT_BATCH_SIZE],
                 progress=progress,
             )
-        _refresh_asset_search(db, source.id, progress=progress)
 
-    return upserted
+    return written
+
+
+def _delete_unconfigured_sources(
+    db: sqlite3.Connection,
+    configured_sources: tuple[SourceConfig, ...],
+) -> None:
+    configured_ids = tuple(source.id for source in configured_sources)
+    if not configured_ids:
+        db.execute("DELETE FROM sources")
+        return
+    placeholders = ", ".join("?" for _ in configured_ids)
+    db.execute(
+        f"DELETE FROM sources WHERE id NOT IN ({placeholders})",
+        configured_ids,
+    )
 
 
 def _generate_thumbnails(
@@ -410,7 +423,7 @@ def _generate_thumbnails(
                 absolute_path=pending.file_path,
                 message=message,
             ),
-            upsert_required=True,
+            processing_required=True,
         )
 
     def _drain_done(
@@ -786,7 +799,7 @@ def _load_source_assets(
     return source_assets
 
 
-def _upsert_assets(
+def _insert_assets(
     db: sqlite3.Connection,
     prepared_assets: list[PreparedAsset],
     *,
@@ -798,7 +811,7 @@ def _upsert_assets(
     if progress is not None:
         progress(
             IndexEvent(
-                kind="upsert-batch-start",
+                kind="insert-batch-start",
                 source_id=prepared_assets[0].pending.source.id,
                 message=f"batch={len(prepared_assets)}",
             )
@@ -808,24 +821,9 @@ def _upsert_assets(
         INSERT INTO assets(
           asset_id, source_id, relative_path, absolute_path, filename, stem,
           extension, directory, size_bytes, mtime_ns, media_type,
-          thumbnail_path, thumbnail_width, thumbnail_height, stale, indexed_at
+          thumbnail_path, thumbnail_width, thumbnail_height, indexed_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP)
-        ON CONFLICT(source_id, relative_path) DO UPDATE SET
-          asset_id = excluded.asset_id,
-          absolute_path = excluded.absolute_path,
-          filename = excluded.filename,
-          stem = excluded.stem,
-          extension = excluded.extension,
-          directory = excluded.directory,
-          size_bytes = excluded.size_bytes,
-          mtime_ns = excluded.mtime_ns,
-          media_type = excluded.media_type,
-          thumbnail_path = excluded.thumbnail_path,
-          thumbnail_width = excluded.thumbnail_width,
-          thumbnail_height = excluded.thumbnail_height,
-          stale = 0,
-          indexed_at = CURRENT_TIMESTAMP
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         """,
         [
             (
@@ -850,12 +848,12 @@ def _upsert_assets(
     if progress is not None:
         progress(
             IndexEvent(
-                kind="upsert-batch",
+                kind="insert-batch",
                 source_id=prepared_assets[0].pending.source.id,
                 message=f"batch={len(prepared_assets)} elapsed={time.monotonic()-started:.3f}s",
             )
         )
-    return sum(1 for prepared in prepared_assets if prepared.upsert_required)
+    return len(prepared_assets)
 
 
 def _needs_thumbnail(pending: PendingAsset) -> bool:
@@ -864,62 +862,6 @@ def _needs_thumbnail(pending: PendingAsset) -> bool:
     if pending.media_type == "image":
         return True
     return False
-
-
-def _refresh_asset_search(
-    db: sqlite3.Connection,
-    source_id: str,
-    *,
-    progress: ProgressReporter | None = None,
-) -> int:
-    started = time.monotonic()
-    db.execute(
-        "DELETE FROM asset_search WHERE source_id = ?",
-        (source_id,),
-    )
-    rows = db.execute(
-        """
-        SELECT
-          asset_id,
-          source_id,
-          filename,
-          stem,
-          directory,
-          relative_path
-        FROM assets
-        WHERE source_id = ?
-        """,
-        (source_id,),
-    ).fetchall()
-    if rows:
-        db.executemany(
-            """
-            INSERT INTO asset_search(
-              asset_id, source_id, filename, stem, directory, relative_path
-            )
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            [
-                (
-                    row["asset_id"],
-                    row["source_id"],
-                    row["filename"],
-                    row["stem"],
-                    row["directory"],
-                    row["relative_path"],
-                )
-                for row in rows
-            ],
-        )
-    if progress is not None:
-        progress(
-            IndexEvent(
-                kind="asset-search-refreshed",
-                source_id=source_id,
-                message=f"count={len(rows)} elapsed={time.monotonic()-started:.3f}s",
-            )
-        )
-    return len(rows)
 
 
 def _thumbnail_status(prepared: PreparedAsset) -> str:

@@ -123,7 +123,7 @@ def run(argv: list[str]) -> int:
             logger.log(
                 "asset indexing finished: "
                 f"scanned={summary.scanned_files} "
-                f"upserted={summary.upserted_assets} "
+                f"written={summary.written_assets} "
                 f"thumbnails={summary.generated_thumbnails} "
                 f"failed={len(summary.thumbnail_failures)}"
             )
@@ -143,7 +143,7 @@ def run(argv: list[str]) -> int:
             print(
                 "indexed "
                 f"{summary.scanned_files} files, "
-                f"upserted {summary.upserted_assets}, "
+                f"written {summary.written_assets}, "
                 f"generated {summary.generated_thumbnails} thumbnails, "
                 f"failed {len(summary.thumbnail_failures)} thumbnails"
             )
@@ -535,27 +535,15 @@ class _IndexLogger:
                     f"queue_wait={queue_wait_ms} "
                     f"{event.message}"
                 )
-            elif event.kind == "upsert-batch":
+            elif event.kind == "insert-batch":
                 self.log(
-                    "index upsert batch: "
+                    "index insert batch: "
                     f"source={event.source_id} "
                     f"{event.message}"
                 )
-            elif event.kind == "upsert-batch-start":
+            elif event.kind == "insert-batch-start":
                 self.log(
-                    "index upsert batch start: "
-                    f"source={event.source_id} "
-                    f"{event.message}"
-                )
-            elif event.kind == "asset-search-refreshed":
-                self.log(
-                    "index asset_search refreshed: "
-                    f"source={event.source_id} "
-                    f"{event.message}"
-                )
-            elif event.kind == "asset-search-refresh":
-                self.log(
-                    "index asset search refresh: "
+                    "index insert batch start: "
                     f"source={event.source_id} "
                     f"{event.message}"
                 )
@@ -601,7 +589,7 @@ class _IndexLogger:
             "index progress: "
             f"scanned={progress.scanned_files}/{self._total_files} "
             f"source={progress.current_source_id} "
-            f"upserted={progress.upserted_assets} "
+            f"written={progress.written_assets} "
             f"thumbnails={progress.generated_thumbnails} "
             f"failed={progress.failed_thumbnails} "
             f"elapsed={progress.elapsed_seconds:.1f}s"
@@ -655,7 +643,7 @@ class _IndexProgressBar:
         )
         self._bar.set_postfix_str(
             f"source={progress.current_source_id} "
-            f"upserted={progress.upserted_assets} "
+            f"written={progress.written_assets} "
             f"thumbnails={progress.generated_thumbnails} "
             f"failed={progress.failed_thumbnails} "
             f"thumbs/s={rate:.1f}",
