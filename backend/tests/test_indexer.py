@@ -314,7 +314,46 @@ def test_index_sources_skips_unchanged_thumbnail_generation(tmp_path: Path) -> N
     assert first.generated_thumbnails == 1
     assert first.written_assets == 1
     assert second.generated_thumbnails == 0
-    assert second.written_assets == 1
+    assert second.written_assets == 0
+
+
+def test_index_sources_preserves_unchanged_thumbnail_reference_without_cache_check(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    write_image(source_root / "dragon.png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+
+    with connect(tmp_path / "findme.sqlite3") as db:
+        initialize_database(db)
+        first = index_sources(db, config)
+        row = db.execute(
+            "SELECT thumbnail_path FROM assets WHERE relative_path = 'dragon.png'"
+        ).fetchone()
+        thumbnail_path = Path(row["thumbnail_path"])
+        thumbnail_path.unlink()
+
+        second = index_sources(db, config)
+        preserved = db.execute(
+            "SELECT thumbnail_path FROM assets WHERE relative_path = 'dragon.png'"
+        ).fetchone()
+
+    assert first.generated_thumbnails == 1
+    assert second.generated_thumbnails == 0
+    assert second.written_assets == 0
+    assert preserved["thumbnail_path"] == str(thumbnail_path)
 
 
 def test_index_sources_skips_unchanged_video_poster_generation(tmp_path: Path) -> None:
@@ -342,7 +381,7 @@ def test_index_sources_skips_unchanged_video_poster_generation(tmp_path: Path) -
     assert first.generated_thumbnails == 1
     assert first.written_assets == 1
     assert second.generated_thumbnails == 0
-    assert second.written_assets == 1
+    assert second.written_assets == 0
 
 
 def test_index_sources_classifies_audio_files(tmp_path: Path) -> None:
@@ -375,7 +414,7 @@ def test_index_sources_classifies_audio_files(tmp_path: Path) -> None:
     assert row["thumbnail_path"] is None
 
 
-def test_index_sources_updates_unchanged_audio_media_type(tmp_path: Path) -> None:
+def test_index_sources_preserves_existing_metadata_for_unchanged_paths(tmp_path: Path) -> None:
     source_root = tmp_path / "assets"
     source_root.mkdir()
     audio_path = source_root / "thunder.mp3"
@@ -423,8 +462,8 @@ def test_index_sources_updates_unchanged_audio_media_type(tmp_path: Path) -> Non
         ).fetchone()
 
     assert summary.scanned_files == 1
-    assert summary.written_assets == 1
-    assert row["media_type"] == "audio"
+    assert summary.written_assets == 0
+    assert row["media_type"] == "other"
     assert row["thumbnail_path"] is None
 
 
@@ -505,10 +544,10 @@ def test_index_sources_does_not_retry_unchanged_thumbnail_failures(
     assert len(first.thumbnail_failures) == 1
     assert first.thumbnail_failures[0].relative_path == "broken.png"
     assert second.scanned_files == 2
-    assert second.written_assets == 2
+    assert second.written_assets == 0
     assert second.thumbnail_failures == ()
     assert retried.scanned_files == 2
-    assert retried.written_assets == 2
+    assert retried.written_assets == 0
     assert len(retried.thumbnail_failures) == 1
     assert retried.thumbnail_failures[0].relative_path == "broken.png"
     assert rows[0]["relative_path"] == "broken.png"
@@ -613,7 +652,7 @@ def test_index_sources_marks_worker_timeout_as_failure(tmp_path: Path, monkeypat
             thumbnail_worker_timeout_seconds=0.1,
         )
         assert no_retry.scanned_files == 1
-        assert no_retry.written_assets == 1
+        assert no_retry.written_assets == 0
         assert len(no_retry.thumbnail_failures) == 0
 
 

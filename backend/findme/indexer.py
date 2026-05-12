@@ -10,6 +10,8 @@ import sqlite3
 import time
 from typing import Protocol
 
+import powerwalk
+
 from findme.config import AppConfig, SourceConfig
 from findme.db import refresh_index_fingerprint
 from findme.identity import asset_id_for
@@ -21,6 +23,7 @@ from findme.thumbnails import (
 )
 
 INSERT_BATCH_SIZE = 512
+POWERWALK_THREADS = 32
 
 IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif"})
 VIDEO_EXTENSIONS = frozenset({".webm", ".mp4"})
@@ -98,12 +101,22 @@ class PreparedAsset:
 
 @dataclass(frozen=True)
 class CurrentAsset:
+    absolute_path: str
     media_type: str
     size_bytes: int
     mtime_ns: int
     thumbnail_path: Path | None
     thumbnail_width: int | None
     thumbnail_height: int | None
+
+
+@dataclass(frozen=True)
+class DiscoveredAsset:
+    file_path: Path
+    relative_path: str
+    extension: str
+    directory: str
+    media_type: str
 
 
 def index_sources(
@@ -113,6 +126,7 @@ def index_sources(
     source_ids: frozenset[str] | None = None,
     thumbnail_workers: int | None = None,
     retry_failed_thumbnails: bool = False,
+    rebuild_thumbnails: bool = False,
     thumbnail_worker_timeout_seconds: float | None = None,
     progress: ProgressReporter | None = None,
 ) -> IndexSummary:
@@ -129,27 +143,65 @@ def index_sources(
         thumbnail_worker_timeout_seconds = None
 
     selected_sources = _filter_sources(config.sources, source_ids)
-    prepared_by_source: dict[str, list[PreparedAsset]] = {}
     thumbnail_work: list[PendingAsset] = []
+    index_changed = False
+    needs_existing_metadata = retry_failed_thumbnails or rebuild_thumbnails
 
     for source in selected_sources:
-        source_assets = _load_source_assets(
-            db,
-            source,
-            progress=progress,
+        index_changed = _upsert_source(db, source) or index_changed
+        source_assets = (
+            _load_source_assets(db, source, progress=progress)
+            if needs_existing_metadata
+            else {}
+        )
+        source_asset_paths = (
+            set(source_assets)
+            if needs_existing_metadata
+            else _load_source_asset_paths(db, source, progress=progress)
         )
         source_scan_started = time.monotonic()
 
-        prepared_assets: list[PreparedAsset] = []
-        for file_path in _iter_source_files(source):
-            pending = _pending_asset(source, file_path)
+        seen_paths: set[str] = set()
+        new_assets: list[PreparedAsset] = []
+        updated_assets: list[PreparedAsset] = []
+        for discovered in _iter_source_file_entries(source):
+            seen_paths.add(discovered.relative_path)
+            if discovered.relative_path not in source_asset_paths:
+                pending = _pending_asset(source, discovered.file_path)
+                current = None
+            elif needs_existing_metadata:
+                current = source_assets[discovered.relative_path]
+                pending = _pending_asset_from_current(source, discovered, current)
+            else:
+                pending = None
+                current = None
+            scanned += 1
+            if pending is None:
+                if progress is not None:
+                    progress(
+                        IndexProgress(
+                            scanned_files=scanned,
+                            written_assets=written,
+                            generated_thumbnails=thumbnails,
+                            failed_thumbnails=len(thumbnail_failures),
+                            current_source_id=source.id,
+                            elapsed_seconds=time.monotonic() - start,
+                            current_relative_path=discovered.relative_path,
+                            current_action="unchanged",
+                            current_thumbnail="unchanged",
+                        )
+                    )
+                continue
             prepared = _prepare_index_asset(
                 pending,
-                source_assets.get(pending.relative_path),
+                current,
                 retry_failed_thumbnails=retry_failed_thumbnails,
+                rebuild_thumbnails=rebuild_thumbnails,
             )
-            prepared_assets.append(prepared)
-            scanned += 1
+            if current is None:
+                new_assets.append(prepared)
+            elif _existing_asset_needs_update(discovered, current):
+                updated_assets.append(prepared)
             if _should_generate_thumbnail(prepared):
                 thumbnail_work.append(pending)
             if progress is not None:
@@ -169,29 +221,36 @@ def index_sources(
                     )
                 )
 
-        prepared_by_source[source.id] = prepared_assets
+        written += _insert_assets(
+            db,
+            new_assets,
+            progress=progress,
+        )
+        written += _update_assets(
+            db,
+            updated_assets,
+            progress=progress,
+        )
+        deleted = _delete_missing_assets(db, source.id, source_asset_paths - seen_paths)
+        if new_assets or updated_assets or deleted:
+            index_changed = True
         if progress is not None:
             progress(
                 IndexEvent(
                     kind="source-scan-complete",
                     source_id=source.id,
                     message=(
-                        f"seen={len(prepared_assets)} "
+                        f"seen={len(seen_paths)} "
                         f"elapsed={time.monotonic()-source_scan_started:.2f}s"
                     ),
                 )
             )
 
-    written = _replace_index_rows(
-        db,
-        config,
-        selected_sources,
-        prepared_by_source,
-        full_index=source_ids is None,
-        progress=progress,
-    )
-    refresh_index_fingerprint(db)
-    db.commit()
+    if source_ids is None:
+        index_changed = _delete_unconfigured_sources(db, config.sources) or index_changed
+    if index_changed:
+        refresh_index_fingerprint(db)
+        db.commit()
 
     for prepared in _generate_thumbnails(
         config,
@@ -247,9 +306,9 @@ def count_indexable_files(
                     source_id=source.id,
                     message="started",
                 )
-            )
+        )
         source_count = 0
-        for _ in _iter_source_files(source):
+        for _ in _iter_source_file_entries(source):
             total += 1
             source_count += 1
             if progress is not None and source_count % log_interval == 0:
@@ -284,15 +343,175 @@ def _filter_sources(
 
 
 def _iter_source_files(source: SourceConfig) -> Iterator[Path]:
+    for discovered in _iter_source_file_entries(source):
+        yield discovered.file_path
+
+
+def _iter_source_file_entries(source: SourceConfig) -> Iterator[DiscoveredAsset]:
     extensions = source.media_extensions
-    for dirpath, dirnames, filenames in os.walk(source.root, topdown=True):
-        dirnames[:] = [name for name in dirnames if name not in IGNORED_DIRS]
-        if not dirnames and not filenames:
+    root = os.fspath(source.root)
+    root_prefix = root.rstrip(os.sep) + os.sep
+    root_prefix_len = len(root_prefix)
+    for entry in powerwalk.walk(
+        source.root,
+        ignore_hidden=False,
+        respect_git_ignore=False,
+        respect_global_git_ignore=False,
+        respect_git_exclude=False,
+        respect_ignore=False,
+        follow_symlinks=False,
+        exclude=["**/.findme/**", "**/.findme/"],
+        threads=POWERWALK_THREADS,
+        on_error="raise",
+    ):
+        if entry.is_dir:
             continue
-        for filename in filenames:
-            if Path(filename).suffix.lower() not in extensions:
-                continue
-            yield Path(dirpath) / filename
+        path = entry.path_str
+        name = path.rsplit(os.sep, 1)[-1]
+        dot = name.rfind(".")
+        if dot < 0:
+            continue
+        extension = name[dot:].lower()
+        if extension not in extensions:
+            continue
+        relative_path = path[root_prefix_len:].replace(os.sep, "/")
+        slash = relative_path.rfind("/")
+        directory_posix = "" if slash < 0 else relative_path[:slash]
+        yield DiscoveredAsset(
+            file_path=Path(path),
+            relative_path=relative_path,
+            extension=extension,
+            directory=directory_posix,
+            media_type=_media_type(extension),
+        )
+
+
+def _pending_asset_from_current(
+    source: SourceConfig,
+    discovered: DiscoveredAsset,
+    current: CurrentAsset,
+) -> PendingAsset:
+    return PendingAsset(
+        source=source,
+        file_path=discovered.file_path,
+        relative_path=discovered.relative_path,
+        size_bytes=current.size_bytes,
+        mtime_ns=current.mtime_ns,
+        extension=discovered.extension,
+        directory=discovered.directory,
+        asset_id=asset_id_for(source.id, discovered.relative_path),
+        media_type=discovered.media_type,
+    )
+
+
+def _existing_asset_needs_update(
+    discovered: DiscoveredAsset,
+    current: CurrentAsset,
+) -> bool:
+    return (
+        current.absolute_path != str(discovered.file_path)
+        or current.media_type != discovered.media_type
+    )
+
+
+def _upsert_source(db: sqlite3.Connection, source: SourceConfig) -> bool:
+    cursor = db.execute(
+        """
+        INSERT INTO sources(id, display_name, root, priority)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          display_name = excluded.display_name,
+          root = excluded.root,
+          priority = excluded.priority
+        WHERE sources.display_name IS NOT excluded.display_name
+           OR sources.root IS NOT excluded.root
+           OR sources.priority IS NOT excluded.priority
+        """,
+        (source.id, source.display_name, str(source.root), source.priority),
+    )
+    return cursor.rowcount > 0
+
+
+def _delete_missing_assets(
+    db: sqlite3.Connection,
+    source_id: str,
+    missing_paths: set[str],
+) -> int:
+    deleted = 0
+    missing = tuple(missing_paths)
+    for start in range(0, len(missing), INSERT_BATCH_SIZE):
+        batch = missing[start : start + INSERT_BATCH_SIZE]
+        placeholders = ", ".join("?" for _ in batch)
+        cursor = db.execute(
+            f"DELETE FROM assets WHERE source_id = ? AND relative_path IN ({placeholders})",
+            (source_id, *batch),
+        )
+        deleted += cursor.rowcount
+    return deleted
+
+
+def _update_assets(
+    db: sqlite3.Connection,
+    prepared_assets: list[PreparedAsset],
+    *,
+    progress: ProgressReporter | None = None,
+) -> int:
+    if not prepared_assets:
+        return 0
+    started = time.monotonic()
+    db.executemany(
+        """
+        UPDATE assets
+        SET absolute_path = ?,
+            filename = ?,
+            stem = ?,
+            extension = ?,
+            directory = ?,
+            media_type = ?,
+            indexed_at = CURRENT_TIMESTAMP
+        WHERE source_id = ?
+          AND relative_path = ?
+        """,
+        [
+            (
+                str(prepared.pending.file_path),
+                prepared.pending.file_path.name,
+                prepared.pending.file_path.stem,
+                prepared.pending.extension,
+                prepared.pending.directory,
+                prepared.pending.media_type,
+                prepared.pending.source.id,
+                prepared.pending.relative_path,
+            )
+            for prepared in prepared_assets
+        ],
+    )
+    if progress is not None:
+        progress(
+            IndexEvent(
+                kind="update-assets",
+                source_id=prepared_assets[0].pending.source.id,
+                message=f"count={len(prepared_assets)} elapsed={time.monotonic()-started:.3f}s",
+            )
+        )
+    return len(prepared_assets)
+
+
+def _delete_unconfigured_sources(
+    db: sqlite3.Connection,
+    configured_sources: tuple[SourceConfig, ...],
+) -> bool:
+    before = db.total_changes
+    configured_ids = tuple(source.id for source in configured_sources)
+    if not configured_ids:
+        db.execute("DELETE FROM sources")
+        return db.total_changes != before
+    placeholders = ", ".join("?" for _ in configured_ids)
+    db.execute(
+        f"DELETE FROM sources WHERE id NOT IN ({placeholders})",
+        configured_ids,
+    )
+    return db.total_changes != before
 
 
 def _prepare_index_asset(
@@ -300,6 +519,7 @@ def _prepare_index_asset(
     current: CurrentAsset | None,
     *,
     retry_failed_thumbnails: bool,
+    rebuild_thumbnails: bool,
 ) -> PreparedAsset:
     if current is not None and (
         current.media_type == pending.media_type
@@ -307,9 +527,10 @@ def _prepare_index_asset(
         and current.mtime_ns == pending.mtime_ns
     ):
         needs_thumbnail = _needs_thumbnail(pending)
+        if needs_thumbnail and rebuild_thumbnails:
+            return PreparedAsset(pending=pending, thumbnail=None, processing_required=True)
         has_cached_thumbnail = (
             current.thumbnail_path is not None
-            and current.thumbnail_path.is_file()
         )
         if needs_thumbnail and has_cached_thumbnail:
             return PreparedAsset(
@@ -335,63 +556,6 @@ def _should_generate_thumbnail(prepared: PreparedAsset) -> bool:
         prepared.thumbnail is None
         and prepared.processing_required
         and _needs_thumbnail(prepared.pending)
-    )
-
-
-def _replace_index_rows(
-    db: sqlite3.Connection,
-    config: AppConfig,
-    sources: tuple[SourceConfig, ...],
-    prepared_by_source: dict[str, list[PreparedAsset]],
-    *,
-    full_index: bool,
-    progress: ProgressReporter | None = None,
-) -> int:
-    if full_index:
-        db.execute("DELETE FROM assets")
-        _delete_unconfigured_sources(db, config.sources)
-    else:
-        for source in sources:
-            db.execute("DELETE FROM assets WHERE source_id = ?", (source.id,))
-
-    for source in sources:
-        db.execute(
-            """
-            INSERT INTO sources(id, display_name, root, priority)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-              display_name = excluded.display_name,
-              root = excluded.root,
-              priority = excluded.priority
-            """,
-            (source.id, source.display_name, str(source.root), source.priority),
-        )
-
-    written = 0
-    for source in sources:
-        prepared_assets = prepared_by_source.get(source.id, [])
-        for start in range(0, len(prepared_assets), INSERT_BATCH_SIZE):
-            written += _insert_assets(
-                db,
-                prepared_assets[start : start + INSERT_BATCH_SIZE],
-                progress=progress,
-            )
-
-    return written
-
-
-def _delete_unconfigured_sources(
-    db: sqlite3.Connection,
-    configured_sources: tuple[SourceConfig, ...],
-) -> None:
-    configured_ids = tuple(source.id for source in configured_sources)
-    if not configured_ids:
-        db.execute("DELETE FROM sources")
-        return
-    placeholders = ", ".join("?" for _ in configured_ids)
-    db.execute(
-        f"DELETE FROM sources WHERE id NOT IN ({placeholders})",
-        configured_ids,
     )
 
 
@@ -512,6 +676,7 @@ def _generate_thumbnails(
                 timeout=wait_timeout,
                 return_when=FIRST_COMPLETED,
             )
+            now = time.monotonic()
             timed_out: set[Future[PreparedAsset]] = set()
             if thumbnail_worker_timeout_seconds is not None and in_flight:
                 timed_out = {
@@ -761,6 +926,7 @@ def _load_source_assets(
         """
         SELECT
           relative_path,
+          absolute_path,
           size_bytes,
           mtime_ns,
           media_type,
@@ -778,6 +944,7 @@ def _load_source_assets(
             Path(row["thumbnail_path"]) if row["thumbnail_path"] is not None else None
         )
         source_assets[row["relative_path"]] = CurrentAsset(
+            absolute_path=row["absolute_path"],
             media_type=row["media_type"],
             size_bytes=row["size_bytes"],
             mtime_ns=row["mtime_ns"],
@@ -797,6 +964,36 @@ def _load_source_assets(
             )
         )
     return source_assets
+
+
+def _load_source_asset_paths(
+    db: sqlite3.Connection,
+    source: SourceConfig,
+    *,
+    progress: ProgressReporter | None = None,
+) -> set[str]:
+    started = time.monotonic()
+    rows = db.execute(
+        """
+        SELECT relative_path
+        FROM assets
+        WHERE source_id = ?
+        """,
+        (source.id,),
+    ).fetchall()
+    paths = {row["relative_path"] for row in rows}
+    if progress is not None:
+        progress(
+            IndexEvent(
+                kind="source-assets-loaded",
+                source_id=source.id,
+                message=(
+                    f"count={len(paths)} "
+                    f"elapsed={time.monotonic() - started:.3f}s"
+                ),
+            )
+        )
+    return paths
 
 
 def _insert_assets(

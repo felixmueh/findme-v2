@@ -35,3 +35,18 @@ def test_initialize_database_creates_schema_and_wal_database(tmp_path: Path) -> 
     assert "stale" not in asset_columns
 
     assert profiles == {"none": "none", "default": "default"}
+
+
+def test_initialize_database_does_not_rebuild_current_directory_index(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "findme.sqlite3"
+
+    with connect(db_path) as db:
+        initialize_database(db)
+        statements: list[str] = []
+        db.set_trace_callback(statements.append)
+
+        initialize_database(db)
+
+    assert not any("DROP INDEX IF EXISTS idx_assets_directory" in statement for statement in statements)

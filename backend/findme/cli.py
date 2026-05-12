@@ -13,8 +13,8 @@ import uvicorn
 from findme.api import create_app
 from findme.cleanup import cleanup_thumbnails
 from findme.config import ConfigError, load_config
-from findme.db import connect, initialize_database
-from findme.indexer import IndexEvent, count_indexable_files, index_sources
+from findme.db import connect, initialize_database, search_corpus_is_stale
+from findme.indexer import IndexEvent, index_sources
 from findme.search import SearchIndex, SearchMode, load_domain_vocabulary
 from findme.search_corpus import (
     SEARCH_CORPUS_VERSION,
@@ -83,29 +83,13 @@ def run(argv: list[str]) -> int:
                 return 2
             if args.rebuild_thumbnails:
                 shutil.rmtree(config.data_root / "cache" / "thumbs", ignore_errors=True)
-            logger = _IndexLogger(stream=sys.stdout, verbosity=args.verbose)
-            logger.log("counting indexable files started")
-            total_files = count_indexable_files(
-                config,
-                source_ids=source_ids,
-                progress=logger.event,
-            )
             logger = _IndexLogger(
                 stream=sys.stdout,
-                total_files=total_files,
                 verbosity=args.verbose,
             )
-            logger.log(f"counting indexable files finished: files={total_files}")
-            logger.log(
-                f"index started: files={total_files} thumbnail_workers={thumbnail_workers}"
-            )
-            progress_bar = (
-                _IndexProgressBar(total_files=total_files)
-                if args.verbose < 2
-                else None
-            )
+            logger.log(f"index started: thumbnail_workers={thumbnail_workers}")
             progress = _IndexProgressReporter(
-                bar=progress_bar,
+                bar=None,
                 logger=logger,
             )
             with connect(db_path) as db:
@@ -116,9 +100,11 @@ def run(argv: list[str]) -> int:
                     source_ids=source_ids,
                     thumbnail_workers=thumbnail_workers,
                     retry_failed_thumbnails=args.retry_failed_thumbnails,
+                    rebuild_thumbnails=args.rebuild_thumbnails,
                     thumbnail_worker_timeout_seconds=thumbnail_worker_timeout_seconds,
                     progress=progress,
                 )
+                corpus_stale = search_corpus_is_stale(db)
             progress.finish()
             logger.log(
                 "asset indexing finished: "
@@ -127,8 +113,15 @@ def run(argv: list[str]) -> int:
                 f"thumbnails={summary.generated_thumbnails} "
                 f"failed={len(summary.thumbnail_failures)}"
             )
-            logger.log("search preprocessing started")
-            corpus_path = rebuild_search_corpus(config, db_path, log=logger.log)
+            corpus_path = search_corpus_snapshot_path(
+                config.data_root,
+                config.search_corpus_path,
+            )
+            if corpus_stale:
+                logger.log("search preprocessing started")
+                corpus_path = rebuild_search_corpus(config, db_path, log=logger.log)
+            else:
+                logger.log("search preprocessing skipped: corpus current")
             thumbnail_cleanup_summary = None
             if args.cleanup_thumbnails:
                 logger.log("thumbnail cleanup started")
@@ -147,7 +140,10 @@ def run(argv: list[str]) -> int:
                 f"generated {summary.generated_thumbnails} thumbnails, "
                 f"failed {len(summary.thumbnail_failures)} thumbnails"
             )
-            print(f"rebuilt search corpus: {corpus_path}")
+            if corpus_stale:
+                print(f"rebuilt search corpus: {corpus_path}")
+            else:
+                print(f"search corpus current: {corpus_path}")
             if thumbnail_cleanup_summary is not None:
                 print(
                     "cleaned "
@@ -409,6 +405,7 @@ class _IndexLogger:
         self._verbosity = verbosity
         self._last_progress_log = 0.0
         self._current_source_id: str | None = None
+        self._logged_scan_complete_progress = False
 
     def log(self, message: str) -> None:
         timestamp = datetime.now().astimezone().isoformat(timespec="seconds")
@@ -557,15 +554,14 @@ class _IndexLogger:
             )
 
     def progress(self, progress) -> None:
-        if self._total_files is None:
-            return
         if progress.current_source_id != self._current_source_id:
             self._current_source_id = progress.current_source_id
-            self.log(
-                "index source active: "
-                f"source={progress.current_source_id} "
-                f"scanned={progress.scanned_files}/{self._total_files}"
-            )
+            if self._total_files is not None:
+                self.log(
+                    "index source active: "
+                    f"source={progress.current_source_id} "
+                    f"scanned={progress.scanned_files}/{self._total_files}"
+                )
         if self._verbosity >= 1 and progress.current_relative_path:
             self.log(
                 "index file done: "
@@ -575,16 +571,24 @@ class _IndexLogger:
                 f"thumbnail={progress.current_thumbnail}"
             )
 
+        if self._total_files is None:
+            return
+
         now = time.monotonic()
         should_log = (
             self._last_progress_log == 0.0
             or now - self._last_progress_log >= self._progress_interval_seconds
-            or progress.scanned_files >= self._total_files
+            or (
+                progress.scanned_files >= self._total_files
+                and not self._logged_scan_complete_progress
+            )
         )
         if not should_log:
             return
 
         self._last_progress_log = now
+        if progress.scanned_files >= self._total_files:
+            self._logged_scan_complete_progress = True
         self.log(
             "index progress: "
             f"scanned={progress.scanned_files}/{self._total_files} "

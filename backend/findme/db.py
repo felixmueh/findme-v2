@@ -120,7 +120,6 @@ def _ensure_column(db: sqlite3.Connection, table: str, column: str, definition: 
 def _drop_legacy_indexing_schema(db: sqlite3.Connection) -> None:
     db.execute("DROP TABLE IF EXISTS asset_search")
     db.execute("DROP INDEX IF EXISTS idx_assets_source_stale")
-    db.execute("DROP INDEX IF EXISTS idx_assets_directory")
     columns = {row["name"] for row in db.execute("PRAGMA table_info(assets)")}
     if "stale" in columns:
         db.execute("ALTER TABLE assets DROP COLUMN stale")

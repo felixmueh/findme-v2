@@ -196,9 +196,17 @@ This avoids content hashing in v1 while still invalidating derived files when an
 
 Search-serving data is a derived corpus, not canonical metadata. The main database remains the source of truth for indexed assets, sources, folder quality, and thumbnail references. `search_corpus.py` owns the rebuild-sensitive corpus format and preprocessing signals. It builds a separate versioned pickle snapshot under the app data root, with the active filename derived from the preprocessing version, plus the matching Tantivy lexical index. Serving and search evaluation consume that prepared corpus and fail clearly if it is missing or stale; they do not rebuild it implicitly.
 
+Default indexing is optimized for the common "files were added or removed"
+case. During the first phase it scans source-relative paths, preserves existing
+database rows for paths that are still present, stats only newly discovered
+files, deletes rows for missing paths, and schedules thumbnails/posters only
+for new files or explicit retry/rebuild requests. It does not verify size/mtime
+for every existing path on every run; a full verification mode can be added if
+in-place source-file mutation becomes an important workflow.
+
 Indexing runs in three phases:
 
-- scan source directories and replace the selected index rows in the canonical database, reusing existing thumbnail references when the file fingerprint still matches
+- scan source directories and update the canonical database, preserving existing metadata and thumbnail references for paths that are still present
 - generate missing thumbnails/posters and update matching database rows as each generated file completes
 - search preprocessing snapshots current assets into the versioned search corpus, builds the lexical index used by search, and precomputes result-card grouping metadata
 

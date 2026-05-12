@@ -57,6 +57,11 @@ Indexing is CLI-driven for v1.
 
 Use an explicitly parallel worker pipeline for indexing and derivative generation. This is a core requirement, not an afterthought.
 
+Directory traversal uses `powerwalk`, a Rust-backed Python package built on the
+same traversal family as ripgrep. It is a required indexing dependency, not an
+optional fallback, because production indexing performance depends on parallel
+source enumeration.
+
 Guidelines:
 
 - use bounded worker pools
