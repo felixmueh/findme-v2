@@ -11,6 +11,7 @@ import time
 from typing import Protocol
 
 from findme.config import AppConfig, SourceConfig
+from findme.db import refresh_index_fingerprint
 from findme.identity import asset_id_for
 from findme.thumbnails import (
     ThumbnailError,
@@ -31,7 +32,6 @@ IGNORED_DIRS = frozenset({".findme"})
 class IndexSummary:
     scanned_files: int = 0
     upserted_assets: int = 0
-    marked_stale: int = 0
     generated_thumbnails: int = 0
     thumbnail_failures: tuple["ThumbnailFailure", ...] = ()
 
@@ -54,7 +54,6 @@ class IndexProgress:
     upserted_assets: int
     generated_thumbnails: int
     failed_thumbnails: int
-    marked_stale: int
     current_source_id: str
     elapsed_seconds: float
     current_relative_path: str = ""
@@ -119,7 +118,6 @@ def index_sources(
 ) -> IndexSummary:
     scanned = 0
     upserted = 0
-    stale = 0
     thumbnails = 0
     thumbnail_failures: list[ThumbnailFailure] = []
     start = time.monotonic()
@@ -130,60 +128,30 @@ def index_sources(
     ):
         thumbnail_worker_timeout_seconds = None
 
-    for source in _filter_sources(config.sources, source_ids):
+    selected_sources = _filter_sources(config.sources, source_ids)
+    prepared_by_source: dict[str, list[PreparedAsset]] = {}
+    thumbnail_work: list[PendingAsset] = []
+
+    for source in selected_sources:
         source_assets = _load_source_assets(
             db,
             source,
             progress=progress,
         )
         source_scan_started = time.monotonic()
-        db.execute(
-            """
-            INSERT INTO sources(id, display_name, root, priority)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-              display_name = excluded.display_name,
-              root = excluded.root,
-              priority = excluded.priority
-            """,
-            (source.id, source.display_name, str(source.root), source.priority),
-        )
 
-        seen_paths = set()
-        if progress is not None:
-            progress(
-                IndexEvent(
-                    kind="stale-scan-start",
-                    source_id=source.id,
-                    message=f"seen={len(seen_paths)}",
-                )
+        prepared_assets: list[PreparedAsset] = []
+        for file_path in _iter_source_files(source):
+            pending = _pending_asset(source, file_path)
+            prepared = _prepare_index_asset(
+                pending,
+                source_assets.get(pending.relative_path),
+                retry_failed_thumbnails=retry_failed_thumbnails,
             )
-        upsert_batch: list[PreparedAsset] = []
-        for prepared in _prepare_assets(
-            db,
-            config,
-            source,
-            source_assets=source_assets,
-            max_workers=worker_count,
-            retry_failed_thumbnails=retry_failed_thumbnails,
-            thumbnail_worker_timeout_seconds=thumbnail_worker_timeout_seconds,
-            progress=progress,
-        ):
-            seen_paths.add(prepared.pending.relative_path)
+            prepared_assets.append(prepared)
             scanned += 1
-            if prepared.upsert_required:
-                upsert_batch.append(prepared)
-                if len(upsert_batch) >= UPSERT_BATCH_SIZE:
-                    upserted += _upsert_assets(
-                        db,
-                        upsert_batch,
-                        progress=progress,
-                    )
-                    upsert_batch = []
-            if prepared.thumbnail is not None and prepared.thumbnail.generated:
-                thumbnails += 1
-            if prepared.thumbnail_failure is not None:
-                thumbnail_failures.append(prepared.thumbnail_failure)
+            if _should_generate_thumbnail(prepared):
+                thumbnail_work.append(pending)
             if progress is not None:
                 progress(
                     IndexProgress(
@@ -191,54 +159,52 @@ def index_sources(
                         upserted_assets=upserted,
                         generated_thumbnails=thumbnails,
                         failed_thumbnails=len(thumbnail_failures),
-                        marked_stale=stale,
                         current_source_id=source.id,
                         elapsed_seconds=time.monotonic() - start,
                         current_relative_path=prepared.pending.relative_path,
                         current_action=(
-                            "upserted" if prepared.upsert_required else "unchanged"
+                            "indexed" if prepared.upsert_required else "unchanged"
                         ),
                         current_thumbnail=_thumbnail_status(prepared),
                     )
                 )
 
-        if upsert_batch:
-            upserted += _upsert_assets(
-                db,
-                upsert_batch,
-                progress=progress,
-            )
+        prepared_by_source[source.id] = prepared_assets
         if progress is not None:
             progress(
                 IndexEvent(
                     kind="source-scan-complete",
                     source_id=source.id,
                     message=(
-                        f"seen={len(seen_paths)} "
+                        f"seen={len(prepared_assets)} "
                         f"elapsed={time.monotonic()-source_scan_started:.2f}s"
                     ),
                 )
             )
-        newly_stale = _mark_missing_stale(
-            db,
-            source.id,
-            seen_paths,
-            progress=progress,
-        )
-        stale += newly_stale
-        if progress is not None:
-            progress(
-                IndexEvent(
-                    kind="stale-scan-complete",
-                    source_id=source.id,
-                    message=f"new_stale={newly_stale}",
-                )
-            )
-        _refresh_asset_search(
-            db,
-            source.id,
-            progress=progress,
-        )
+
+    upserted = _replace_index_rows(
+        db,
+        config,
+        selected_sources,
+        prepared_by_source,
+        full_index=source_ids is None,
+        progress=progress,
+    )
+    refresh_index_fingerprint(db)
+    db.commit()
+
+    for prepared in _generate_thumbnails(
+        config,
+        thumbnail_work,
+        max_workers=worker_count,
+        thumbnail_worker_timeout_seconds=thumbnail_worker_timeout_seconds,
+        progress=progress,
+    ):
+        if prepared.thumbnail is not None and prepared.thumbnail.generated:
+            thumbnails += _update_asset_thumbnail(db, prepared)
+            db.commit()
+        if prepared.thumbnail_failure is not None:
+            thumbnail_failures.append(prepared.thumbnail_failure)
         if progress is not None:
             progress(
                 IndexProgress(
@@ -246,16 +212,20 @@ def index_sources(
                     upserted_assets=upserted,
                     generated_thumbnails=thumbnails,
                     failed_thumbnails=len(thumbnail_failures),
-                    marked_stale=stale,
-                    current_source_id=source.id,
+                    current_source_id=prepared.pending.source.id,
                     elapsed_seconds=time.monotonic() - start,
+                    current_relative_path=prepared.pending.relative_path,
+                    current_action="thumbnail",
+                    current_thumbnail=_thumbnail_status(prepared),
                 )
             )
+    if thumbnail_work:
+        refresh_index_fingerprint(db)
+        db.commit()
 
     return IndexSummary(
         scanned_files=scanned,
         upserted_assets=upserted,
-        marked_stale=stale,
         generated_thumbnails=thumbnails,
         thumbnail_failures=tuple(thumbnail_failures),
     )
@@ -325,22 +295,108 @@ def _iter_source_files(source: SourceConfig) -> Iterator[Path]:
             yield Path(dirpath) / filename
 
 
-def _prepare_assets(
+def _prepare_index_asset(
+    pending: PendingAsset,
+    current: CurrentAsset | None,
+    *,
+    retry_failed_thumbnails: bool,
+) -> PreparedAsset:
+    if current is not None and (
+        current.media_type == pending.media_type
+        and current.size_bytes == pending.size_bytes
+        and current.mtime_ns == pending.mtime_ns
+    ):
+        needs_thumbnail = _needs_thumbnail(pending)
+        has_cached_thumbnail = (
+            current.thumbnail_path is not None
+            and current.thumbnail_path.is_file()
+        )
+        if needs_thumbnail and has_cached_thumbnail:
+            return PreparedAsset(
+                pending=pending,
+                thumbnail=ThumbnailResult(
+                    path=current.thumbnail_path,
+                    width=current.thumbnail_width,
+                    height=current.thumbnail_height,
+                    generated=False,
+                ),
+                upsert_required=False,
+            )
+        if needs_thumbnail and current.thumbnail_path is None and not retry_failed_thumbnails:
+            return PreparedAsset(pending=pending, thumbnail=None, upsert_required=False)
+        if not needs_thumbnail:
+            return PreparedAsset(pending=pending, thumbnail=None, upsert_required=False)
+
+    return PreparedAsset(pending=pending, thumbnail=None, upsert_required=True)
+
+
+def _should_generate_thumbnail(prepared: PreparedAsset) -> bool:
+    return (
+        prepared.thumbnail is None
+        and prepared.upsert_required
+        and _needs_thumbnail(prepared.pending)
+    )
+
+
+def _replace_index_rows(
     db: sqlite3.Connection,
     config: AppConfig,
-    source: SourceConfig,
+    sources: tuple[SourceConfig, ...],
+    prepared_by_source: dict[str, list[PreparedAsset]],
     *,
-    source_assets: dict[str, CurrentAsset],
+    full_index: bool,
+    progress: ProgressReporter | None = None,
+) -> int:
+    if full_index:
+        db.execute("DELETE FROM asset_search")
+        db.execute("DELETE FROM assets")
+    else:
+        for source in sources:
+            db.execute("DELETE FROM asset_search WHERE source_id = ?", (source.id,))
+            db.execute("DELETE FROM assets WHERE source_id = ?", (source.id,))
+
+    for source in sources:
+        db.execute(
+            """
+            INSERT INTO sources(id, display_name, root, priority)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+              display_name = excluded.display_name,
+              root = excluded.root,
+              priority = excluded.priority
+            """,
+            (source.id, source.display_name, str(source.root), source.priority),
+        )
+
+    upserted = 0
+    for source in sources:
+        prepared_assets = prepared_by_source.get(source.id, [])
+        for start in range(0, len(prepared_assets), UPSERT_BATCH_SIZE):
+            upserted += _upsert_assets(
+                db,
+                prepared_assets[start : start + UPSERT_BATCH_SIZE],
+                progress=progress,
+            )
+        _refresh_asset_search(db, source.id, progress=progress)
+
+    return upserted
+
+
+def _generate_thumbnails(
+    config: AppConfig,
+    pending_assets: list[PendingAsset],
+    *,
     max_workers: int,
-    retry_failed_thumbnails: bool = False,
     thumbnail_worker_timeout_seconds: float | None = None,
     progress: ProgressReporter | None = None,
 ) -> Iterator[PreparedAsset]:
+    if not pending_assets:
+        return
+
     in_flight: set[Future[PreparedAsset]] = set()
     started_at: dict[Future[PreparedAsset], float] = {}
     started_pending: dict[Future[PreparedAsset], PendingAsset] = {}
     last_wait_log = 0.0
-    scan_count = 0
     limit = max(max_workers * 2, 1)
     executor = ThreadPoolExecutor(max_workers=max_workers)
 
@@ -377,7 +433,7 @@ def _prepare_assets(
                 progress(
                     IndexEvent(
                         kind="file-failed",
-                        source_id=source.id,
+                        source_id=pending.source.id,
                         relative_path=pending.relative_path,
                         message=timeout_msg,
                         wait_seconds=elapsed,
@@ -389,6 +445,7 @@ def _prepare_assets(
             start_at = started_at.pop(future, None)
             pending = started_pending.pop(future, None)
             path = pending.relative_path if pending is not None else ""
+            source_id = pending.source.id if pending is not None else ""
             try:
                 prepared = future.result()
             except Exception as exc:
@@ -396,7 +453,7 @@ def _prepare_assets(
                     progress(
                         IndexEvent(
                             kind="file-failed",
-                            source_id=source.id,
+                            source_id=source_id,
                             relative_path=path,
                             message=f"exception={exc!r}",
                             wait_seconds=(
@@ -416,7 +473,7 @@ def _prepare_assets(
                 progress(
                     IndexEvent(
                         kind="file-completed",
-                        source_id=source.id,
+                        source_id=source_id,
                         relative_path=path,
                         message=f"status={_thumbnail_status(prepared)}",
                         worker_id=prepared.worker_id,
@@ -443,10 +500,7 @@ def _prepare_assets(
                 return_when=FIRST_COMPLETED,
             )
             timed_out: set[Future[PreparedAsset]] = set()
-            if (
-                thumbnail_worker_timeout_seconds is not None
-                and in_flight
-            ):
+            if thumbnail_worker_timeout_seconds is not None and in_flight:
                 timed_out = {
                     future
                     for future in remaining
@@ -455,10 +509,11 @@ def _prepare_assets(
                     >= thumbnail_worker_timeout_seconds
                 }
                 if timed_out and progress is not None:
+                    pending = started_pending[next(iter(timed_out))]
                     progress(
                         IndexEvent(
                             kind="thumbnail-timeout",
-                            source_id=source.id,
+                            source_id=pending.source.id,
                             message=(
                                 "thumbnail worker timeout reached "
                                 f"threshold={thumbnail_worker_timeout_seconds:.1f}s "
@@ -498,18 +553,6 @@ def _prepare_assets(
                     for future in in_flight
                     if now - started_at.get(future, now) >= thumbnail_worker_timeout_seconds
                 }
-                if timed_out and progress is not None:
-                    progress(
-                        IndexEvent(
-                            kind="thumbnail-timeout",
-                            source_id=source.id,
-                            message=(
-                                "thumbnail worker timeout reached "
-                                f"threshold={thumbnail_worker_timeout_seconds:.1f}s "
-                                f"timed_out={len(timed_out)}"
-                            ),
-                        )
-                    )
                 if timed_out:
                     return set(), timed_out, set(in_flight - timed_out)
 
@@ -518,79 +561,23 @@ def _prepare_assets(
 
             last_wait_log = now
             if progress is not None:
+                first_pending = next(iter(started_pending.values()))
                 progress(
                     IndexEvent(
                         kind="thumbnail-wait",
-                        source_id=source.id,
+                        source_id=first_pending.source.id,
                         message=f"in_flight={len(in_flight)} oldest_wait={oldest_wait:.1f}s",
                         waiting_assets=waiting_assets,
                     )
                 )
 
     try:
-        for file_path in _iter_source_files(source):
-            scan_count += 1
-            if progress is not None and scan_count % 1000 == 0:
-                progress(
-                    IndexEvent(
-                        kind="scan-checkpoint",
-                        source_id=source.id,
-                        relative_path=file_path.as_posix(),
-                        message=f"seen={scan_count} in_flight={len(in_flight)}",
-                    )
-            )
-            pending = _pending_asset(source, file_path)
-            current = source_assets.get(pending.relative_path)
-            if current is not None and (
-                current.media_type == pending.media_type
-                and current.size_bytes == pending.size_bytes
-                and current.mtime_ns == pending.mtime_ns
-            ):
-                needs_thumbnail = _needs_thumbnail(pending)
-                has_cached_thumbnail = (
-                    current.thumbnail_path is not None
-                    and current.thumbnail_path.is_file()
-                )
-                if needs_thumbnail and has_cached_thumbnail:
-                    skip_reason = "cached-thumbnail"
-                    thumbnail = ThumbnailResult(
-                        path=current.thumbnail_path,
-                        width=current.thumbnail_width,
-                        height=current.thumbnail_height,
-                        generated=False,
-                    )
-                elif needs_thumbnail and current.thumbnail_path is None and not retry_failed_thumbnails:
-                    skip_reason = "failed-thumbnail-skipped"
-                    thumbnail = None
-                elif not needs_thumbnail:
-                    skip_reason = "media-type-no-thumbnail"
-                    thumbnail = None
-                else:
-                    skip_reason = None
-                    thumbnail = None
-
-                if skip_reason is not None:
-                    if progress is not None:
-                        progress(
-                            IndexEvent(
-                                kind="file-skip",
-                                source_id=source.id,
-                                relative_path=pending.relative_path,
-                                message=skip_reason,
-                            )
-                        )
-                    yield PreparedAsset(
-                        pending=pending,
-                        thumbnail=thumbnail,
-                        upsert_required=False,
-                    )
-                    continue
-
+        for pending in pending_assets:
             if progress is not None:
                 progress(
                     IndexEvent(
                         kind="file-queued",
-                        source_id=source.id,
+                        source_id=pending.source.id,
                         relative_path=pending.relative_path,
                         message=f"media={pending.media_type} in_flight={len(in_flight)}",
                     )
@@ -598,7 +585,7 @@ def _prepare_assets(
                 progress(
                     IndexEvent(
                         kind="file-submitted",
-                        source_id=source.id,
+                        source_id=pending.source.id,
                         relative_path=pending.relative_path,
                         message=f"media={pending.media_type} queue={len(in_flight)}",
                     )
@@ -612,8 +599,6 @@ def _prepare_assets(
                 done, timed_out, remaining = wait_for_completed()
                 in_flight = remaining
                 if timed_out:
-                    # timed tasks likely blocked threads; clear and restart pool to avoid
-                    # preserving stale work lanes.
                     executor.shutdown(wait=False, cancel_futures=True)
                     executor = ThreadPoolExecutor(max_workers=max_workers)
                 for prepared in _drain_done(done, timed_out):
@@ -623,8 +608,6 @@ def _prepare_assets(
             done, timed_out, remaining = wait_for_completed()
             in_flight = remaining
             if timed_out:
-                # timed tasks likely blocked threads; clear and restart pool to avoid
-                # persisting hung workers.
                 executor.shutdown(wait=False, cancel_futures=True)
                 executor = ThreadPoolExecutor(max_workers=max_workers)
             for prepared in _drain_done(done, timed_out):
@@ -632,6 +615,39 @@ def _prepare_assets(
 
     finally:
         executor.shutdown(wait=False, cancel_futures=True)
+
+
+def _update_asset_thumbnail(db: sqlite3.Connection, prepared: PreparedAsset) -> int:
+    if prepared.thumbnail is None:
+        return 0
+    pending = prepared.pending
+    cursor = db.execute(
+        """
+        UPDATE assets
+        SET thumbnail_path = ?,
+            thumbnail_width = ?,
+            thumbnail_height = ?,
+            indexed_at = CURRENT_TIMESTAMP
+        WHERE asset_id = ?
+          AND source_id = ?
+          AND relative_path = ?
+          AND size_bytes = ?
+          AND mtime_ns = ?
+          AND media_type = ?
+        """,
+        (
+            str(prepared.thumbnail.path),
+            prepared.thumbnail.width,
+            prepared.thumbnail.height,
+            pending.asset_id,
+            pending.source.id,
+            pending.relative_path,
+            pending.size_bytes,
+            pending.mtime_ns,
+            pending.media_type,
+        ),
+    )
+    return cursor.rowcount
 
 
 def _pending_asset(source: SourceConfig, file_path: Path) -> PendingAsset:
@@ -739,7 +755,7 @@ def _load_source_assets(
           thumbnail_width,
           thumbnail_height
         FROM assets
-        WHERE source_id = ? AND stale = 0
+        WHERE source_id = ?
         """,
         (source.id,),
     ).fetchall()
@@ -839,7 +855,7 @@ def _upsert_assets(
                 message=f"batch={len(prepared_assets)} elapsed={time.monotonic()-started:.3f}s",
             )
         )
-    return len(prepared_assets)
+    return sum(1 for prepared in prepared_assets if prepared.upsert_required)
 
 
 def _needs_thumbnail(pending: PendingAsset) -> bool:
@@ -871,7 +887,7 @@ def _refresh_asset_search(
           directory,
           relative_path
         FROM assets
-        WHERE source_id = ? AND stale = 0
+        WHERE source_id = ?
         """,
         (source_id,),
     ).fetchall()
@@ -914,99 +930,6 @@ def _thumbnail_status(prepared: PreparedAsset) -> str:
     if prepared.thumbnail.generated:
         return "generated"
     return "cached"
-
-
-def _mark_missing_stale(
-    db: sqlite3.Connection,
-    source_id: str,
-    seen_paths: set[str],
-    progress: ProgressReporter | None = None,
-) -> int:
-    if progress is not None:
-        progress(
-            IndexEvent(
-                kind="stale-mark-start",
-                source_id=source_id,
-                message=f"seen={len(seen_paths)}",
-            )
-        )
-    if not seen_paths:
-        existing_count = db.execute(
-            "SELECT COUNT(1) AS count FROM assets WHERE source_id = ? AND stale = 0",
-            (source_id,),
-        ).fetchone()
-        count = int(existing_count["count"]) if existing_count is not None else 0
-        if count == 0:
-            return 0
-        # mark all current assets as stale for this source when no file was observed in scan
-        db.execute(
-            """
-            UPDATE assets
-            SET stale = 1,
-                indexed_at = CURRENT_TIMESTAMP
-            WHERE source_id = ? AND stale = 0
-            """,
-            (source_id,),
-        )
-        if progress is not None:
-            progress(
-                IndexEvent(
-                    kind="stale-mark-complete",
-                    source_id=source_id,
-                    message=f"seen={len(seen_paths)} marked={count}",
-                )
-            )
-        return count
-
-    existing_rows = db.execute(
-        "SELECT relative_path FROM assets WHERE source_id = ? AND stale = 0",
-        (source_id,),
-    ).fetchall()
-    missing = [row["relative_path"] for row in existing_rows if row["relative_path"] not in seen_paths]
-    if not missing:
-        if progress is not None:
-            progress(
-                IndexEvent(
-                    kind="stale-mark-complete",
-                    source_id=source_id,
-                    message=(
-                        f"seen={len(seen_paths)} "
-                        f"existing={len(existing_rows)} "
-                        f"marked=0"
-                    ),
-                )
-            )
-        return 0
-    if progress is not None:
-        progress(
-            IndexEvent(
-                kind="stale-mark-checkpoint",
-                source_id=source_id,
-                message=(
-                    f"seen={len(seen_paths)} "
-                    f"existing={len(existing_rows)} "
-                    f"missing={len(missing)}"
-                ),
-            )
-        )
-
-    db.executemany(
-        "UPDATE assets SET stale = 1, indexed_at = CURRENT_TIMESTAMP WHERE source_id = ? AND relative_path = ?",
-        [(source_id, relative_path) for relative_path in missing],
-    )
-    if progress is not None:
-        progress(
-            IndexEvent(
-                kind="stale-mark-complete",
-                source_id=source_id,
-                message=(
-                    f"seen={len(seen_paths)} "
-                    f"existing={len(existing_rows)} "
-                    f"marked={len(missing)}"
-                ),
-            )
-        )
-    return len(missing)
 
 
 def _relative_posix(path: Path, root: Path) -> str:

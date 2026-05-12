@@ -8,7 +8,7 @@ domain_vocabulary = "search-vocabulary.yaml"
 id = "tokens"
 display_name = "Tokens"
 root = "/media/NAS/main/Documents/DND/Tokens"
-priority = 100
+priority = 50
 media_extensions = [".png", ".jpg", ".jpeg", ".webp", ".gif", ".webm", ".mp4"]
 primary_output = "foundry"
 
@@ -21,7 +21,7 @@ prefix = "library/Tokens"
 id = "maps"
 display_name = "Maps"
 root = "/media/NAS/main/Documents/DND/Maps"
-priority = 90
+priority = 50
 media_extensions = [".png", ".jpg", ".jpeg", ".webp", ".gif", ".webm", ".mp4"]
 primary_output = "foundry"
 
@@ -34,7 +34,7 @@ prefix = "library/Maps"
 id = "mapmaking"
 display_name = "MapMaking"
 root = "/media/NAS/main/Documents/DND/MapMaking"
-priority = 80
+priority = 50
 media_extensions = [".png", ".jpg", ".jpeg", ".webp", ".gif", ".webm", ".mp4"]
 primary_output = "foundry"
 
@@ -47,7 +47,7 @@ prefix = "library/MapMaking"
 id = "music"
 display_name = "Music"
 root = "/media/NAS/main/Documents/DND/Music"
-priority = 70
+priority = 50
 media_extensions = [".mp3", ".ogg", ".wav", ".aif", ".m4a", ".flac"]
 primary_output = "foundry"
 
@@ -60,7 +60,7 @@ prefix = "library/Music"
 id = "sounds"
 display_name = "Sounds"
 root = "/media/NAS/main/Documents/DND/Sounds"
-priority = 60
+priority = 50
 media_extensions = [".mp3", ".ogg", ".wav", ".aif", ".m4a", ".flac"]
 primary_output = "foundry"
 
@@ -70,9 +70,9 @@ label = "Foundry"
 prefix = "library/Sounds"
 
 [[sources]]
-id = "curseofstrahd"
-display_name = "CurseOfStrahd"
-root = "/media/NAS/main/Documents/DND/Adventures/CurseOfStrahd"
+id = "adventures"
+display_name = "Adventures"
+root = "/media/NAS/main/Documents/DND/Adventures"
 priority = 50
 media_extensions = [
   ".png",
@@ -87,11 +87,11 @@ media_extensions = [
   ".wav",
   ".aif",
   ".m4a",
-  ".flac",
+  ".flac"
 ]
 primary_output = "foundry"
 
 [[sources.output_profiles]]
 id = "foundry"
 label = "Foundry"
-prefix = "library/Adventures/CurseOfStrahd"
+prefix = "library/Adventures"

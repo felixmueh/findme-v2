@@ -37,9 +37,9 @@ References: [Design: Sources And Configuration](../docs/DESIGN.md#sources-and-co
 - [x] FTS search table.
 - [x] Canonical source id plus relative path identity.
 - [x] Short asset id generation.
-- [x] Stale flag on assets.
+- [x] Index metadata fingerprints for corpus freshness.
 - [ ] Migration policy for future schema changes.
-- [ ] Cleanup command for stale records and unreferenced cache files.
+- [x] Thumbnail cleanup command for unreferenced generated files.
 
 References: [Design: Core Model](../docs/DESIGN.md#core-model), [Design: Identity](../docs/DESIGN.md#identity), [Design: Storage Model](../docs/DESIGN.md#storage-model), [Stack: Database](../docs/STACK.md#database)
 
@@ -47,7 +47,7 @@ References: [Design: Core Model](../docs/DESIGN.md#core-model), [Design: Identit
 
 - [x] Manual CLI indexing.
 - [x] Incremental file fingerprint checks using size and mtime.
-- [x] Missing files marked stale.
+- [x] Indexing replaces selected index rows instead of marking stale records.
 - [x] Legacy `.findme` directories ignored.
 - [x] Static image thumbnail generation.
 - [x] Thumbnail cache stored outside source directories.
@@ -82,7 +82,7 @@ References: [Design: Derived Resources And Actions](../docs/DESIGN.md#derived-re
 - [x] Running app may require restart after indexing before new search data is visible.
 - [x] Source filter.
 - [x] Directory and directory-prefix filters.
-- [x] Stale assets hidden from normal search.
+- [x] Removed assets disappear after source/full index replacement.
 - [x] Source priority included in current scoring.
 - [x] User-defined source/directory quality included in current scoring.
 - [x] Bounded, process-local result cache for repeated exact queries.

@@ -15,6 +15,8 @@ import tempfile
 import tantivy
 
 from findme.config import AppConfig
+from findme.db import mark_search_corpus_current
+from findme.db import search_corpus_is_stale as search_corpus_is_stale
 from findme.result_cards import CardMetadata
 
 
@@ -442,6 +444,10 @@ def rebuild_search_corpus(
         _log_search_corpus_progress(log, "search preprocessing publishing artifacts")
         temp_snapshot_path.replace(snapshot_destination)
         _replace_directory(temp_lexical_path, lexical_destination)
+        with sqlite3.connect(db_path) as metadata_db:
+            metadata_db.row_factory = sqlite3.Row
+            mark_search_corpus_current(metadata_db)
+            metadata_db.commit()
         _log_search_corpus_progress(
             log,
             f"search preprocessing finished: snapshot={snapshot_destination}",
@@ -489,7 +495,7 @@ def fetch_search_corpus_assets(
     directory: str | None = None,
     directory_prefix: str | None = None,
 ) -> tuple[SearchCorpusAsset, ...]:
-    where = ["assets.stale = 0"]
+    where: list[str] = []
     params: list[object] = []
     if source_id:
         where.append("assets.source_id = ?")
@@ -521,7 +527,7 @@ def fetch_search_corpus_assets(
           assets.thumbnail_height
         FROM assets
         JOIN sources ON sources.id = assets.source_id
-        WHERE {" AND ".join(where)}
+        WHERE {" AND ".join(where) if where else "1 = 1"}
         ORDER BY sources.priority DESC, assets.relative_path COLLATE NOCASE
         """,
         params,

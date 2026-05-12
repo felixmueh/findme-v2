@@ -96,17 +96,17 @@ def test_directory_filter_rules_apply_deepest_specified_ancestor() -> None:
     assert includes_asset("other", "Maps/Unused", blacklist_overrides_parent_whitelist) is False
 
 
-def test_search_index_hides_stale_assets(tmp_path: Path) -> None:
+def test_search_index_drops_removed_assets_after_reindex(tmp_path: Path) -> None:
     source_root = tmp_path / "assets"
     source_root.mkdir()
-    stale_path = source_root / "Goblin.png"
-    write_image(stale_path)
+    removed_path = source_root / "Goblin.png"
+    write_image(removed_path)
     config = _config(tmp_path, source_root)
 
     with connect(tmp_path / "findme.sqlite3") as db:
         initialize_database(db)
         index_sources(db, config)
-        stale_path.unlink()
+        removed_path.unlink()
         index_sources(db, config)
         results = SearchIndex.load(db).search("goblin").assets
 

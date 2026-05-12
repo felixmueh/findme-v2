@@ -421,10 +421,10 @@ sets:
         relative_path: "animated_dungeon_megapack/Dungeon_pit_trap.png"
       - source_id: mapmaking
         relative_path: "DungeondraftPacks/DungeondraftPacksExtracted/[BW] Assets_A/textures/objects/Decor/Mechanical/Traps/Colorable/bw_trap_blade_pendulum_01_colorable.png"
-      - source_id: curseofstrahd
-        relative_path: "Maps/Curse of Strahd HD Maps/CurseofStrahd_TrapDiagram_Player.jpg"
-      - source_id: curseofstrahd
-        relative_path: "Maps/RaveloftMaps/Full Res -- No Grid/K61 - Elevator Trap_nogrid.png"
+      - source_id: adventures
+        relative_path: "CurseOfStrahd/Maps/Curse of Strahd HD Maps/CurseofStrahd_TrapDiagram_Player.jpg"
+      - source_id: adventures
+        relative_path: "CurseOfStrahd/Maps/RaveloftMaps/Full Res -- No Grid/K61 - Elevator Trap_nogrid.png"
 
   magic_portals:
     assets:
@@ -475,32 +475,32 @@ sets:
 
   curse_of_strahd_death_house_maps:
     assets:
-      - source_id: curseofstrahd
-        relative_path: "Maps/Curse of Strahd HD Maps/CurseofStrahd_DeathHouse_DM.jpg"
-      - source_id: curseofstrahd
-        relative_path: "Maps/Curse of Strahd HD Maps/CurseofStrahd_DeathHouse_Player.jpg"
-      - source_id: curseofstrahd
-        relative_path: "Maps/Curse of Strahd HD Maps/CurseofStrahd_DeathHouse_Player_NoGrid.jpg"
+      - source_id: adventures
+        relative_path: "CurseOfStrahd/Maps/Curse of Strahd HD Maps/CurseofStrahd_DeathHouse_DM.jpg"
+      - source_id: adventures
+        relative_path: "CurseOfStrahd/Maps/Curse of Strahd HD Maps/CurseofStrahd_DeathHouse_Player.jpg"
+      - source_id: adventures
+        relative_path: "CurseOfStrahd/Maps/Curse of Strahd HD Maps/CurseofStrahd_DeathHouse_Player_NoGrid.jpg"
 
   curse_of_strahd_werewolf_den_maps:
     assets:
-      - source_id: curseofstrahd
-        relative_path: "Maps/Curse of Strahd HD Maps/CurseofStrahd_WerewolfDen_DM.jpg"
-      - source_id: curseofstrahd
-        relative_path: "Maps/Curse of Strahd HD Maps/CurseofStrahd_WerewolfDen_Player.jpg"
-      - source_id: curseofstrahd
-        relative_path: "Maps/Curse of Strahd HD Maps/CurseofStrahd_WerewolfDen_Player_NoGrid.jpg"
+      - source_id: adventures
+        relative_path: "CurseOfStrahd/Maps/Curse of Strahd HD Maps/CurseofStrahd_WerewolfDen_DM.jpg"
+      - source_id: adventures
+        relative_path: "CurseOfStrahd/Maps/Curse of Strahd HD Maps/CurseofStrahd_WerewolfDen_Player.jpg"
+      - source_id: adventures
+        relative_path: "CurseOfStrahd/Maps/Curse of Strahd HD Maps/CurseofStrahd_WerewolfDen_Player_NoGrid.jpg"
 
   castle_ravenloft_maps:
     assets:
-      - source_id: curseofstrahd
-        relative_path: "Maps/G Jensen - Castle Ravenloft Maps/Ravenloft/Areas/1 - Dungeon and Catacombs.png"
-      - source_id: curseofstrahd
-        relative_path: "Maps/G Jensen - Castle Ravenloft Maps/Ravenloft/Areas/3 - Main Floor.png"
-      - source_id: curseofstrahd
-        relative_path: "Maps/G Jensen - Castle Ravenloft Maps/Ravenloft/COURT OF THE COUNT.jpg"
-      - source_id: curseofstrahd
-        relative_path: "Maps/G Jensen - Castle Ravenloft Maps/Ravenloft/SPIRES OF RAVENLOFT.jpg"
+      - source_id: adventures
+        relative_path: "CurseOfStrahd/Maps/G Jensen - Castle Ravenloft Maps/Ravenloft/Areas/1 - Dungeon and Catacombs.png"
+      - source_id: adventures
+        relative_path: "CurseOfStrahd/Maps/G Jensen - Castle Ravenloft Maps/Ravenloft/Areas/3 - Main Floor.png"
+      - source_id: adventures
+        relative_path: "CurseOfStrahd/Maps/G Jensen - Castle Ravenloft Maps/Ravenloft/COURT OF THE COUNT.jpg"
+      - source_id: adventures
+        relative_path: "CurseOfStrahd/Maps/G Jensen - Castle Ravenloft Maps/Ravenloft/SPIRES OF RAVENLOFT.jpg"
 
   horse_sounds:
     assets:
@@ -829,30 +829,30 @@ sets:
 
   amber_temple_maps:
     assets:
-      - source_id: curseofstrahd
-        relative_path: "Maps/Curse of Strahd HD Maps/CurseofStrahd_AmberTemple_1_DM.jpg"
-      - source_id: curseofstrahd
-        relative_path: "Maps/Curse of Strahd HD Maps/CurseofStrahd_AmberTemple_1_Player.jpg"
-      - source_id: curseofstrahd
-        relative_path: "Maps/Curse of Strahd HD Maps/CurseofStrahd_AmberTemple_2_Player_NoGrid.jpg"
+      - source_id: adventures
+        relative_path: "CurseOfStrahd/Maps/Curse of Strahd HD Maps/CurseofStrahd_AmberTemple_1_DM.jpg"
+      - source_id: adventures
+        relative_path: "CurseOfStrahd/Maps/Curse of Strahd HD Maps/CurseofStrahd_AmberTemple_1_Player.jpg"
+      - source_id: adventures
+        relative_path: "CurseOfStrahd/Maps/Curse of Strahd HD Maps/CurseofStrahd_AmberTemple_2_Player_NoGrid.jpg"
 
   vallaki_maps:
     assets:
-      - source_id: curseofstrahd
-        relative_path: "Maps/Curse of Strahd HD Maps/CurseofStrahd_Vallaki_digital.jpg"
-      - source_id: curseofstrahd
-        relative_path: "Maps/Curse of Strahd HD Maps/CurseofStrahd_Vallaki_player.jpg"
-      - source_id: curseofstrahd
-        relative_path: "PyramKing/assets/foundry/legends-of-barovia-full-campaign-foundry-v12/legends-of-barovia-pk/assets/scene/Vallaki 18x10.webp"
+      - source_id: adventures
+        relative_path: "CurseOfStrahd/Maps/Curse of Strahd HD Maps/CurseofStrahd_Vallaki_digital.jpg"
+      - source_id: adventures
+        relative_path: "CurseOfStrahd/Maps/Curse of Strahd HD Maps/CurseofStrahd_Vallaki_player.jpg"
+      - source_id: adventures
+        relative_path: "CurseOfStrahd/PyramKing/assets/foundry/legends-of-barovia-full-campaign-foundry-v12/legends-of-barovia-pk/assets/scene/Vallaki 18x10.webp"
 
   wizard_of_wines_maps:
     assets:
-      - source_id: curseofstrahd
-        relative_path: "Maps/Curse of Strahd HD Maps/CurseofStrahd_WizardofWineWinery_DM.jpg"
-      - source_id: curseofstrahd
-        relative_path: "Maps/Curse of Strahd HD Maps/CurseofStrahd_WizardofWineWinery_Player.jpg"
-      - source_id: curseofstrahd
-        relative_path: "PyramKing/assets/foundry/legends-of-barovia-full-campaign-foundry-v12/legends-of-barovia-pk/assets/scene/WizardofWines 18x10.webp"
+      - source_id: adventures
+        relative_path: "CurseOfStrahd/Maps/Curse of Strahd HD Maps/CurseofStrahd_WizardofWineWinery_DM.jpg"
+      - source_id: adventures
+        relative_path: "CurseOfStrahd/Maps/Curse of Strahd HD Maps/CurseofStrahd_WizardofWineWinery_Player.jpg"
+      - source_id: adventures
+        relative_path: "CurseOfStrahd/PyramKing/assets/foundry/legends-of-barovia-full-campaign-foundry-v12/legends-of-barovia-pk/assets/scene/WizardofWines 18x10.webp"
 
   sword_fight_sounds:
     assets:

@@ -1669,7 +1669,7 @@ def test_api_search_uses_startup_search_index_until_app_restart(tmp_path: Path) 
     client = TestClient(create_app(config, db_path))
 
     with connect(db_path) as db:
-        db.execute("UPDATE assets SET stale = 1 WHERE relative_path = ?", ("Goblin.png",))
+        db.execute("DELETE FROM assets WHERE relative_path = ?", ("Goblin.png",))
         db.execute("DELETE FROM asset_search WHERE filename = ?", ("Goblin.png",))
 
     body = client.get("/api/search", params={"q": "goblin"}).json()
@@ -1703,7 +1703,7 @@ def test_api_directories_use_startup_search_index_until_app_restart(tmp_path: Pa
 
     with connect(db_path) as db:
         db.execute(
-            "UPDATE assets SET stale = 1 WHERE relative_path = ?",
+            "DELETE FROM assets WHERE relative_path = ?",
             ("Creatures/Goblin.png",),
         )
         db.execute("DELETE FROM asset_search WHERE filename = ?", ("Goblin.png",))

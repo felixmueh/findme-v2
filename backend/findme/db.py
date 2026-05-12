@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+import hashlib
+import json
 from pathlib import Path
 import sqlite3
 
@@ -39,6 +41,11 @@ def initialize_database(db: sqlite3.Connection) -> None:
           display_name TEXT NOT NULL,
           root TEXT NOT NULL,
           priority INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS index_metadata (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL
         );
 
         CREATE TABLE IF NOT EXISTS search_profiles (
@@ -118,6 +125,80 @@ def _ensure_column(db: sqlite3.Connection, table: str, column: str, definition: 
     columns = {row["name"] for row in db.execute(f"PRAGMA table_info({table})")}
     if column not in columns:
         db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
+def get_index_metadata(db: sqlite3.Connection, key: str) -> str | None:
+    row = db.execute(
+        "SELECT value FROM index_metadata WHERE key = ?",
+        (key,),
+    ).fetchone()
+    return str(row["value"]) if row is not None else None
+
+
+def set_index_metadata(db: sqlite3.Connection, key: str, value: str) -> None:
+    db.execute(
+        """
+        INSERT INTO index_metadata(key, value)
+        VALUES (?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        """,
+        (key, value),
+    )
+
+
+def compute_index_fingerprint(db: sqlite3.Connection) -> str:
+    digest = hashlib.sha256()
+    rows = db.execute(
+        """
+        SELECT
+          assets.asset_id,
+          assets.source_id,
+          sources.display_name,
+          sources.priority,
+          assets.relative_path,
+          assets.absolute_path,
+          assets.filename,
+          assets.stem,
+          assets.extension,
+          assets.directory,
+          assets.size_bytes,
+          assets.mtime_ns,
+          assets.media_type,
+          assets.thumbnail_path,
+          assets.thumbnail_width,
+          assets.thumbnail_height
+        FROM assets
+        JOIN sources ON sources.id = assets.source_id
+        ORDER BY assets.source_id, assets.relative_path COLLATE NOCASE
+        """
+    )
+    for row in rows:
+        digest.update(
+            json.dumps(tuple(row), separators=(",", ":"), ensure_ascii=True).encode(
+                "utf-8"
+            )
+        )
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
+def refresh_index_fingerprint(db: sqlite3.Connection) -> str:
+    fingerprint = compute_index_fingerprint(db)
+    set_index_metadata(db, "index_fingerprint", fingerprint)
+    return fingerprint
+
+
+def mark_search_corpus_current(db: sqlite3.Connection) -> None:
+    fingerprint = get_index_metadata(db, "index_fingerprint")
+    if fingerprint is None:
+        fingerprint = refresh_index_fingerprint(db)
+    set_index_metadata(db, "search_corpus_fingerprint", fingerprint)
+
+
+def search_corpus_is_stale(db: sqlite3.Connection) -> bool:
+    index_fingerprint = get_index_metadata(db, "index_fingerprint")
+    search_fingerprint = get_index_metadata(db, "search_corpus_fingerprint")
+    return index_fingerprint != search_fingerprint
 
 
 def _ensure_builtin_search_profiles(db: sqlite3.Connection) -> None:

@@ -112,7 +112,7 @@ def test_count_and_index_source_ids_filter_only_target_source(tmp_path: Path) ->
     assert rows[0]["source_id"] == "maps"
 
 
-def test_index_sources_marks_missing_assets_stale(tmp_path: Path) -> None:
+def test_index_sources_replaces_missing_assets_for_source(tmp_path: Path) -> None:
     source_root = tmp_path / "assets"
     source_root.mkdir()
     asset_path = source_root / "dragon.webp"
@@ -135,10 +135,119 @@ def test_index_sources_marks_missing_assets_stale(tmp_path: Path) -> None:
         index_sources(db, config)
         asset_path.unlink()
         summary = index_sources(db, config)
-        stale = db.execute("SELECT stale FROM assets WHERE relative_path = 'dragon.webp'").fetchone()[0]
+        rows = db.execute("SELECT relative_path FROM assets").fetchall()
 
-    assert summary.marked_stale == 1
-    assert stale == 1
+    assert summary.upserted_assets == 0
+    assert rows == []
+
+
+def test_index_sources_replaces_removed_config_sources_on_full_index(
+    tmp_path: Path,
+) -> None:
+    old_root = tmp_path / "old"
+    current_root = tmp_path / "current"
+    old_root.mkdir()
+    current_root.mkdir()
+    write_image(old_root / "old-map.png")
+    write_image(current_root / "current-map.png")
+    initial_config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="old",
+                display_name="Old",
+                root=old_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+            SourceConfig(
+                id="current",
+                display_name="Current",
+                root=current_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+    updated_config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="current",
+                display_name="Current",
+                root=current_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+
+    with connect(tmp_path / "findme.sqlite3") as db:
+        initialize_database(db)
+        index_sources(db, initial_config)
+        summary = index_sources(db, updated_config)
+        rows = db.execute(
+            "SELECT source_id FROM assets ORDER BY source_id"
+        ).fetchall()
+
+    assert summary.scanned_files == 1
+    assert [tuple(row) for row in rows] == [("current",)]
+
+
+def test_index_sources_partial_index_preserves_unselected_sources(
+    tmp_path: Path,
+) -> None:
+    old_root = tmp_path / "old"
+    current_root = tmp_path / "current"
+    old_root.mkdir()
+    current_root.mkdir()
+    write_image(old_root / "old-map.png")
+    write_image(current_root / "current-map.png")
+    initial_config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="old",
+                display_name="Old",
+                root=old_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+            SourceConfig(
+                id="current",
+                display_name="Current",
+                root=current_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+    partial_config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="current",
+                display_name="Current",
+                root=current_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+
+    with connect(tmp_path / "findme.sqlite3") as db:
+        initialize_database(db)
+        index_sources(db, initial_config)
+        summary = index_sources(
+            db,
+            partial_config,
+            source_ids=frozenset({"current"}),
+        )
+        rows = db.execute(
+            "SELECT source_id, stale FROM assets ORDER BY source_id"
+        ).fetchall()
+
+    assert [tuple(row) for row in rows] == [("current", 0), ("old", 0)]
 
 
 def test_index_sources_refreshes_asset_search_for_source(tmp_path: Path) -> None:
@@ -171,13 +280,13 @@ def test_index_sources_refreshes_asset_search_for_source(tmp_path: Path) -> None
         count_after = db.execute(
             "SELECT COUNT(*) FROM asset_search WHERE source_id = ?", ("dnd",)
         ).fetchone()[0]
-        stale_count = db.execute(
-            "SELECT COUNT(*) FROM assets WHERE source_id = ? AND stale = 0", ("dnd",)
+        asset_count = db.execute(
+            "SELECT COUNT(*) FROM assets WHERE source_id = ?", ("dnd",)
         ).fetchone()[0]
 
     assert count_before == 2
     assert count_after == 1
-    assert stale_count == 1
+    assert asset_count == 1
 
 
 def test_index_sources_skips_unchanged_thumbnail_generation(tmp_path: Path) -> None:

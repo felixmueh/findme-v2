@@ -11,7 +11,7 @@ from tqdm import tqdm
 import uvicorn
 
 from findme.api import create_app
-from findme.cleanup import cleanup_index
+from findme.cleanup import cleanup_thumbnails
 from findme.config import ConfigError, load_config
 from findme.db import connect, initialize_database
 from findme.indexer import IndexEvent, count_indexable_files, index_sources
@@ -125,20 +125,35 @@ def run(argv: list[str]) -> int:
                 f"scanned={summary.scanned_files} "
                 f"upserted={summary.upserted_assets} "
                 f"thumbnails={summary.generated_thumbnails} "
-                f"failed={len(summary.thumbnail_failures)} "
-                f"stale={summary.marked_stale}"
+                f"failed={len(summary.thumbnail_failures)}"
             )
             logger.log("search preprocessing started")
             corpus_path = rebuild_search_corpus(config, db_path, log=logger.log)
+            thumbnail_cleanup_summary = None
+            if args.cleanup_thumbnails:
+                logger.log("thumbnail cleanup started")
+                with connect(db_path) as db:
+                    initialize_database(db)
+                    thumbnail_cleanup_summary = cleanup_thumbnails(
+                        db,
+                        data_root=config.data_root,
+                        progress=_CleanupProgressReporter(),
+                        log=logger.log,
+                    )
             print(
                 "indexed "
                 f"{summary.scanned_files} files, "
                 f"upserted {summary.upserted_assets}, "
                 f"generated {summary.generated_thumbnails} thumbnails, "
-                f"failed {len(summary.thumbnail_failures)} thumbnails, "
-                f"marked stale {summary.marked_stale}"
+                f"failed {len(summary.thumbnail_failures)} thumbnails"
             )
             print(f"rebuilt search corpus: {corpus_path}")
+            if thumbnail_cleanup_summary is not None:
+                print(
+                    "cleaned "
+                    f"{thumbnail_cleanup_summary.unreferenced_thumbnail_files} "
+                    "unreferenced thumbnail files"
+                )
             for failure in summary.thumbnail_failures:
                 print(
                     "thumbnail failed: "
@@ -161,17 +176,29 @@ def run(argv: list[str]) -> int:
             uvicorn.run(app, host=args.host, port=args.port)
             return 0
 
-        if args.command == "cleanup":
+        if args.command == "cleanup-thumbnails":
+            logger = _IndexLogger(stream=sys.stderr)
+            logger.log("thumbnail cleanup command started")
+            progress = _CleanupProgressReporter()
             with connect(db_path) as db:
+                logger.log("thumbnail cleanup: acquiring database connection")
                 initialize_database(db)
-                summary = cleanup_index(db, data_root=config.data_root, dry_run=args.dry_run)
+                logger.log("thumbnail cleanup: database initialized")
+                summary = cleanup_thumbnails(
+                    db,
+                    data_root=config.data_root,
+                    dry_run=args.dry_run,
+                    progress=progress,
+                    log=logger.log,
+                )
+            progress.finish()
             prefix = "would clean" if args.dry_run else "cleaned"
             print(
                 f"{prefix} "
-                f"{summary.stale_assets} stale assets, "
-                f"{summary.asset_search_rows} stale search rows, "
-                f"{summary.unreferenced_cache_files} unreferenced cache files"
+                f"{summary.unreferenced_thumbnail_files} "
+                "unreferenced thumbnail files"
             )
+            logger.log("thumbnail cleanup command completed")
             return 0
 
         if args.command == "search-eval":
@@ -266,6 +293,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="retry thumbnail generation for unchanged assets that previously failed",
     )
     index.add_argument(
+        "--cleanup-thumbnails",
+        action="store_true",
+        help="remove unreferenced generated thumbnails after a successful index",
+    )
+    index.add_argument(
         "--thumbnail-worker-timeout-seconds",
         type=float,
         default=None,
@@ -301,8 +333,8 @@ def _build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--static-dir", type=Path, default=Path("frontend/dist"))
 
     cleanup = subparsers.add_parser(
-        "cleanup",
-        help="remove stale index rows and unreferenced generated cache files",
+        "cleanup-thumbnails",
+        help="remove unreferenced generated thumbnail files",
     )
     cleanup.add_argument("--config", type=Path, required=True)
     cleanup.add_argument(
@@ -503,36 +535,6 @@ class _IndexLogger:
                     f"queue_wait={queue_wait_ms} "
                     f"{event.message}"
                 )
-            elif event.kind == "stale-scan-start":
-                self.log(
-                    "index stale scan start: "
-                    f"source={event.source_id} "
-                    f"{event.message}"
-                )
-            elif event.kind == "stale-scan-complete":
-                self.log(
-                    "index stale scan complete: "
-                    f"source={event.source_id} "
-                    f"{event.message}"
-                )
-            elif event.kind == "stale-mark-start":
-                self.log(
-                    "index stale mark start: "
-                    f"source={event.source_id} "
-                    f"{event.message}"
-                )
-            elif event.kind == "stale-mark-checkpoint":
-                self.log(
-                    "index stale mark checkpoint: "
-                    f"source={event.source_id} "
-                    f"{event.message}"
-                )
-            elif event.kind == "stale-mark-complete":
-                self.log(
-                    "index stale mark complete: "
-                    f"source={event.source_id} "
-                    f"{event.message}"
-                )
             elif event.kind == "upsert-batch":
                 self.log(
                     "index upsert batch: "
@@ -602,7 +604,6 @@ class _IndexLogger:
             f"upserted={progress.upserted_assets} "
             f"thumbnails={progress.generated_thumbnails} "
             f"failed={progress.failed_thumbnails} "
-            f"stale={progress.marked_stale} "
             f"elapsed={progress.elapsed_seconds:.1f}s"
         )
 
@@ -657,13 +658,59 @@ class _IndexProgressBar:
             f"upserted={progress.upserted_assets} "
             f"thumbnails={progress.generated_thumbnails} "
             f"failed={progress.failed_thumbnails} "
-            f"thumbs/s={rate:.1f} "
-            f"stale={progress.marked_stale}",
+            f"thumbs/s={rate:.1f}",
             refresh=False,
         )
 
     def finish(self) -> None:
         self._bar.close()
+
+
+class _CleanupProgressReporter:
+    def __init__(self) -> None:
+        self._bars: dict[str, "tqdm | None"] = {}
+        self._positions: dict[str, int] = {}
+
+    def __call__(self, stage: str, current: int, total: int | None) -> None:
+        if total is not None and total <= 0:
+            return
+
+        bar = self._bars.get(stage)
+        if bar is None:
+            bar = tqdm(
+                total=total,
+                desc=_cleanup_stage_description(stage),
+                unit="item",
+                dynamic_ncols=True,
+                bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}, {postfix}]",
+                file=sys.stderr,
+            )
+            self._bars[stage] = bar
+            self._positions[stage] = 0
+        elif total is not None and bar.total != total:
+            bar.total = total
+
+        previous = self._positions[stage]
+        delta = current - previous
+        if delta > 0:
+            bar.update(delta)
+            self._positions[stage] = current
+        if total is not None and current == total:
+            bar.n = total
+            bar.refresh()
+
+    def finish(self) -> None:
+        for bar in self._bars.values():
+            if bar is not None:
+                bar.close()
+
+
+def _cleanup_stage_description(stage: str) -> str:
+    if stage == "thumbnail-scan":
+        return "cleanup thumbnail scan"
+    if stage == "thumbnails":
+        return "cleanup thumbnails"
+    return f"cleanup {stage}"
 
 
 if __name__ == "__main__":

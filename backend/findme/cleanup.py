@@ -3,105 +3,75 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import sqlite3
+from typing import Callable
 
 
 @dataclass(frozen=True)
-class CleanupSummary:
-    stale_assets: int = 0
-    asset_search_rows: int = 0
-    unreferenced_cache_files: int = 0
+class ThumbnailCleanupSummary:
+    unreferenced_thumbnail_files: int = 0
 
 
-def cleanup_index(
+CleanupProgress = Callable[[str, int, int | None], None]
+CleanupLog = Callable[[str], None]
+
+
+def cleanup_thumbnails(
     db: sqlite3.Connection,
     *,
     data_root: Path,
     dry_run: bool = False,
-) -> CleanupSummary:
-    stale_asset_ids = tuple(
-        row["asset_id"] for row in db.execute("SELECT asset_id FROM assets WHERE stale = 1")
-    )
-    stale_assets = len(stale_asset_ids)
-    stale_search_rows = _count_search_rows(db, stale_asset_ids)
-    unreferenced_cache_files = tuple(_unreferenced_cache_files(db, data_root))
+    progress: CleanupProgress | None = None,
+    log: CleanupLog | None = None,
+) -> ThumbnailCleanupSummary:
+    if log is not None:
+        log("thumbnail cleanup scan started")
+    unreferenced = tuple(_unreferenced_thumbnail_files(db, data_root, progress=progress))
+    if log is not None:
+        log(f"thumbnail cleanup scan complete: unreferenced={len(unreferenced)}")
 
     if dry_run:
-        return CleanupSummary(
-            stale_assets=stale_assets,
-            asset_search_rows=stale_search_rows,
-            unreferenced_cache_files=len(unreferenced_cache_files),
+        return ThumbnailCleanupSummary(
+            unreferenced_thumbnail_files=len(unreferenced),
         )
 
-    _delete_search_rows(db, stale_asset_ids)
-    if stale_asset_ids:
-        db.executemany(
-            "DELETE FROM assets WHERE asset_id = ?",
-            [(asset_id,) for asset_id in stale_asset_ids],
-        )
-    for path in unreferenced_cache_files:
+    for index, path in enumerate(unreferenced, start=1):
         path.unlink(missing_ok=True)
-    _prune_empty_cache_dirs(data_root / "cache" / "thumbs")
+        if progress is not None:
+            progress("thumbnails", index, len(unreferenced))
+    if log is not None:
+        log("thumbnail cleanup complete")
 
-    return CleanupSummary(
-        stale_assets=stale_assets,
-        asset_search_rows=stale_search_rows,
-        unreferenced_cache_files=len(unreferenced_cache_files),
+    return ThumbnailCleanupSummary(
+        unreferenced_thumbnail_files=len(unreferenced),
     )
 
 
-def _count_search_rows(db: sqlite3.Connection, asset_ids: tuple[str, ...]) -> int:
-    if not asset_ids:
-        return 0
-    return sum(
-        db.execute(
-            "SELECT COUNT(*) FROM asset_search WHERE asset_id = ?",
-            (asset_id,),
-        ).fetchone()[0]
-        for asset_id in asset_ids
-    )
-
-
-def _delete_search_rows(db: sqlite3.Connection, asset_ids: tuple[str, ...]) -> None:
-    if not asset_ids:
-        return
-    db.executemany(
-        "DELETE FROM asset_search WHERE asset_id = ?",
-        [(asset_id,) for asset_id in asset_ids],
-    )
-
-
-def _unreferenced_cache_files(
+def _unreferenced_thumbnail_files(
     db: sqlite3.Connection,
     data_root: Path,
+    *,
+    progress: CleanupProgress | None = None,
 ) -> list[Path]:
     thumbs_root = data_root / "cache" / "thumbs"
     if not thumbs_root.exists():
         return []
     referenced = {
-        Path(row["thumbnail_path"]).resolve()
+        Path(row["thumbnail_path"]).as_posix()
         for row in db.execute(
             """
             SELECT thumbnail_path
             FROM assets
-            WHERE stale = 0
-              AND thumbnail_path IS NOT NULL
+            WHERE thumbnail_path IS NOT NULL
             """
         )
     }
-    return [
-        path
-        for path in thumbs_root.rglob("*.webp")
-        if path.is_file() and path.resolve() not in referenced
-    ]
-
-
-def _prune_empty_cache_dirs(root: Path) -> None:
-    if not root.exists():
-        return
-    for path in sorted(root.rglob("*"), key=lambda item: len(item.parts), reverse=True):
-        if not path.is_dir():
-            continue
-        try:
-            path.rmdir()
-        except OSError:
-            pass
+    unreferenced: list[Path] = []
+    count = 0
+    for count, path in enumerate(thumbs_root.rglob("*.webp"), start=1):
+        if progress is not None:
+            progress("thumbnail-scan", count, None)
+        if path.is_file() and path.as_posix() not in referenced:
+            unreferenced.append(path)
+    if progress is not None and count > 0:
+        progress("thumbnail-scan", count, count)
+    return unreferenced

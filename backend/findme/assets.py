@@ -55,7 +55,7 @@ def get_asset(db: sqlite3.Connection, config: AppConfig, asset_id: str) -> Asset
           assets.thumbnail_height
         FROM assets
         JOIN sources ON sources.id = assets.source_id
-        WHERE assets.asset_id = ? AND assets.stale = 0
+        WHERE assets.asset_id = ?
         """,
         (asset_id,),
     ).fetchone()

@@ -64,7 +64,7 @@ Each indexed asset should know:
 - image/video dimensions when available
 - media type
 - thumbnail/poster cache references
-- stale/current state
+- current index membership
 
 The transformed VTT path is not indexed. It is derived at request/display/copy time from the asset identity plus current source configuration. Changing path transform rules should not require re-indexing.
 
@@ -150,16 +150,17 @@ Legacy `.findme` directories and index files from previous versions are source a
 
 Legacy JSON metadata dictionaries from previous versions are out of scope for v1. V2 should ignore them; they may be removed from the source tree later.
 
-## Stale And Cleanup Behavior
+## Index Replacement And Cleanup Behavior
 
-When indexing finds that an asset is missing, mark it stale.
+The database should store the current index, not current rows plus stale rows.
 
-Normal search and browse should hide stale assets.
+A full index replaces the index-owned rows for all configured sources. A
+source-limited index replaces only the selected source rows. Search and browse
+correctness must not depend on a later cleanup command.
 
-A cleanup command should:
-
-- remove stale records from the database
-- delete thumbnail/poster cache files not referenced by current database records
+Thumbnail/poster cleanup is separate maintenance. It deletes generated thumbnail
+files that are not referenced by current database records. Indexing may run this
+maintenance step after a successful index when requested explicitly.
 
 ## Storage Model
 
@@ -178,7 +179,7 @@ The database is canonical for metadata:
 - directory tree and counts
 - token/search metadata
 - file fingerprint state
-- stale/current state
+- current index membership
 - generated thumbnail/poster references
 - future embeddings
 - future content hash/dedup records
@@ -195,12 +196,18 @@ This avoids content hashing in v1 while still invalidating derived files when an
 
 Search-serving data is a derived corpus, not canonical metadata. The main database remains the source of truth for indexed assets, sources, folder quality, and thumbnail references. `search_corpus.py` owns the rebuild-sensitive corpus format and preprocessing signals. It builds a separate versioned pickle snapshot under the app data root, with the active filename derived from the preprocessing version, plus the matching Tantivy lexical index. Serving and search evaluation consume that prepared corpus and fail clearly if it is missing or stale; they do not rebuild it implicitly.
 
-Indexing runs in two phases:
+Indexing runs in three phases:
 
-- normal asset indexing updates the canonical database and thumbnail cache
-- search preprocessing snapshots current non-stale assets into the versioned search corpus, builds the lexical index used by search, and precomputes result-card grouping metadata
+- scan source directories and replace the selected index rows in the canonical database, reusing existing thumbnail references when the file fingerprint still matches
+- generate missing thumbnails/posters and update matching database rows as each generated file completes
+- search preprocessing snapshots current assets into the versioned search corpus, builds the lexical index used by search, and precomputes result-card grouping metadata
 
-The search corpus is disposable and may be rebuilt from the canonical database with the explicit `rebuild-search-corpus` command. Folder quality overrides stay in the main database and are applied at search time so UI quality changes do not require corpus rebuilds.
+The search corpus is disposable and may be rebuilt from the canonical database
+with the explicit `rebuild-search-corpus` command. The database records an
+index fingerprint and the fingerprint captured by the current search corpus, so
+the backend can detect when the corpus is stale. Folder quality overrides stay
+in the main database and are applied at search time so UI quality changes do not
+require corpus rebuilds.
 
 ## Media Scope
 
@@ -426,7 +433,7 @@ Examples:
 
 - index all sources
 - index one source
-- cleanup stale records/cache files
+- cleanup unreferenced thumbnail cache files
 
 The web UI should show lightweight index status and errors per source so it is clear when results may be incomplete. A full admin console is not required for v1.
 
@@ -439,7 +446,7 @@ Tests should prioritize observable behavior through public interfaces, especiall
 - indexing
 - source and asset identity
 - derived actions/path transforms
-- stale cleanup
+- index replacement and thumbnail cleanup
 - search and ranking once finalized
 - key API behavior
 

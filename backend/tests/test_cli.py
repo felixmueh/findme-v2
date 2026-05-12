@@ -224,7 +224,7 @@ media_extensions = [".png"]
         for line in first_lines
     )
     assert any(
-        "index file done: source=dnd path=ghost.png action=upserted thumbnail=generated"
+        "index file done: source=dnd path=ghost.png action=thumbnail thumbnail=generated"
         in line
         for line in first_lines
     )
@@ -498,7 +498,7 @@ media_extensions = [".png"]
     assert "thumbnail failed: dnd:broken.png" in retried.err
 
 
-def test_cli_cleanup_dry_run_preserves_stale_rows_and_unreferenced_cache(
+def test_cli_cleanup_thumbnails_dry_run_preserves_unreferenced_files(
     tmp_path: Path,
     capsys,
 ) -> None:
@@ -530,17 +530,14 @@ media_extensions = [".png"]
     orphan.parent.mkdir(parents=True)
     orphan.write_bytes(b"orphan")
 
-    assert run(["cleanup", "--config", str(config_path), "--dry-run"]) == 0
+    assert run(["cleanup-thumbnails", "--config", str(config_path), "--dry-run"]) == 0
 
     captured = capsys.readouterr()
-    assert "would clean 1 stale assets, 0 stale search rows, 2 unreferenced cache files" in captured.out
+    assert "would clean 2 unreferenced thumbnail files" in captured.out
     assert orphan.is_file()
-    with connect(data_root / "findme.sqlite3") as db:
-        stale_assets = db.execute("SELECT COUNT(*) FROM assets WHERE stale = 1").fetchone()[0]
-    assert stale_assets == 1
 
 
-def test_cli_cleanup_removes_stale_rows_and_unreferenced_cache(
+def test_cli_cleanup_thumbnails_removes_unreferenced_files(
     tmp_path: Path,
     capsys,
 ) -> None:
@@ -572,17 +569,59 @@ media_extensions = [".png"]
     orphan.parent.mkdir(parents=True)
     orphan.write_bytes(b"orphan")
 
-    assert run(["cleanup", "--config", str(config_path)]) == 0
+    assert run(["cleanup-thumbnails", "--config", str(config_path)]) == 0
 
     captured = capsys.readouterr()
-    assert "cleaned 1 stale assets, 0 stale search rows, 2 unreferenced cache files" in captured.out
+    assert "cleaned 2 unreferenced thumbnail files" in captured.out
     assert not orphan.exists()
-    assert not (data_root / "cache" / "thumbs" / "zz").exists()
     with connect(data_root / "findme.sqlite3") as db:
         assets = db.execute("SELECT COUNT(*) FROM assets").fetchone()[0]
         search_rows = db.execute("SELECT COUNT(*) FROM asset_search").fetchone()[0]
     assert assets == 0
     assert search_rows == 0
+
+
+def test_cli_index_can_cleanup_thumbnails_after_successful_index(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    write_image(source_root / "ghost.png")
+    config_path = tmp_path / "findme.toml"
+    data_root = tmp_path / "data"
+    config_path.write_text(
+        f"""
+[app]
+data_root = "{data_root}"
+
+[[sources]]
+id = "dnd"
+display_name = "DND"
+root = "{source_root}"
+priority = 10
+media_extensions = [".png"]
+""",
+        encoding="utf-8",
+    )
+    orphan = data_root / "cache" / "thumbs" / "zz" / "orphan.webp"
+    orphan.parent.mkdir(parents=True)
+    orphan.write_bytes(b"orphan")
+
+    assert run(
+        [
+            "index",
+            "--config",
+            str(config_path),
+            "--thumbnail-workers",
+            "1",
+            "--cleanup-thumbnails",
+        ]
+    ) == 0
+
+    captured = capsys.readouterr()
+    assert "cleaned 1 unreferenced thumbnail files" in captured.out
+    assert not orphan.exists()
 
 
 def test_cli_search_eval_runs_strict_scope(tmp_path: Path, capsys) -> None:
