@@ -83,13 +83,11 @@ Examples:
   keep `256`; do not jump straight to a large original for a modest display
   increase.
 
-Open formula note:
+The "not too much larger" threshold is currently proposed as:
 
-The phrase `current_thumbnail_size**2 + 100` was suggested as "not too much
-larger than the current thumbnail." Taken literally as exponentiation, that
-would make the threshold extremely large for pixel sizes. Before implementation,
-confirm whether the intended formula is closer to `current_thumbnail_size * 2 +
-100`, `current_thumbnail_size + 100`, or another bounded threshold.
+```text
+next_source_size <= current_thumbnail_size * 2 + 100
+```
 
 ## Original Fallback
 
@@ -150,4 +148,3 @@ thumbnail_variants: [
 The search corpus likely needs this compact display metadata too, because the
 hot path should not hydrate every card from the canonical database just to know
 which thumbnails exist.
-
