@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import sqlite3
+from typing import Protocol
 
 from findme.config import AppConfig, OutputProfile, SourceConfig
 
@@ -13,6 +14,22 @@ class AssetNotFoundError(LookupError):
 
 class UnsafeAssetPathError(ValueError):
     pass
+
+
+@dataclass(frozen=True)
+class ThumbnailVariantRecord:
+    kind: str
+    max_edge: int
+    width: int
+    height: int
+    cache_path: Path
+
+
+class ThumbnailVariantLike(Protocol):
+    kind: str
+    max_edge: int
+    width: int
+    height: int
 
 
 @dataclass(frozen=True)
@@ -29,9 +46,7 @@ class AssetRecord:
     size_bytes: int
     mtime_ns: int
     media_type: str
-    thumbnail_path: Path | None
-    thumbnail_width: int | None
-    thumbnail_height: int | None
+    thumbnail_variants: tuple[ThumbnailVariantRecord, ...]
 
 
 def get_asset(db: sqlite3.Connection, config: AppConfig, asset_id: str) -> AssetRecord:
@@ -49,10 +64,7 @@ def get_asset(db: sqlite3.Connection, config: AppConfig, asset_id: str) -> Asset
           assets.directory,
           assets.size_bytes,
           assets.mtime_ns,
-          assets.media_type,
-          assets.thumbnail_path,
-          assets.thumbnail_width,
-          assets.thumbnail_height
+          assets.media_type
         FROM assets
         JOIN sources ON sources.id = assets.source_id
         WHERE assets.asset_id = ?
@@ -75,26 +87,49 @@ def get_asset(db: sqlite3.Connection, config: AppConfig, asset_id: str) -> Asset
         size_bytes=row["size_bytes"],
         mtime_ns=row["mtime_ns"],
         media_type=row["media_type"],
-        thumbnail_path=Path(row["thumbnail_path"]) if row["thumbnail_path"] else None,
-        thumbnail_width=row["thumbnail_width"],
-        thumbnail_height=row["thumbnail_height"],
+        thumbnail_variants=_thumbnail_variants_for_asset(db, row["asset_id"]),
     )
     _validate_asset_path(config, asset)
     return asset
 
 
+def _thumbnail_variants_for_asset(
+    db: sqlite3.Connection,
+    asset_id: str,
+) -> tuple[ThumbnailVariantRecord, ...]:
+    rows = db.execute(
+        """
+        SELECT kind, max_edge, width, height, cache_path
+        FROM asset_thumbnail_variants
+        WHERE asset_id = ?
+        ORDER BY max_edge
+        """,
+        (asset_id,),
+    ).fetchall()
+    return tuple(
+        ThumbnailVariantRecord(
+            kind=row["kind"],
+            max_edge=row["max_edge"],
+            width=row["width"],
+            height=row["height"],
+            cache_path=Path(row["cache_path"]),
+        )
+        for row in rows
+    )
+
+
 def asset_actions(config: AppConfig, asset: AssetRecord) -> dict[str, object]:
     source = _source_for(config, asset.source_id)
     file_url = f"/api/assets/{asset.asset_id}/file"
-    thumb_url = (
-        thumbnail_url(
+    baseline_variant = asset.thumbnail_variants[0] if asset.thumbnail_variants else None
+    thumb_url = None
+    if baseline_variant is not None:
+        thumb_url = thumbnail_variant_response(
             asset.asset_id,
+            baseline_variant,
             size_bytes=asset.size_bytes,
             mtime_ns=asset.mtime_ns,
-        )
-        if asset.thumbnail_path is not None
-        else None
-    )
+        )["url"]
     return {
         "open": {"id": "open", "label": "Open", "url": file_url},
         "copy": {
@@ -136,19 +171,61 @@ def asset_response(asset: AssetRecord) -> dict[str, object]:
         "size_bytes": asset.size_bytes,
         "media_type": asset.media_type,
     }
-    if asset.thumbnail_path is not None:
-        response["thumbnail_url"] = thumbnail_url(
+    if asset.thumbnail_variants:
+        baseline_variant = asset.thumbnail_variants[0]
+        baseline_response = thumbnail_variant_response(
             asset.asset_id,
+            baseline_variant,
             size_bytes=asset.size_bytes,
             mtime_ns=asset.mtime_ns,
         )
-        response["thumbnail_width"] = asset.thumbnail_width
-        response["thumbnail_height"] = asset.thumbnail_height
+        response["thumbnail_url"] = baseline_response["url"]
+        response["thumbnail_width"] = baseline_variant.width
+        response["thumbnail_height"] = baseline_variant.height
+        response["thumbnail_variants"] = [
+            thumbnail_variant_response(
+                asset.asset_id,
+                variant,
+                size_bytes=asset.size_bytes,
+                mtime_ns=asset.mtime_ns,
+            )
+            for variant in asset.thumbnail_variants
+        ]
     return response
 
 
-def thumbnail_url(asset_id: str, *, size_bytes: int, mtime_ns: int) -> str:
-    return f"/api/assets/{asset_id}/thumb?v={size_bytes}-{mtime_ns}"
+def thumbnail_url(
+    asset_id: str,
+    *,
+    size_bytes: int,
+    mtime_ns: int,
+    max_edge: int | None = None,
+) -> str:
+    version = f"v={size_bytes}-{mtime_ns}"
+    if max_edge is None:
+        return f"/api/assets/{asset_id}/thumb?{version}"
+    return f"/api/assets/{asset_id}/thumb?max_edge={max_edge}&{version}"
+
+
+def thumbnail_variant_response(
+    asset_id: str,
+    variant: ThumbnailVariantLike,
+    *,
+    size_bytes: int,
+    mtime_ns: int,
+) -> dict[str, object]:
+    return {
+        "kind": variant.kind,
+        "max_edge": variant.max_edge,
+        "width": variant.width,
+        "height": variant.height,
+        "url": thumbnail_url(
+            asset_id,
+            size_bytes=size_bytes,
+            mtime_ns=mtime_ns,
+            max_edge=None if variant.max_edge == 256 else variant.max_edge,
+        ),
+    }
 
 
 def _foundryvtt_path(source: SourceConfig, asset: AssetRecord) -> str:

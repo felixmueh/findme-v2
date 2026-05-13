@@ -20,11 +20,20 @@ from findme.db import search_corpus_is_stale as search_corpus_is_stale
 from findme.result_cards import CardMetadata
 
 
-SEARCH_CORPUS_VERSION = "0.4"
+SEARCH_CORPUS_VERSION = "0.6"
 
 
 class SearchCorpusError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class ThumbnailVariantMetadata:
+    kind: str
+    max_edge: int
+    width: int
+    height: int
+    cache_path: str
 
 
 @dataclass(frozen=True)
@@ -42,9 +51,7 @@ class SearchCorpusAsset:
     size_bytes: int
     mtime_ns: int
     media_type: str
-    thumbnail_path: str | None
-    thumbnail_width: int | None
-    thumbnail_height: int | None
+    thumbnail_variants: tuple[ThumbnailVariantMetadata, ...]
     source_tokens: tuple[str, ...]
     filename_tokens: tuple[str, ...]
     directory_tokens: tuple[str, ...]
@@ -507,8 +514,7 @@ def fetch_search_corpus_assets(
         where.append("(assets.directory = ? OR assets.directory LIKE ?)")
         params.extend([directory_prefix, f"{directory_prefix}/%"])
 
-    rows = db.execute(
-        f"""
+    query = f"""
         SELECT
           assets.asset_id,
           assets.source_id,
@@ -521,21 +527,69 @@ def fetch_search_corpus_assets(
           assets.directory,
           assets.size_bytes,
           assets.mtime_ns,
-          assets.media_type,
-          assets.thumbnail_path,
-          assets.thumbnail_width,
-          assets.thumbnail_height
+          assets.media_type
         FROM assets
         JOIN sources ON sources.id = assets.source_id
         WHERE {" AND ".join(where) if where else "1 = 1"}
         ORDER BY sources.priority DESC, assets.relative_path COLLATE NOCASE
+        """
+    rows = db.execute(query, params).fetchall()
+    variants_by_asset_id = _thumbnail_variants_by_asset_id(db, where, params)
+    return tuple(
+        _row_to_preprocessed_asset(
+            row,
+            index,
+            thumbnail_variants=variants_by_asset_id.get(row["asset_id"], ()),
+        )
+        for index, row in enumerate(rows)
+    )
+
+
+def _thumbnail_variants_by_asset_id(
+    db: sqlite3.Connection,
+    where: list[str],
+    params: list[object],
+) -> dict[str, tuple[ThumbnailVariantMetadata, ...]]:
+    rows = db.execute(
+        f"""
+        SELECT
+          assets.asset_id,
+          asset_thumbnail_variants.kind,
+          asset_thumbnail_variants.max_edge,
+          asset_thumbnail_variants.width,
+          asset_thumbnail_variants.height,
+          asset_thumbnail_variants.cache_path
+        FROM assets
+        JOIN asset_thumbnail_variants
+          ON asset_thumbnail_variants.asset_id = assets.asset_id
+        WHERE {" AND ".join(where) if where else "1 = 1"}
+        ORDER BY assets.asset_id, asset_thumbnail_variants.max_edge
         """,
         params,
     ).fetchall()
-    return tuple(_row_to_preprocessed_asset(row, index) for index, row in enumerate(rows))
+    variants: dict[str, list[ThumbnailVariantMetadata]] = {}
+    for row in rows:
+        variants.setdefault(row["asset_id"], []).append(
+            ThumbnailVariantMetadata(
+                kind=row["kind"],
+                max_edge=row["max_edge"],
+                width=row["width"],
+                height=row["height"],
+                cache_path=row["cache_path"],
+            )
+        )
+    return {
+        asset_id: tuple(asset_variants)
+        for asset_id, asset_variants in variants.items()
+    }
 
 
-def _row_to_preprocessed_asset(row: sqlite3.Row, asset_index: int) -> SearchCorpusAsset:
+def _row_to_preprocessed_asset(
+    row: sqlite3.Row,
+    asset_index: int,
+    *,
+    thumbnail_variants: tuple[ThumbnailVariantMetadata, ...],
+) -> SearchCorpusAsset:
     source_tokens = tokenize_search_text(f"{row['source_id']} {row['source_display_name']}")
     filename_tokens = tokenize_search_text(row["filename"])
     directory_tokens = tokenize_search_text(row["directory"])
@@ -564,9 +618,7 @@ def _row_to_preprocessed_asset(row: sqlite3.Row, asset_index: int) -> SearchCorp
         size_bytes=row["size_bytes"],
         mtime_ns=row["mtime_ns"],
         media_type=row["media_type"],
-        thumbnail_path=row["thumbnail_path"],
-        thumbnail_width=row["thumbnail_width"],
-        thumbnail_height=row["thumbnail_height"],
+        thumbnail_variants=thumbnail_variants,
         source_tokens=source_tokens,
         filename_tokens=filename_tokens,
         directory_tokens=directory_tokens,

@@ -17,7 +17,7 @@ from findme.assets import (
     asset_actions,
     asset_response,
     get_asset,
-    thumbnail_url,
+    thumbnail_variant_response,
 )
 from findme.config import AppConfig
 from findme.db import connect
@@ -645,13 +645,24 @@ def create_app(
         )
 
     @app.get("/api/assets/{asset_id}/thumb")
-    def asset_thumbnail(asset_id: str) -> FileResponse:
+    def asset_thumbnail(
+        asset_id: str,
+        max_edge: int | None = Query(default=None, ge=1),
+    ) -> FileResponse:
         with connect(database_path) as db:
             asset = _load_asset_or_404(db, config, asset_id)
-        if asset.thumbnail_path is None or not asset.thumbnail_path.is_file():
+        cache_path = next(
+            (
+                variant.cache_path
+                for variant in asset.thumbnail_variants
+                if max_edge is None or variant.max_edge == max_edge
+            ),
+            None,
+        )
+        if cache_path is None or not cache_path.is_file():
             raise HTTPException(status_code=404, detail="asset thumbnail is missing")
         return FileResponse(
-            asset.thumbnail_path,
+            cache_path,
             media_type="image/webp",
             headers={"Cache-Control": "public, max-age=31536000, immutable"},
         )
@@ -755,14 +766,26 @@ def _asset_result_response(result, *, score: float) -> dict[str, object]:
         "media_type": result.media_type,
         "score": score,
     }
-    if result.thumbnail_path is not None:
-        response["thumbnail_url"] = thumbnail_url(
+    if result.thumbnail_variants:
+        baseline = result.thumbnail_variants[0]
+        baseline_response = thumbnail_variant_response(
             result.asset_id,
+            baseline,
             size_bytes=result.size_bytes,
             mtime_ns=result.mtime_ns,
         )
-        response["thumbnail_width"] = result.thumbnail_width
-        response["thumbnail_height"] = result.thumbnail_height
+        response["thumbnail_url"] = baseline_response["url"]
+        response["thumbnail_width"] = baseline.width
+        response["thumbnail_height"] = baseline.height
+        response["thumbnail_variants"] = [
+            thumbnail_variant_response(
+                result.asset_id,
+                variant,
+                size_bytes=result.size_bytes,
+                mtime_ns=result.mtime_ns,
+            )
+            for variant in result.thumbnail_variants
+        ]
     return response
 
 

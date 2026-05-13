@@ -65,6 +65,49 @@ def test_api_lists_sources_and_current_assets(tmp_path: Path) -> None:
     )
 
 
+def test_api_search_card_includes_thumbnail_mipmap_variants(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    write_image(source_root / "map.png", size=(1200, 600))
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+        additional_thumbnail_mipmaps=(512, 1024),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config, thumbnail_workers=1)
+    rebuild_search_corpus(config, db_path)
+
+    client = TestClient(create_app(config, db_path))
+    body = client.get("/api/search").json()
+    asset = _card_asset(body["cards"][0])
+
+    assert [
+        (variant["max_edge"], variant["width"], variant["height"])
+        for variant in asset["thumbnail_variants"]
+    ] == [
+        (256, 256, 128),
+        (512, 512, 256),
+        (1024, 1024, 512),
+    ]
+    assert asset["thumbnail_variants"][0]["url"] == asset["thumbnail_url"]
+    variant_url = asset["thumbnail_variants"][1]["url"]
+    assert f"/api/assets/{asset['asset_id']}/thumb?max_edge=512&v=" in variant_url
+    variant_response = client.get(variant_url)
+    assert variant_response.status_code == 200
+    assert variant_response.headers["content-type"] == "image/webp"
+
+
 def test_api_requires_prebuilt_search_corpus(tmp_path: Path) -> None:
     source_root = tmp_path / "assets"
     source_root.mkdir()

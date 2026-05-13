@@ -1442,7 +1442,6 @@
                 {#if displayAsset.thumbnail_url}
                   <ProgressiveAssetImage
                     asset={displayAsset}
-                    thumbnailUrl={displayAsset.thumbnail_url}
                     fullUrl={assetFileUrl(displayAsset)}
                   />
                 {:else}
@@ -1495,7 +1494,6 @@
                     {#if asset.thumbnail_url}
                       <ProgressiveAssetImage
                         asset={asset}
-                        thumbnailUrl={asset.thumbnail_url}
                         fullUrl={assetFileUrl(asset)}
                       />
                     {:else}
@@ -1552,7 +1550,6 @@
                   {#if asset.thumbnail_url}
                     <ProgressiveAssetImage
                       asset={asset}
-                      thumbnailUrl={asset.thumbnail_url}
                       fullUrl={assetFileUrl(asset)}
                     />
                   {:else}

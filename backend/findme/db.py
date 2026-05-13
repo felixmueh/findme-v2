@@ -198,6 +198,31 @@ def compute_index_fingerprint(db: sqlite3.Connection) -> str:
             )
         )
         digest.update(b"\n")
+    variant_rows = db.execute(
+        """
+        SELECT
+          asset_id,
+          source_id,
+          relative_path,
+          kind,
+          max_edge,
+          width,
+          height,
+          cache_path,
+          generated_from_size_bytes,
+          generated_from_mtime_ns
+        FROM asset_thumbnail_variants
+        ORDER BY asset_id, kind, max_edge
+        """
+    )
+    for row in variant_rows:
+        digest.update(b"thumbnail-variant:")
+        digest.update(
+            json.dumps(tuple(row), separators=(",", ":"), ensure_ascii=True).encode(
+                "utf-8"
+            )
+        )
+        digest.update(b"\n")
     return digest.hexdigest()
 
 

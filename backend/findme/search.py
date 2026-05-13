@@ -18,6 +18,7 @@ from findme.search_corpus import (
     SearchCorpusError,
     SearchCorpusSnapshot,
     SearchLexicalIndex,
+    ThumbnailVariantMetadata,
     count_asset_directories,
     fetch_search_corpus_assets,
     normalize_search_text,
@@ -45,9 +46,7 @@ class SearchResult:
     size_bytes: int
     mtime_ns: int
     media_type: str
-    thumbnail_path: str | None
-    thumbnail_width: int | None
-    thumbnail_height: int | None
+    thumbnail_variants: tuple[ThumbnailVariantMetadata, ...]
     score: float
 
 
@@ -1782,8 +1781,6 @@ def _record_to_result(asset: SearchCorpusAsset, score: float) -> SearchResult:
         size_bytes=asset.size_bytes,
         mtime_ns=asset.mtime_ns,
         media_type=asset.media_type,
-        thumbnail_path=asset.thumbnail_path,
-        thumbnail_width=asset.thumbnail_width,
-        thumbnail_height=asset.thumbnail_height,
+        thumbnail_variants=asset.thumbnail_variants,
         score=score,
     )

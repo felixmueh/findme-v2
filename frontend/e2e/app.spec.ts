@@ -409,6 +409,61 @@ test('loads the full image after the thumbnail when a card is larger than its th
   await expect(image).toHaveAttribute('src', '/api/assets/asset-hires/file')
 })
 
+test('loads a larger thumbnail variant before the original file', async ({ page }) => {
+  let smallVariantRequested = false
+  let largeVariantRequested = false
+  let originalRequested = false
+  const mipmapAsset = {
+    ...sampleAsset,
+    asset_id: 'asset-mipmap',
+    relative_path: 'maps/mipmap.png',
+    filename: 'mipmap.png',
+    stem: 'mipmap',
+    thumbnail_url: '/thumbs/mipmap-12.png',
+    thumbnail_width: 12,
+    thumbnail_height: 12,
+    thumbnail_variants: [
+      { max_edge: 12, width: 12, height: 12, url: '/thumbs/mipmap-12.png' },
+      { max_edge: 120, width: 120, height: 120, url: '/thumbs/mipmap-120.png' },
+    ],
+  }
+
+  await page.route('**/api/search?*', async (route) => {
+    await route.fulfill({ json: { total: 1, cards: [{ kind: 'asset', asset: mipmapAsset }] } })
+  })
+  await page.route('**/api/search-with-directory-counts?*', async (route) => {
+    await route.fulfill({ json: { directories: [sampleRootDirectory(), sampleDirectory()] } })
+  })
+  await page.route('**/thumbs/mipmap-12.png', async (route) => {
+    smallVariantRequested = true
+    await route.fulfill({
+      contentType: 'image/gif',
+      body: Buffer.from('R0lGODlhAQABAPAAAP///wAAACH5BAAAAAAALAAAAAABAAEAAAICRAEAOw==', 'base64'),
+    })
+  })
+  await page.route('**/thumbs/mipmap-120.png', async (route) => {
+    largeVariantRequested = true
+    await route.fulfill({
+      contentType: 'image/gif',
+      body: Buffer.from('R0lGODlhAQABAPAAAP///wAAACH5BAAAAAAALAAAAAABAAEAAAICRAEAOw==', 'base64'),
+    })
+  })
+  await page.route('**/api/assets/asset-mipmap/file', async (route) => {
+    originalRequested = true
+    await route.fulfill({
+      contentType: 'image/gif',
+      body: Buffer.from('R0lGODlhAQABAPAAAP///wAAACH5BAAAAAAALAAAAAABAAEAAAICRAEAOw==', 'base64'),
+    })
+  })
+
+  await page.goto('/')
+  const image = page.getByRole('button', { name: /mipmap\.png/i }).locator('img')
+  await expect.poll(() => smallVariantRequested).toBe(true)
+  await expect.poll(() => largeVariantRequested).toBe(true)
+  await expect(image).toHaveAttribute('src', '/thumbs/mipmap-120.png')
+  expect(originalRequested).toBe(false)
+})
+
 test('loads the full image after resizing a card larger than its thumbnail', async ({ page }) => {
   let fullImageRequested = false
   const resizeAsset = {
@@ -418,8 +473,8 @@ test('loads the full image after resizing a card larger than its thumbnail', asy
     filename: 'resize-hires.png',
     stem: 'resize-hires',
     thumbnail_url: '/thumbs/resize-hires-small.png',
-    thumbnail_width: 120,
-    thumbnail_height: 120,
+    thumbnail_width: 80,
+    thumbnail_height: 80,
   }
 
   await page.route('**/api/search?*', async (route) => {

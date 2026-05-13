@@ -1,3 +1,11 @@
+export type ThumbnailVariant = {
+  kind?: string
+  max_edge: number
+  width: number
+  height: number
+  url: string
+}
+
 export type Asset = {
   asset_id: string
   source_id: string
@@ -12,7 +20,16 @@ export type Asset = {
   thumbnail_url?: string
   thumbnail_width?: number
   thumbnail_height?: number
+  thumbnail_variants?: ThumbnailVariant[]
   score?: number
+}
+
+export type ProgressiveImageSource = {
+  url: string
+  width: number
+  height: number
+  size: number
+  original?: boolean
 }
 
 export type AssetCard = {
@@ -72,3 +89,72 @@ export function collectionColor(collectionKey: string) {
   return colors[hash % colors.length]
 }
 
+export function thumbnailSourcesForAsset(
+  asset: Pick<
+    Asset,
+    'thumbnail_variants' | 'thumbnail_url' | 'thumbnail_width' | 'thumbnail_height'
+  >
+): ProgressiveImageSource[] {
+  const sources = (asset.thumbnail_variants ?? [])
+    .map((variant) => ({
+      url: variant.url,
+      width: variant.width,
+      height: variant.height,
+      size: variant.max_edge,
+    }))
+    .sort((left, right) => left.size - right.size)
+
+  if (sources.length > 0) return dedupeImageSources(sources)
+  if (!asset.thumbnail_url || !asset.thumbnail_width || !asset.thumbnail_height) return []
+
+  return [
+    {
+      url: asset.thumbnail_url,
+      width: asset.thumbnail_width,
+      height: asset.thumbnail_height,
+      size: Math.max(asset.thumbnail_width, asset.thumbnail_height),
+    },
+  ]
+}
+
+export function nextProgressiveImageSource(
+  sources: ProgressiveImageSource[],
+  current: ProgressiveImageSource,
+  displayWidth: number,
+  originalUrl?: string,
+  mediaType?: string
+): ProgressiveImageSource | null {
+  if (displayWidth <= current.size) return null
+
+  const next = sources.find((source) => source.size > current.size)
+  if (next) {
+    if (next.size <= current.size * 2 + 100 || displayWidth > current.size * 2) {
+      return next
+    }
+    return null
+  }
+
+  if (mediaType === 'image' && originalUrl && displayWidth > current.size * 2) {
+    return {
+      url: originalUrl,
+      width: current.width,
+      height: current.height,
+      size: Number.POSITIVE_INFINITY,
+      original: true,
+    }
+  }
+
+  return null
+}
+
+function dedupeImageSources(sources: ProgressiveImageSource[]) {
+  const seen = new Set<string>()
+  const deduped: ProgressiveImageSource[] = []
+  for (const source of sources) {
+    const key = `${source.size}:${source.url}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    deduped.push(source)
+  }
+  return deduped
+}

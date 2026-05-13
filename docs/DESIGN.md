@@ -200,12 +200,11 @@ The normalized `asset_thumbnail_variants` table is canonical for generated
 thumbnail/poster mipmap availability. It records the available derivative sizes,
 dimensions, cache paths, and source fingerprint for each asset.
 
-The existing `assets.thumbnail_path`, `assets.thumbnail_width`, and
-`assets.thumbnail_height` fields intentionally remain as denormalized baseline
-`256` fields for the current search/API/frontend path. This is temporary
-duplication. After the frontend and search corpus consume thumbnail variants
-directly, revisit whether the baseline fields should be removed or derived from
-`asset_thumbnail_variants`.
+The search corpus, API, and frontend consume thumbnail variants directly for
+result cards. The existing `assets.thumbnail_path`, `assets.thumbnail_width`,
+and `assets.thumbnail_height` fields intentionally remain as denormalized
+baseline `256` fields during the transition. Revisit whether those baseline
+fields should be removed or derived from `asset_thumbnail_variants`.
 
 Search-serving data is a derived corpus, not canonical metadata. The main database remains the source of truth for indexed assets, sources, folder quality, and thumbnail references. `search_corpus.py` owns the rebuild-sensitive corpus format and preprocessing signals. It builds a separate versioned pickle snapshot under the app data root, with the active filename derived from the preprocessing version, plus the matching Tantivy lexical index. Serving and search evaluation consume that prepared corpus and fail clearly if it is missing or stale; they do not rebuild it implicitly.
 

@@ -17,15 +17,19 @@ Done:
   invocation.
 - Indexing writes thumbnail DB updates in batches and keeps
   `assets.thumbnail_*` populated as the temporary `256` baseline path.
+- The search corpus snapshots compact thumbnail/poster variant metadata.
+- Search and asset API responses expose `thumbnail_variants` with size,
+  dimensions, and cacheable variant URLs.
+- The frontend loads the smallest thumbnail first, promotes to larger cached
+  variants after layout is known, and falls back to originals only when an image
+  card is much larger than every available thumbnail variant.
 - Production DND rebuild completed successfully on 2026-05-13:
   `287113` assets indexed, `281505` baseline thumbnails/posters generated,
   `415923` variant rows/files written, thumbnail cache size about `12G`.
 
 Next step:
 
-- Update the search/API/frontend path to consume `asset_thumbnail_variants`
-  metadata, choose the best available variant at render time, and then revisit
-  whether `assets.thumbnail_path`, `assets.thumbnail_width`, and
+- Revisit whether `assets.thumbnail_path`, `assets.thumbnail_width`, and
   `assets.thumbnail_height` should be removed or derived from the variant table.
 
 Do not continue evaluating alternative still-image thumbnail generators for now.
