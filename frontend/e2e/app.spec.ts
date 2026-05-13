@@ -112,6 +112,12 @@ function profileSession(dirtyScoring = false, dirtySelection = false) {
   }
 }
 
+function svgImage(width: number, height: number, color = '#1e7a5c') {
+  return Buffer.from(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="${width}" height="${height}" fill="${color}"/></svg>`
+  )
+}
+
 function expectProfileSettingRequest(
   request: { postDataJSON: () => unknown },
   expected: { source_id: string; directory: string; quality_override?: number | null; selection_state?: FilterRuleState | null }
@@ -461,6 +467,167 @@ test('loads a larger thumbnail variant before the original file', async ({ page 
   await expect.poll(() => smallVariantRequested).toBe(true)
   await expect.poll(() => largeVariantRequested).toBe(true)
   await expect(image).toHaveAttribute('src', '/thumbs/mipmap-120.png')
+  expect(originalRequested).toBe(false)
+})
+
+test('shows grid thumbnails without cropping portrait images', async ({ page }) => {
+  const portraitAsset = {
+    ...sampleAsset,
+    asset_id: 'asset-portrait-thumb',
+    relative_path: 'maps/portrait.png',
+    filename: 'portrait.png',
+    stem: 'portrait',
+    thumbnail_url: '/thumbs/portrait-256.png',
+    thumbnail_width: 128,
+    thumbnail_height: 256,
+  }
+
+  await page.route('**/api/search?*', async (route) => {
+    await route.fulfill({ json: { total: 1, cards: [{ kind: 'asset', asset: portraitAsset }] } })
+  })
+  await page.route('**/api/search-with-directory-counts?*', async (route) => {
+    await route.fulfill({ json: { directories: [sampleRootDirectory(), sampleDirectory()] } })
+  })
+  await page.route('**/thumbs/portrait-256.png', async (route) => {
+    await route.fulfill({
+      contentType: 'image/svg+xml',
+      body: svgImage(128, 256),
+    })
+  })
+
+  await page.goto('/')
+
+  const image = page.getByRole('button', { name: /portrait\.png/i }).locator('.tile-thumb img')
+  await expect(image).toBeVisible()
+  await expect(image).toHaveCSS('object-fit', 'contain')
+
+  const thumbBox = await page.getByRole('button', { name: /portrait\.png/i }).locator('.tile-thumb').boundingBox()
+  const imageBox = await image.boundingBox()
+  if (!thumbBox || !imageBox) throw new Error('portrait thumbnail layout is missing')
+
+  expect(imageBox.height).toBeLessThanOrEqual(thumbBox.height)
+  expect(imageBox.width).toBeLessThan(thumbBox.width * 0.6)
+  expect(imageBox.height).toBeGreaterThan(thumbBox.height - 2)
+})
+
+test('sizes the selected landscape preview to the full panel width', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 })
+  const wideAsset = {
+    ...sampleAsset,
+    asset_id: 'asset-wide-preview',
+    relative_path: 'maps/wide-preview.png',
+    filename: 'wide-preview.png',
+    stem: 'wide-preview',
+    thumbnail_url: '/thumbs/wide-preview-256.png',
+    thumbnail_width: 256,
+    thumbnail_height: 85,
+  }
+
+  await page.route('**/api/search?*', async (route) => {
+    await route.fulfill({ json: { total: 1, cards: [{ kind: 'asset', asset: wideAsset }] } })
+  })
+  await page.route('**/api/search-with-directory-counts?*', async (route) => {
+    await route.fulfill({ json: { directories: [sampleRootDirectory(), sampleDirectory()] } })
+  })
+  await page.route('**/api/assets/asset-wide-preview', async (route) => {
+    await route.fulfill({
+      json: {
+        asset: wideAsset,
+        actions: actionsFor(wideAsset, '/tmp/sample-assets/maps/wide-preview.png'),
+      },
+    })
+  })
+  await page.route('**/thumbs/wide-preview-256.png', async (route) => {
+    await route.fulfill({
+      contentType: 'image/gif',
+      body: Buffer.from('R0lGODlhAQABAPAAAP///wAAACH5BAAAAAAALAAAAAABAAEAAAICRAEAOw==', 'base64'),
+    })
+  })
+  await page.route('**/api/assets/asset-wide-preview/file', async (route) => {
+    await route.fulfill({
+      contentType: 'image/svg+xml',
+      body: svgImage(768, 256),
+    })
+  })
+
+  await page.goto('/')
+  await page.getByRole('button', { name: /wide-preview\.png/i }).click()
+
+  const panel = page.getByLabel('Selected asset')
+  const preview = panel.locator('.preview')
+  const previewImage = preview.locator('img')
+  await expect(previewImage).toBeVisible()
+  await expect(previewImage).toHaveCSS('object-fit', 'contain')
+
+  const previewBox = await preview.boundingBox()
+  const previewImageBox = await previewImage.boundingBox()
+  const panelBox = await panel.boundingBox()
+  if (!previewBox || !previewImageBox || !panelBox) throw new Error('selected landscape preview layout is missing')
+
+  expect(previewBox.width).toBeLessThanOrEqual(panelBox.width)
+  expect(previewBox.width).toBeGreaterThan(panelBox.width - 2)
+  expect(previewImageBox.width).toBeGreaterThan(previewBox.width - 6)
+  expect(previewBox.height).toBeLessThan(130)
+})
+
+test('uses a 512 thumbnail variant for the hover preview when available', async ({ page }) => {
+  let originalRequested = false
+  const hoverAsset = {
+    ...sampleAsset,
+    asset_id: 'asset-hover-preview',
+    relative_path: 'maps/hover-preview.png',
+    filename: 'hover-preview.png',
+    stem: 'hover-preview',
+    thumbnail_url: '/thumbs/hover-preview-256.png',
+    thumbnail_width: 256,
+    thumbnail_height: 128,
+    thumbnail_variants: [
+      { max_edge: 256, width: 256, height: 128, url: '/thumbs/hover-preview-256.png' },
+      { max_edge: 512, width: 512, height: 256, url: '/thumbs/hover-preview-512.png' },
+      { max_edge: 1024, width: 1024, height: 512, url: '/thumbs/hover-preview-1024.png' },
+    ],
+  }
+
+  await page.route('**/api/search?*', async (route) => {
+    await route.fulfill({ json: { total: 1, cards: [{ kind: 'asset', asset: hoverAsset }] } })
+  })
+  await page.route('**/api/search-with-directory-counts?*', async (route) => {
+    await route.fulfill({ json: { directories: [sampleRootDirectory(), sampleDirectory()] } })
+  })
+  await page.route('**/thumbs/hover-preview-256.png', async (route) => {
+    await route.fulfill({
+      contentType: 'image/gif',
+      body: Buffer.from('R0lGODlhAQABAPAAAP///wAAACH5BAAAAAAALAAAAAABAAEAAAICRAEAOw==', 'base64'),
+    })
+  })
+  await page.route('**/thumbs/hover-preview-512.png', async (route) => {
+    await route.fulfill({
+      contentType: 'image/gif',
+      body: Buffer.from('R0lGODlhAQABAPAAAP///wAAACH5BAAAAAAALAAAAAABAAEAAAICRAEAOw==', 'base64'),
+    })
+  })
+  await page.route('**/thumbs/hover-preview-1024.png', async (route) => {
+    await route.fulfill({
+      contentType: 'image/gif',
+      body: Buffer.from('R0lGODlhAQABAPAAAP///wAAACH5BAAAAAAALAAAAAABAAEAAAICRAEAOw==', 'base64'),
+    })
+  })
+  await page.route('**/api/assets/asset-hover-preview/file', async (route) => {
+    originalRequested = true
+    await route.fulfill({
+      contentType: 'image/gif',
+      body: Buffer.from('R0lGODlhAQABAPAAAP///wAAACH5BAAAAAAALAAAAAABAAEAAAICRAEAOw==', 'base64'),
+    })
+  })
+
+  await page.goto('/')
+  await page.getByRole('button', { name: /hover-preview\.png/i }).hover()
+
+  const hoverPreview = page.getByLabel('Hovered asset preview')
+  const image = hoverPreview.locator('img')
+  await expect(image).toBeVisible()
+  await expect(image).toHaveAttribute('src', '/thumbs/hover-preview-512.png')
+  await expect(hoverPreview).toHaveCSS('width', '512px')
   expect(originalRequested).toBe(false)
 })
 
@@ -1568,8 +1735,8 @@ test('sizes the selected preview to show the whole image while keeping actions v
   })
   await page.route('**/api/assets/asset-banner/file', async (route) => {
     await route.fulfill({
-      contentType: 'image/gif',
-      body: Buffer.from('R0lGODlhAQABAAAAACw=', 'base64'),
+      contentType: 'image/svg+xml',
+      body: svgImage(200, 600),
     })
   })
 
@@ -1583,12 +1750,15 @@ test('sizes the selected preview to show the whole image while keeping actions v
   await expect(previewImage).toHaveCSS('object-fit', 'contain')
 
   const previewBox = await preview.boundingBox()
+  const previewImageBox = await previewImage.boundingBox()
   const panelBox = await panel.boundingBox()
   const finalActionBox = await panel.getByRole('button', { name: 'Copy FoundryVTT path' }).boundingBox()
-  if (!previewBox || !panelBox || !finalActionBox) throw new Error('selected preview layout is missing')
+  if (!previewBox || !previewImageBox || !panelBox || !finalActionBox) throw new Error('selected preview layout is missing')
 
   expect(previewBox.width).toBeLessThanOrEqual(310)
   expect(previewBox.height).toBeGreaterThan(230)
+  expect(previewImageBox.height).toBeLessThanOrEqual(previewBox.height)
+  expect(previewImageBox.width).toBeLessThan(previewBox.width * 0.45)
   expect(finalActionBox.y + finalActionBox.height).toBeLessThanOrEqual(panelBox.y + panelBox.height)
 })
 

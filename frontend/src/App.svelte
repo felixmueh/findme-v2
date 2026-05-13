@@ -1586,7 +1586,11 @@
           onmouseleave={clearHoverPreview}
         >
           {#if hoverPreviewAsset.thumbnail_url}
-            <img src={hoverPreviewAsset.thumbnail_url} alt="" decoding="async" />
+            <ProgressiveAssetImage
+              asset={hoverPreviewAsset}
+              fullUrl=""
+              displayEdge={512}
+            />
           {:else}
             <div class="file-preview">
               <HoverIcon size={30} />

@@ -17,9 +17,10 @@
       | 'thumbnail_variants'
     >
     fullUrl: string
+    displayEdge?: number
   }
 
-  let { asset, fullUrl }: Props = $props()
+  let { asset, fullUrl, displayEdge: requestedDisplayEdge }: Props = $props()
   let imageElement: HTMLImageElement
   let currentSrc = $state('')
   let sources = $state<ProgressiveImageSource[]>([])
@@ -48,11 +49,12 @@
     async function maybeLoadBetterImage() {
       await tick()
       if (cancelled || currentSource === null || currentSource.original) return
-      const bounds = imageElement.getBoundingClientRect()
+      const bounds = imageElement.parentElement?.getBoundingClientRect() ?? imageElement.getBoundingClientRect()
+      const displayEdge = requestedDisplayEdge ?? Math.max(bounds.width, bounds.height)
       const nextSource = nextProgressiveImageSource(
         sources,
         currentSource,
-        bounds.width,
+        displayEdge,
         fullUrl,
         asset.media_type
       )

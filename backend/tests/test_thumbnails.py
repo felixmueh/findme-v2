@@ -111,6 +111,98 @@ def test_index_sources_generates_static_image_thumbnail_mipmaps(
     assert all(Path(row["cache_path"]).is_file() for row in variants)
 
 
+def test_index_sources_generates_portrait_thumbnail_mipmaps_by_max_edge(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "assets"
+    image_path = source_root / "Portraits" / "Banner.png"
+    write_image(image_path, size=(600, 1200))
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+        additional_thumbnail_mipmaps=(512, 1024),
+    )
+
+    with connect(tmp_path / "findme.sqlite3") as db:
+        initialize_database(db)
+        summary = index_sources(db, config, thumbnail_workers=1)
+        asset = db.execute(
+            """
+            SELECT asset_id, thumbnail_path, thumbnail_width, thumbnail_height
+            FROM assets
+            WHERE relative_path = 'Portraits/Banner.png'
+            """
+        ).fetchone()
+        variants = db.execute(
+            """
+            SELECT kind, max_edge, width, height, cache_path
+            FROM asset_thumbnail_variants
+            WHERE asset_id = ?
+            ORDER BY max_edge
+            """,
+            (asset["asset_id"],),
+        ).fetchall()
+
+    assert summary.generated_thumbnails == 1
+    assert asset["thumbnail_width"] == 128
+    assert asset["thumbnail_height"] == 256
+    assert Path(asset["thumbnail_path"]).name.endswith("-256.webp")
+    assert [(row["kind"], row["max_edge"], row["width"], row["height"]) for row in variants] == [
+        ("thumbnail", 256, 128, 256),
+        ("thumbnail", 512, 256, 512),
+        ("thumbnail", 1024, 512, 1024),
+    ]
+    assert all(Path(row["cache_path"]).is_file() for row in variants)
+
+
+def test_index_sources_generates_extreme_wide_thumbnail_by_max_edge(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "assets"
+    image_path = source_root / "Maps" / "Panorama.png"
+    write_image(image_path, size=(2048, 256))
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+        additional_thumbnail_mipmaps=(512, 1024),
+    )
+
+    with connect(tmp_path / "findme.sqlite3") as db:
+        initialize_database(db)
+        summary = index_sources(db, config, thumbnail_workers=1)
+        variants = db.execute(
+            """
+            SELECT kind, max_edge, width, height, cache_path
+            FROM asset_thumbnail_variants
+            ORDER BY max_edge
+            """
+        ).fetchall()
+
+    assert summary.generated_thumbnails == 1
+    assert [(row["kind"], row["max_edge"], row["width"], row["height"]) for row in variants] == [
+        ("thumbnail", 256, 256, 32),
+        ("thumbnail", 512, 512, 64),
+        ("thumbnail", 1024, 1024, 128),
+    ]
+    assert all(Path(row["cache_path"]).is_file() for row in variants)
+
+
 def test_index_sources_skips_thumbnail_mipmaps_that_would_upscale(
     tmp_path: Path,
 ) -> None:
@@ -296,6 +388,53 @@ def test_index_sources_generates_video_poster_mipmaps(tmp_path: Path) -> None:
         ("poster", 256, 256, 144),
         ("poster", 512, 512, 288),
         ("poster", 1024, 1024, 576),
+    ]
+    assert all(Path(row["cache_path"]).is_file() for row in variants)
+
+
+def test_index_sources_generates_portrait_video_poster_mipmaps_by_max_edge(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "assets"
+    video_path = source_root / "Animations" / "Portal.mp4"
+    write_video(video_path, size=(720, 1280))
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".mp4"}),
+            ),
+        ),
+        additional_thumbnail_mipmaps=(512, 1024),
+    )
+
+    with connect(tmp_path / "findme.sqlite3") as db:
+        initialize_database(db)
+        summary = index_sources(db, config, thumbnail_workers=1)
+        asset = db.execute(
+            "SELECT asset_id, thumbnail_width, thumbnail_height FROM assets"
+        ).fetchone()
+        variants = db.execute(
+            """
+            SELECT kind, max_edge, width, height, cache_path
+            FROM asset_thumbnail_variants
+            WHERE asset_id = ?
+            ORDER BY max_edge
+            """,
+            (asset["asset_id"],),
+        ).fetchall()
+
+    assert summary.generated_thumbnails == 1
+    assert asset["thumbnail_width"] == 144
+    assert asset["thumbnail_height"] == 256
+    assert [(row["kind"], row["max_edge"], row["width"], row["height"]) for row in variants] == [
+        ("poster", 256, 144, 256),
+        ("poster", 512, 288, 512),
+        ("poster", 1024, 576, 1024),
     ]
     assert all(Path(row["cache_path"]).is_file() for row in variants)
 
