@@ -748,18 +748,6 @@
     }
   }
 
-  function formatBytes(bytes: number) {
-    if (bytes < 1024) return `${bytes} B`
-    if (bytes < 1024 * 1024) return formatRoundedNumber(bytes / 1024, 'KB')
-    if (bytes < 1024 * 1024 * 1024) return formatRoundedNumber(bytes / 1024 / 1024, 'MB')
-    return formatRoundedNumber(bytes / 1024 / 1024 / 1024, 'GB')
-  }
-
-  function formatRoundedNumber(value: number, suffix: string) {
-    const rounded = value >= 10 ? Math.round(value) : Math.round(value * 10) / 10
-    return `${Number.isInteger(rounded) ? rounded.toFixed(0) : rounded.toFixed(1)} ${suffix}`
-  }
-
   function formatDimensions(asset: Pick<Asset, 'media_width' | 'media_height'>) {
     if (!asset.media_width || !asset.media_height) return ''
     return `${asset.media_width} x ${asset.media_height}`
@@ -787,19 +775,23 @@
   function assetMetadataItems(asset: Asset) {
     return [
       { label: 'Type', value: mediaKindLabel(asset) },
-      { label: 'Size', value: formatBytes(asset.size_bytes) },
-      { label: 'Dimensions', value: formatDimensions(asset) },
+      { label: mediaSizeLabel(asset), value: formatDimensions(asset) },
       { label: 'Length', value: formatDuration(asset.duration_seconds) },
       { label: 'Source', value: asset.source_display_name },
       { label: 'Folder', value: asset.directory || '/' },
     ].filter((item) => item.value)
   }
 
+  function mediaSizeLabel(asset: Pick<Asset, 'media_type'>) {
+    if (asset.media_type === 'video') return 'Video size'
+    if (asset.media_type === 'image') return 'Image size'
+    return 'Media size'
+  }
+
   function compactAssetMetadataItems(asset: Asset) {
     return [
       formatDimensions(asset),
       formatDuration(asset.duration_seconds),
-      formatBytes(asset.size_bytes),
       asset.extension.slice(1).toUpperCase(),
     ].filter(Boolean)
   }

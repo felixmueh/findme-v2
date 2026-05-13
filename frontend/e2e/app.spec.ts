@@ -678,12 +678,14 @@ test('shows asset metadata in the hover preview and selected panel', async ({ pa
 
   const hoverPreview = page.getByLabel('Hovered asset preview')
   await expect(hoverPreview).toContainText('4096 x 3072')
-  await expect(hoverPreview).toContainText('14 MB')
+  await expect(hoverPreview).not.toContainText('14 MB')
 
   await page.getByRole('button', { name: /ancient-ruins\.png/i }).click()
   const panel = page.getByLabel('Selected asset')
   await expect(panel).toContainText('4096 x 3072')
-  await expect(panel).toContainText('14 MB')
+  await expect(panel).toContainText('Image size')
+  await expect(panel).not.toContainText('File size')
+  await expect(panel).not.toContainText('14 MB')
   await expect(panel).toContainText('PNG')
 })
 
