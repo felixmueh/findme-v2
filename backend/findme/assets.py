@@ -46,6 +46,9 @@ class AssetRecord:
     size_bytes: int
     mtime_ns: int
     media_type: str
+    media_width: int | None
+    media_height: int | None
+    duration_seconds: float | None
     thumbnail_variants: tuple[ThumbnailVariantRecord, ...]
 
 
@@ -64,7 +67,10 @@ def get_asset(db: sqlite3.Connection, config: AppConfig, asset_id: str) -> Asset
           assets.directory,
           assets.size_bytes,
           assets.mtime_ns,
-          assets.media_type
+          assets.media_type,
+          assets.media_width,
+          assets.media_height,
+          assets.duration_seconds
         FROM assets
         JOIN sources ON sources.id = assets.source_id
         WHERE assets.asset_id = ?
@@ -87,6 +93,9 @@ def get_asset(db: sqlite3.Connection, config: AppConfig, asset_id: str) -> Asset
         size_bytes=row["size_bytes"],
         mtime_ns=row["mtime_ns"],
         media_type=row["media_type"],
+        media_width=row["media_width"],
+        media_height=row["media_height"],
+        duration_seconds=row["duration_seconds"],
         thumbnail_variants=_thumbnail_variants_for_asset(db, row["asset_id"]),
     )
     _validate_asset_path(config, asset)
@@ -170,6 +179,9 @@ def asset_response(asset: AssetRecord) -> dict[str, object]:
         "directory": asset.directory,
         "size_bytes": asset.size_bytes,
         "media_type": asset.media_type,
+        "media_width": asset.media_width,
+        "media_height": asset.media_height,
+        "duration_seconds": asset.duration_seconds,
     }
     if asset.thumbnail_variants:
         baseline_variant = asset.thumbnail_variants[0]

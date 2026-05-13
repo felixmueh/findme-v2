@@ -631,6 +631,62 @@ test('uses a 512 thumbnail variant for the hover preview when available', async 
   expect(originalRequested).toBe(false)
 })
 
+test('shows asset metadata in the hover preview and selected panel', async ({ page }) => {
+  const metadataAsset = {
+    ...sampleAsset,
+    asset_id: 'asset-metadata-map',
+    relative_path: 'maps/ancient-ruins.png',
+    filename: 'ancient-ruins.png',
+    stem: 'ancient-ruins',
+    size_bytes: 14_680_064,
+    media_width: 4096,
+    media_height: 3072,
+    thumbnail_url: '/thumbs/metadata-map.png',
+    thumbnail_width: 256,
+    thumbnail_height: 192,
+  }
+
+  await page.route('**/api/search?*', async (route) => {
+    await route.fulfill({ json: { total: 1, cards: [{ kind: 'asset', asset: metadataAsset }] } })
+  })
+  await page.route('**/api/search-with-directory-counts?*', async (route) => {
+    await route.fulfill({ json: { directories: [sampleRootDirectory(), sampleDirectory()] } })
+  })
+  await page.route('**/api/assets/asset-metadata-map', async (route) => {
+    await route.fulfill({
+      json: {
+        asset: metadataAsset,
+        actions: actionsFor(metadataAsset, '/tmp/sample-assets/maps/ancient-ruins.png'),
+      },
+    })
+  })
+  await page.route('**/thumbs/metadata-map.png', async (route) => {
+    await route.fulfill({
+      contentType: 'image/gif',
+      body: Buffer.from('R0lGODlhAQABAPAAAP///wAAACH5BAAAAAAALAAAAAABAAEAAAICRAEAOw==', 'base64'),
+    })
+  })
+  await page.route('**/api/assets/asset-metadata-map/file', async (route) => {
+    await route.fulfill({
+      contentType: 'image/gif',
+      body: Buffer.from('R0lGODlhAQABAAAAACw=', 'base64'),
+    })
+  })
+
+  await page.goto('/')
+  await page.getByRole('button', { name: /ancient-ruins\.png/i }).hover()
+
+  const hoverPreview = page.getByLabel('Hovered asset preview')
+  await expect(hoverPreview).toContainText('4096 x 3072')
+  await expect(hoverPreview).toContainText('14 MB')
+
+  await page.getByRole('button', { name: /ancient-ruins\.png/i }).click()
+  const panel = page.getByLabel('Selected asset')
+  await expect(panel).toContainText('4096 x 3072')
+  await expect(panel).toContainText('14 MB')
+  await expect(panel).toContainText('PNG')
+})
+
 test('loads the full image after resizing a card larger than its thumbnail', async ({ page }) => {
   let fullImageRequested = false
   const resizeAsset = {

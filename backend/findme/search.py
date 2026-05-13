@@ -46,6 +46,9 @@ class SearchResult:
     size_bytes: int
     mtime_ns: int
     media_type: str
+    media_width: int | None
+    media_height: int | None
+    duration_seconds: float | None
     thumbnail_variants: tuple[ThumbnailVariantMetadata, ...]
     score: float
 
@@ -1781,6 +1784,9 @@ def _record_to_result(asset: SearchCorpusAsset, score: float) -> SearchResult:
         size_bytes=asset.size_bytes,
         mtime_ns=asset.mtime_ns,
         media_type=asset.media_type,
+        media_width=asset.media_width,
+        media_height=asset.media_height,
+        duration_seconds=asset.duration_seconds,
         thumbnail_variants=asset.thumbnail_variants,
         score=score,
     )

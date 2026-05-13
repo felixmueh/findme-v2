@@ -40,6 +40,13 @@ class ThumbnailResult:
     variants: tuple[ThumbnailVariant, ...] = ()
 
 
+@dataclass(frozen=True)
+class MediaMetadata:
+    width: int | None = None
+    height: int | None = None
+    duration_seconds: float | None = None
+
+
 def thumbnail_cache_path(
     data_root: Path,
     *,
@@ -96,6 +103,26 @@ def generate_thumbnail(
         raise ThumbnailError(f"could not generate thumbnail for {source_path}: {exc}") from exc
 
 
+def read_media_metadata(source_path: Path, media_type: str) -> MediaMetadata | None:
+    if media_type == "image":
+        try:
+            with Image.open(source_path) as image:
+                return MediaMetadata(width=image.width, height=image.height)
+        except (OSError, UnidentifiedImageError) as exc:
+            raise ThumbnailError(f"could not read image metadata for {source_path}: {exc}") from exc
+    if media_type == "video":
+        ffprobe = shutil.which("ffprobe")
+        if ffprobe is None:
+            raise ThumbnailError("ffprobe is required to read video metadata")
+        width, height, duration_seconds = _video_metadata(ffprobe, source_path)
+        return MediaMetadata(
+            width=width,
+            height=height,
+            duration_seconds=duration_seconds,
+        )
+    return None
+
+
 def generate_video_poster(
     source_path: Path,
     data_root: Path,
@@ -114,7 +141,7 @@ def generate_video_poster(
     if ffprobe is None:
         raise ThumbnailError("ffprobe is required to generate video poster thumbnails")
 
-    width, height = _video_dimensions(ffprobe, source_path)
+    width, height, _duration_seconds = _video_metadata(ffprobe, source_path)
     sizes = _eligible_thumbnail_sizes(width, height, additional_max_edges)
     paths = {
         size: thumbnail_cache_path(
@@ -218,7 +245,7 @@ def _extract_first_video_frame(ffmpeg: str, source_path: Path, cache_dir: Path) 
     return frame_path
 
 
-def _video_dimensions(ffprobe: str, source_path: Path) -> tuple[int, int]:
+def _video_metadata(ffprobe: str, source_path: Path) -> tuple[int, int, float | None]:
     command = [
         ffprobe,
         "-v",
@@ -226,7 +253,7 @@ def _video_dimensions(ffprobe: str, source_path: Path) -> tuple[int, int]:
         "-select_streams",
         "v:0",
         "-show_entries",
-        "stream=width,height",
+        "stream=width,height,duration:format=duration",
         "-of",
         "json",
         str(source_path),
@@ -255,13 +282,29 @@ def _video_dimensions(ffprobe: str, source_path: Path) -> tuple[int, int]:
         stream = data["streams"][0]
         width = int(stream["width"])
         height = int(stream["height"])
+        duration_seconds = _positive_float_or_none(
+            stream.get("duration")
+            or data.get("format", {}).get("duration")
+        )
     except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise ThumbnailError(
             f"could not read video dimensions for {source_path}: invalid ffprobe output"
         ) from exc
     if width < 1 or height < 1:
         raise ThumbnailError(f"could not read video dimensions for {source_path}: invalid size")
-    return width, height
+    return width, height, duration_seconds
+
+
+def _positive_float_or_none(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed <= 0:
+        return None
+    return parsed
 
 
 def _extract_video_poster_variants(

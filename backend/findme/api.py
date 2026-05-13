@@ -764,6 +764,9 @@ def _asset_result_response(result, *, score: float) -> dict[str, object]:
         "directory": result.directory,
         "size_bytes": result.size_bytes,
         "media_type": result.media_type,
+        "media_width": result.media_width,
+        "media_height": result.media_height,
+        "duration_seconds": result.duration_seconds,
         "score": score,
     }
     if result.thumbnail_variants:

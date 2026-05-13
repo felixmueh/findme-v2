@@ -712,7 +712,19 @@
     hoverPreviewMuted = !hoverPreviewMuted
   }
 
-  function selectedPreviewStyle(asset: Pick<Asset, 'media_type' | 'thumbnail_width' | 'thumbnail_height'>) {
+  function selectedPreviewStyle(
+    asset: Pick<
+      Asset,
+      'media_type' | 'media_width' | 'media_height' | 'thumbnail_width' | 'thumbnail_height'
+    >
+  ) {
+    if (
+      (asset.media_type === 'image' || asset.media_type === 'video') &&
+      asset.media_width &&
+      asset.media_height
+    ) {
+      return `--selected-preview-aspect: ${asset.media_width} / ${asset.media_height}`
+    }
     if (
       (asset.media_type === 'image' || asset.media_type === 'video') &&
       asset.thumbnail_width &&
@@ -738,8 +750,58 @@
 
   function formatBytes(bytes: number) {
     if (bytes < 1024) return `${bytes} B`
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-    return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+    if (bytes < 1024 * 1024) return formatRoundedNumber(bytes / 1024, 'KB')
+    if (bytes < 1024 * 1024 * 1024) return formatRoundedNumber(bytes / 1024 / 1024, 'MB')
+    return formatRoundedNumber(bytes / 1024 / 1024 / 1024, 'GB')
+  }
+
+  function formatRoundedNumber(value: number, suffix: string) {
+    const rounded = value >= 10 ? Math.round(value) : Math.round(value * 10) / 10
+    return `${Number.isInteger(rounded) ? rounded.toFixed(0) : rounded.toFixed(1)} ${suffix}`
+  }
+
+  function formatDimensions(asset: Pick<Asset, 'media_width' | 'media_height'>) {
+    if (!asset.media_width || !asset.media_height) return ''
+    return `${asset.media_width} x ${asset.media_height}`
+  }
+
+  function formatDuration(seconds: number | null | undefined) {
+    if (!seconds || seconds <= 0) return ''
+    const totalSeconds = Math.round(seconds)
+    const minutes = Math.floor(totalSeconds / 60)
+    const remainder = totalSeconds % 60
+    if (minutes < 60) return `${minutes}:${remainder.toString().padStart(2, '0')}`
+    const hours = Math.floor(minutes / 60)
+    const minuteRemainder = minutes % 60
+    return `${hours}:${minuteRemainder.toString().padStart(2, '0')}:${remainder
+      .toString()
+      .padStart(2, '0')}`
+  }
+
+  function mediaKindLabel(asset: Pick<Asset, 'media_type' | 'extension'>) {
+    const extension = asset.extension.slice(1).toUpperCase()
+    if (!extension) return asset.media_type
+    return `${extension} ${asset.media_type}`
+  }
+
+  function assetMetadataItems(asset: Asset) {
+    return [
+      { label: 'Type', value: mediaKindLabel(asset) },
+      { label: 'Size', value: formatBytes(asset.size_bytes) },
+      { label: 'Dimensions', value: formatDimensions(asset) },
+      { label: 'Length', value: formatDuration(asset.duration_seconds) },
+      { label: 'Source', value: asset.source_display_name },
+      { label: 'Folder', value: asset.directory || '/' },
+    ].filter((item) => item.value)
+  }
+
+  function compactAssetMetadataItems(asset: Asset) {
+    return [
+      formatDimensions(asset),
+      formatDuration(asset.duration_seconds),
+      formatBytes(asset.size_bytes),
+      asset.extension.slice(1).toUpperCase(),
+    ].filter(Boolean)
   }
 
   function directoryKey(directory: Pick<DirectoryNode, 'source_id' | 'path'>) {
@@ -1598,6 +1660,11 @@
             </div>
           {/if}
           <span class="hover-preview-name">{hoverPreviewAsset.filename}</span>
+          <span class="hover-preview-metadata">
+            {#each compactAssetMetadataItems(hoverPreviewAsset) as item}
+              <span>{item}</span>
+            {/each}
+          </span>
         </aside>
       {/if}
 
@@ -1637,6 +1704,15 @@
             <strong>{selected.asset.filename}</strong>
             <span>{selected.asset.relative_path}</span>
           </div>
+
+          <dl class="asset-metadata">
+            {#each assetMetadataItems(selected.asset) as item}
+              <div>
+                <dt>{item.label}</dt>
+                <dd>{item.value}</dd>
+              </div>
+            {/each}
+          </dl>
 
           <div class="commands">
             <a href={actions.open.url} target="_blank" rel="noreferrer" title="Open original">

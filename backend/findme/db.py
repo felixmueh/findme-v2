@@ -8,7 +8,7 @@ from pathlib import Path
 import sqlite3
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 @contextmanager
@@ -85,6 +85,9 @@ def initialize_database(db: sqlite3.Connection) -> None:
           size_bytes INTEGER NOT NULL,
           mtime_ns INTEGER NOT NULL,
           media_type TEXT NOT NULL,
+          media_width INTEGER,
+          media_height INTEGER,
+          duration_seconds REAL,
           thumbnail_path TEXT,
           thumbnail_width INTEGER,
           thumbnail_height INTEGER,
@@ -123,6 +126,9 @@ def initialize_database(db: sqlite3.Connection) -> None:
     _ensure_column(db, "assets", "thumbnail_path", "TEXT")
     _ensure_column(db, "assets", "thumbnail_width", "INTEGER")
     _ensure_column(db, "assets", "thumbnail_height", "INTEGER")
+    _ensure_column(db, "assets", "media_width", "INTEGER")
+    _ensure_column(db, "assets", "media_height", "INTEGER")
+    _ensure_column(db, "assets", "duration_seconds", "REAL")
     _drop_legacy_indexing_schema(db)
     _ensure_builtin_search_profiles(db)
     _migrate_folder_quality_overrides(db)
@@ -183,6 +189,9 @@ def compute_index_fingerprint(db: sqlite3.Connection) -> str:
           assets.size_bytes,
           assets.mtime_ns,
           assets.media_type,
+          assets.media_width,
+          assets.media_height,
+          assets.duration_seconds,
           assets.thumbnail_path,
           assets.thumbnail_width,
           assets.thumbnail_height

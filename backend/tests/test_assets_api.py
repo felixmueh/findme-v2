@@ -8,7 +8,7 @@ from findme.db import connect, initialize_database
 from findme.indexer import index_sources
 from findme.search_corpus import rebuild_search_corpus
 
-from helpers import write_image
+from helpers import write_image, write_video
 
 
 def test_asset_detail_includes_derived_actions_and_serves_file(tmp_path: Path) -> None:
@@ -118,3 +118,51 @@ def test_missing_asset_file_returns_404(tmp_path: Path) -> None:
     client = TestClient(create_app(config, db_path))
 
     assert client.get(f"/api/assets/{asset_id}/file").status_code == 404
+
+
+def test_asset_metadata_includes_image_size_and_video_duration(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    write_image(source_root / "maps" / "Castle.png", size=(2048, 1536))
+    write_video(source_root / "animations" / "Portal.mp4", size=(640, 360))
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png", ".mp4"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config, thumbnail_workers=1)
+        image_id = db.execute(
+            "SELECT asset_id FROM assets WHERE relative_path = 'maps/Castle.png'"
+        ).fetchone()["asset_id"]
+        video_id = db.execute(
+            "SELECT asset_id FROM assets WHERE relative_path = 'animations/Portal.mp4'"
+        ).fetchone()["asset_id"]
+    rebuild_search_corpus(config, db_path)
+
+    client = TestClient(create_app(config, db_path))
+
+    image_asset = client.get(f"/api/assets/{image_id}").json()["asset"]
+    assert image_asset["media_width"] == 2048
+    assert image_asset["media_height"] == 1536
+    assert image_asset["duration_seconds"] is None
+
+    video_asset = client.get(f"/api/assets/{video_id}").json()["asset"]
+    assert video_asset["media_width"] == 640
+    assert video_asset["media_height"] == 360
+    assert video_asset["duration_seconds"] >= 0.9
+
+    search_asset = client.get("/api/search", params={"q": "portal"}).json()["cards"][0][
+        "asset"
+    ]
+    assert search_asset["media_width"] == 640
+    assert search_asset["media_height"] == 360
+    assert search_asset["duration_seconds"] >= 0.9

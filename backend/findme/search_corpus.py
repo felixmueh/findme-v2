@@ -20,7 +20,7 @@ from findme.db import search_corpus_is_stale as search_corpus_is_stale
 from findme.result_cards import CardMetadata
 
 
-SEARCH_CORPUS_VERSION = "0.6"
+SEARCH_CORPUS_VERSION = "0.7"
 
 
 class SearchCorpusError(RuntimeError):
@@ -51,6 +51,9 @@ class SearchCorpusAsset:
     size_bytes: int
     mtime_ns: int
     media_type: str
+    media_width: int | None
+    media_height: int | None
+    duration_seconds: float | None
     thumbnail_variants: tuple[ThumbnailVariantMetadata, ...]
     source_tokens: tuple[str, ...]
     filename_tokens: tuple[str, ...]
@@ -527,7 +530,10 @@ def fetch_search_corpus_assets(
           assets.directory,
           assets.size_bytes,
           assets.mtime_ns,
-          assets.media_type
+          assets.media_type,
+          assets.media_width,
+          assets.media_height,
+          assets.duration_seconds
         FROM assets
         JOIN sources ON sources.id = assets.source_id
         WHERE {" AND ".join(where) if where else "1 = 1"}
@@ -618,6 +624,9 @@ def _row_to_preprocessed_asset(
         size_bytes=row["size_bytes"],
         mtime_ns=row["mtime_ns"],
         media_type=row["media_type"],
+        media_width=row["media_width"],
+        media_height=row["media_height"],
+        duration_seconds=row["duration_seconds"],
         thumbnail_variants=thumbnail_variants,
         source_tokens=source_tokens,
         filename_tokens=filename_tokens,

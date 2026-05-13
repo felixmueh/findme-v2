@@ -16,10 +16,12 @@ from findme.config import AppConfig, SourceConfig
 from findme.db import refresh_index_fingerprint
 from findme.identity import asset_id_for
 from findme.thumbnails import (
+    MediaMetadata,
     ThumbnailError,
     ThumbnailResult,
     generate_thumbnail,
     generate_video_poster,
+    read_media_metadata,
 )
 
 INSERT_BATCH_SIZE = 512
@@ -93,6 +95,7 @@ class PendingAsset:
 class PreparedAsset:
     pending: PendingAsset
     thumbnail: ThumbnailResult | None
+    media_metadata: MediaMetadata | None = None
     thumbnail_failure: ThumbnailFailure | None = None
     processing_required: bool = True
     worker_id: str = ""
@@ -105,6 +108,9 @@ class CurrentAsset:
     media_type: str
     size_bytes: int
     mtime_ns: int
+    media_width: int | None
+    media_height: int | None
+    duration_seconds: float | None
     thumbnail_path: Path | None
     thumbnail_width: int | None
     thumbnail_height: int | None
@@ -159,6 +165,18 @@ def index_sources(
             if needs_existing_metadata
             else _load_source_asset_paths(db, source, progress=progress)
         )
+        missing_media_metadata_paths = (
+            _source_paths_missing_media_metadata(source_assets)
+            if needs_existing_metadata
+            else _load_source_asset_paths_missing_media_metadata(
+                db,
+                source,
+                progress=progress,
+            )
+        )
+        if missing_media_metadata_paths and not source_assets:
+            source_assets = _load_source_assets(db, source, progress=progress)
+            source_asset_paths = set(source_assets)
         source_scan_started = time.monotonic()
 
         seen_paths: set[str] = set()
@@ -169,7 +187,7 @@ def index_sources(
             if discovered.relative_path not in source_asset_paths:
                 pending = _pending_asset(source, discovered.file_path)
                 current = None
-            elif needs_existing_metadata:
+            elif needs_existing_metadata or discovered.relative_path in missing_media_metadata_paths:
                 current = source_assets[discovered.relative_path]
                 pending = _pending_asset_from_current(source, discovered, current)
             else:
@@ -260,8 +278,10 @@ def index_sources(
         thumbnail_worker_timeout_seconds=thumbnail_worker_timeout_seconds,
         progress=progress,
     ):
-        if prepared.thumbnail is not None and prepared.thumbnail.generated:
-            thumbnails += _update_asset_thumbnail(db, prepared)
+        if prepared.thumbnail is not None or prepared.media_metadata is not None:
+            updated = _update_asset_processing_result(db, prepared)
+            if prepared.thumbnail is not None and prepared.thumbnail.generated:
+                thumbnails += updated
             pending_thumbnail_commits += 1
             if pending_thumbnail_commits >= INSERT_BATCH_SIZE:
                 db.commit()
@@ -474,6 +494,9 @@ def _update_assets(
             extension = ?,
             directory = ?,
             media_type = ?,
+            media_width = NULL,
+            media_height = NULL,
+            duration_seconds = NULL,
             indexed_at = CURRENT_TIMESTAMP
         WHERE source_id = ?
           AND relative_path = ?
@@ -533,12 +556,13 @@ def _prepare_index_asset(
         and current.mtime_ns == pending.mtime_ns
     ):
         needs_thumbnail = _needs_thumbnail(pending)
+        needs_media_metadata = _needs_media_metadata(pending, current)
         if needs_thumbnail and rebuild_thumbnails:
             return PreparedAsset(pending=pending, thumbnail=None, processing_required=True)
         has_cached_thumbnail = (
             current.thumbnail_path is not None
         )
-        if needs_thumbnail and has_cached_thumbnail:
+        if needs_thumbnail and has_cached_thumbnail and not needs_media_metadata:
             return PreparedAsset(
                 pending=pending,
                 thumbnail=ThumbnailResult(
@@ -549,9 +573,15 @@ def _prepare_index_asset(
                 ),
                 processing_required=False,
             )
+        if needs_thumbnail and has_cached_thumbnail and needs_media_metadata:
+            return PreparedAsset(pending=pending, thumbnail=None, processing_required=True)
         if needs_thumbnail and current.thumbnail_path is None and not retry_failed_thumbnails:
-            return PreparedAsset(pending=pending, thumbnail=None, processing_required=False)
-        if not needs_thumbnail:
+            return PreparedAsset(
+                pending=pending,
+                thumbnail=None,
+                processing_required=needs_media_metadata,
+            )
+        if not needs_thumbnail and not needs_media_metadata:
             return PreparedAsset(pending=pending, thumbnail=None, processing_required=False)
 
     return PreparedAsset(pending=pending, thumbnail=None, processing_required=True)
@@ -801,17 +831,21 @@ def _generate_thumbnails(
         executor.shutdown(wait=False, cancel_futures=True)
 
 
-def _update_asset_thumbnail(db: sqlite3.Connection, prepared: PreparedAsset) -> int:
-    if prepared.thumbnail is None:
+def _update_asset_processing_result(db: sqlite3.Connection, prepared: PreparedAsset) -> int:
+    if prepared.thumbnail is None and prepared.media_metadata is None:
         return 0
     pending = prepared.pending
     baseline = prepared.thumbnail
+    metadata = prepared.media_metadata
     cursor = db.execute(
         """
         UPDATE assets
-        SET thumbnail_path = ?,
-            thumbnail_width = ?,
-            thumbnail_height = ?,
+        SET thumbnail_path = COALESCE(?, thumbnail_path),
+            thumbnail_width = COALESCE(?, thumbnail_width),
+            thumbnail_height = COALESCE(?, thumbnail_height),
+            media_width = COALESCE(?, media_width),
+            media_height = COALESCE(?, media_height),
+            duration_seconds = ?,
             indexed_at = CURRENT_TIMESTAMP
         WHERE asset_id = ?
           AND source_id = ?
@@ -821,9 +855,12 @@ def _update_asset_thumbnail(db: sqlite3.Connection, prepared: PreparedAsset) -> 
           AND media_type = ?
         """,
         (
-            str(baseline.path),
-            baseline.width,
-            baseline.height,
+            str(baseline.path) if baseline is not None else None,
+            baseline.width if baseline is not None else None,
+            baseline.height if baseline is not None else None,
+            metadata.width if metadata is not None else None,
+            metadata.height if metadata is not None else None,
+            metadata.duration_seconds if metadata is not None else None,
             pending.asset_id,
             pending.source.id,
             pending.relative_path,
@@ -832,7 +869,7 @@ def _update_asset_thumbnail(db: sqlite3.Connection, prepared: PreparedAsset) -> 
             pending.media_type,
         ),
     )
-    if cursor.rowcount > 0:
+    if cursor.rowcount > 0 and prepared.thumbnail is not None:
         _replace_asset_thumbnail_variants(db, prepared)
     return cursor.rowcount
 
@@ -941,10 +978,12 @@ def _prepare_asset(
             media_type=pending.media_type,
             additional_thumbnail_mipmaps=config.additional_thumbnail_mipmaps,
         )
+        media_metadata = read_media_metadata(pending.file_path, pending.media_type)
         worker_elapsed_seconds = time.monotonic() - started
         return PreparedAsset(
             pending=pending,
             thumbnail=thumbnail,
+            media_metadata=media_metadata,
             worker_id=worker_name,
             worker_elapsed_seconds=worker_elapsed_seconds,
         )
@@ -993,6 +1032,9 @@ def _load_source_assets(
           size_bytes,
           mtime_ns,
           media_type,
+          media_width,
+          media_height,
+          duration_seconds,
           thumbnail_path,
           thumbnail_width,
           thumbnail_height
@@ -1011,6 +1053,9 @@ def _load_source_assets(
             media_type=row["media_type"],
             size_bytes=row["size_bytes"],
             mtime_ns=row["mtime_ns"],
+            media_width=row["media_width"],
+            media_height=row["media_height"],
+            duration_seconds=row["duration_seconds"],
             thumbnail_path=thumbnail_path,
             thumbnail_width=row["thumbnail_width"],
             thumbnail_height=row["thumbnail_height"],
@@ -1057,6 +1102,49 @@ def _load_source_asset_paths(
             )
         )
     return paths
+
+
+def _load_source_asset_paths_missing_media_metadata(
+    db: sqlite3.Connection,
+    source: SourceConfig,
+    *,
+    progress: ProgressReporter | None = None,
+) -> set[str]:
+    started = time.monotonic()
+    rows = db.execute(
+        """
+        SELECT relative_path
+        FROM assets
+        WHERE source_id = ?
+          AND media_type IN ('image', 'video')
+          AND thumbnail_path IS NOT NULL
+          AND (media_width IS NULL OR media_height IS NULL)
+        """,
+        (source.id,),
+    ).fetchall()
+    paths = {row["relative_path"] for row in rows}
+    if progress is not None and paths:
+        progress(
+            IndexEvent(
+                kind="source-media-metadata-missing-loaded",
+                source_id=source.id,
+                message=(
+                    f"count={len(paths)} "
+                    f"elapsed={time.monotonic() - started:.3f}s"
+                ),
+            )
+        )
+    return paths
+
+
+def _source_paths_missing_media_metadata(
+    source_assets: dict[str, CurrentAsset],
+) -> set[str]:
+    return {
+        relative_path
+        for relative_path, current in source_assets.items()
+        if _needs_media_metadata_for_current(current)
+    }
 
 
 def _insert_assets(
@@ -1122,6 +1210,19 @@ def _needs_thumbnail(pending: PendingAsset) -> bool:
     if pending.media_type == "image":
         return True
     return False
+
+
+def _needs_media_metadata(pending: PendingAsset, current: CurrentAsset) -> bool:
+    if pending.media_type not in {"image", "video"}:
+        return False
+    return _needs_media_metadata_for_current(current)
+
+
+def _needs_media_metadata_for_current(current: CurrentAsset) -> bool:
+    return (
+        current.media_type in {"image", "video"}
+        and (current.media_width is None or current.media_height is None)
+    )
 
 
 def _thumbnail_status(prepared: PreparedAsset) -> str:

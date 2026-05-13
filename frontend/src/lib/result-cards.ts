@@ -17,6 +17,9 @@ export type Asset = {
   directory: string
   size_bytes: number
   media_type: string
+  media_width?: number | null
+  media_height?: number | null
+  duration_seconds?: number | null
   thumbnail_url?: string
   thumbnail_width?: number
   thumbnail_height?: number
