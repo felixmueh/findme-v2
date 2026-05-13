@@ -129,7 +129,6 @@
   let selected = $state<AssetDetail | null>(null)
   let hoveredAsset = $state<Asset | null>(null)
   let hoveredCollection = $state<CollectionCard | null>(null)
-  let hoverAssetDetailsById = $state<Record<string, Asset>>({})
   let qualityTargetKey = $state('')
   let qualityHoverKey = $state('')
   let cyclingCollectionKey = $state('')
@@ -186,11 +185,9 @@
   const selectedIndex = $derived(
     visibleEntries.findIndex((entry) => entry.kind === 'asset' && entry.asset.asset_id === selectedAssetId)
   )
-  const hoverPreviewAsset = $derived.by(() => {
-    const asset = hoveredCollection ? collectionDisplayAsset(hoveredCollection) : hoveredAsset
-    if (!asset) return null
-    return hoverAssetDetailsById[asset.asset_id] ?? asset
-  })
+  const hoverPreviewAsset = $derived(
+    hoveredCollection ? collectionDisplayAsset(hoveredCollection) : hoveredAsset
+  )
   const hoverAudioUrl = $derived(
     hoverPreviewAsset?.media_type === 'audio' && hoverPreviewAsset.asset_id !== selectedAssetId
       ? assetFileUrl(hoverPreviewAsset)
@@ -487,28 +484,6 @@
     revealSelectedAssetDirectory(detail.asset)
   }
 
-  async function hydrateHoverAssetMetadata(asset: Asset) {
-    if (!needsMediaMetadata(asset) || hoverAssetDetailsById[asset.asset_id]) return
-    try {
-      const response = await fetch(`/api/assets/${asset.asset_id}`)
-      if (!response.ok) return
-      const detail = (await response.json()) as AssetDetail
-      hoverAssetDetailsById = {
-        ...hoverAssetDetailsById,
-        [detail.asset.asset_id]: detail.asset,
-      }
-    } catch {
-      // Hover metadata is opportunistic; selection still reports load failures.
-    }
-  }
-
-  function needsMediaMetadata(asset: Asset) {
-    return (
-      (asset.media_type === 'image' || asset.media_type === 'video') &&
-      (!asset.media_width || !asset.media_height)
-    )
-  }
-
   async function copyFoundryVttPath() {
     if (!selected) return
     await copyValueAction(selected.actions.copy_foundryvtt_path)
@@ -698,7 +673,6 @@
     window.clearTimeout(hoverClearTimer)
     hoverClearTimer = undefined
     hoveredAsset = asset
-    void hydrateHoverAssetMetadata(asset)
   }
 
   function scheduleClearHoveredAsset(asset: Asset) {
@@ -1259,7 +1233,6 @@
     window.clearInterval(collectionCycleTimer)
     hoveredAsset = null
     hoveredCollection = collection
-    void hydrateHoverAssetMetadata(collection.representative)
     cyclingCollectionKey = collection.collection_key
     cyclingVariantIndex = Math.max(
       collection.variants.findIndex((asset) => asset.asset_id === collection.representative.asset_id),
@@ -1267,8 +1240,6 @@
     )
     collectionCycleTimer = window.setInterval(() => {
       cyclingVariantIndex = (cyclingVariantIndex + 1) % collection.variants.length
-      const nextAsset = collection.variants[cyclingVariantIndex % collection.variants.length]
-      if (nextAsset) void hydrateHoverAssetMetadata(nextAsset)
     }, 600)
   }
 

@@ -639,14 +639,11 @@ test('shows asset metadata in the hover preview and selected panel', async ({ pa
     filename: 'ancient-ruins.png',
     stem: 'ancient-ruins',
     size_bytes: 14_680_064,
+    media_width: 4096,
+    media_height: 3072,
     thumbnail_url: '/thumbs/metadata-map.png',
     thumbnail_width: 256,
     thumbnail_height: 192,
-  }
-  const metadataDetailAsset = {
-    ...metadataAsset,
-    media_width: 4096,
-    media_height: 3072,
   }
 
   await page.route('**/api/search?*', async (route) => {
@@ -658,8 +655,8 @@ test('shows asset metadata in the hover preview and selected panel', async ({ pa
   await page.route('**/api/assets/asset-metadata-map', async (route) => {
     await route.fulfill({
       json: {
-        asset: metadataDetailAsset,
-        actions: actionsFor(metadataDetailAsset, '/tmp/sample-assets/maps/ancient-ruins.png'),
+        asset: metadataAsset,
+        actions: actionsFor(metadataAsset, '/tmp/sample-assets/maps/ancient-ruins.png'),
       },
     })
   })
