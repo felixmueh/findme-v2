@@ -38,6 +38,7 @@ class AppConfig:
     data_root: Path
     sources: tuple[SourceConfig, ...]
     thumbnail_workers: int = 2
+    additional_thumbnail_mipmaps: tuple[int, ...] = ()
     domain_vocabulary_path: Path | None = None
     search_corpus_path: Path | None = None
 
@@ -63,6 +64,9 @@ def load_config(path: Path) -> AppConfig:
     thumbnail_workers = app.get("thumbnail_workers", 2)
     if not isinstance(thumbnail_workers, int) or thumbnail_workers < 1:
         raise ConfigError("[app].thumbnail_workers must be a positive integer")
+    additional_thumbnail_mipmaps = _load_additional_thumbnail_mipmaps(
+        app.get("additional_thumbnail_mipmaps", [])
+    )
 
     search_config = raw.get("search")
     domain_vocabulary_path = _load_domain_vocabulary_path(search_config, config_path.parent)
@@ -87,9 +91,27 @@ def load_config(path: Path) -> AppConfig:
         data_root=Path(data_root_raw).expanduser(),
         sources=tuple(sources),
         thumbnail_workers=thumbnail_workers,
+        additional_thumbnail_mipmaps=additional_thumbnail_mipmaps,
         domain_vocabulary_path=domain_vocabulary_path,
         search_corpus_path=search_corpus_path,
     )
+
+
+def _load_additional_thumbnail_mipmaps(raw: object) -> tuple[int, ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise ConfigError("[app].additional_thumbnail_mipmaps must be a list")
+    sizes: set[int] = set()
+    for value in raw:
+        if not isinstance(value, int):
+            raise ConfigError("[app].additional_thumbnail_mipmaps entries must be integers")
+        if value <= 256:
+            raise ConfigError(
+                "[app].additional_thumbnail_mipmaps entries must be greater than 256"
+            )
+        sizes.add(value)
+    return tuple(sorted(sizes))
 
 
 def _load_domain_vocabulary_path(raw: object, config_dir: Path) -> Path | None:

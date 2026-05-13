@@ -252,6 +252,7 @@ def index_sources(
         refresh_index_fingerprint(db)
         db.commit()
 
+    pending_thumbnail_commits = 0
     for prepared in _generate_thumbnails(
         config,
         thumbnail_work,
@@ -261,7 +262,10 @@ def index_sources(
     ):
         if prepared.thumbnail is not None and prepared.thumbnail.generated:
             thumbnails += _update_asset_thumbnail(db, prepared)
-            db.commit()
+            pending_thumbnail_commits += 1
+            if pending_thumbnail_commits >= INSERT_BATCH_SIZE:
+                db.commit()
+                pending_thumbnail_commits = 0
         if prepared.thumbnail_failure is not None:
             thumbnail_failures.append(prepared.thumbnail_failure)
         if progress is not None:
@@ -279,6 +283,8 @@ def index_sources(
                 )
             )
     if thumbnail_work:
+        if pending_thumbnail_commits:
+            db.commit()
         refresh_index_fingerprint(db)
         db.commit()
 
@@ -799,6 +805,7 @@ def _update_asset_thumbnail(db: sqlite3.Connection, prepared: PreparedAsset) -> 
     if prepared.thumbnail is None:
         return 0
     pending = prepared.pending
+    baseline = prepared.thumbnail
     cursor = db.execute(
         """
         UPDATE assets
@@ -814,9 +821,9 @@ def _update_asset_thumbnail(db: sqlite3.Connection, prepared: PreparedAsset) -> 
           AND media_type = ?
         """,
         (
-            str(prepared.thumbnail.path),
-            prepared.thumbnail.width,
-            prepared.thumbnail.height,
+            str(baseline.path),
+            baseline.width,
+            baseline.height,
             pending.asset_id,
             pending.source.id,
             pending.relative_path,
@@ -825,7 +832,62 @@ def _update_asset_thumbnail(db: sqlite3.Connection, prepared: PreparedAsset) -> 
             pending.media_type,
         ),
     )
+    if cursor.rowcount > 0:
+        _replace_asset_thumbnail_variants(db, prepared)
     return cursor.rowcount
+
+
+def _replace_asset_thumbnail_variants(
+    db: sqlite3.Connection,
+    prepared: PreparedAsset,
+) -> None:
+    if prepared.thumbnail is None:
+        return
+    pending = prepared.pending
+    variants = prepared.thumbnail.variants
+    if not variants:
+        return
+    kind = variants[0].kind
+    db.execute(
+        """
+        DELETE FROM asset_thumbnail_variants
+        WHERE asset_id = ?
+          AND kind = ?
+        """,
+        (pending.asset_id, kind),
+    )
+    db.executemany(
+        """
+        INSERT INTO asset_thumbnail_variants(
+          asset_id,
+          source_id,
+          relative_path,
+          kind,
+          max_edge,
+          width,
+          height,
+          cache_path,
+          generated_from_size_bytes,
+          generated_from_mtime_ns
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                pending.asset_id,
+                pending.source.id,
+                pending.relative_path,
+                variant.kind,
+                variant.max_edge,
+                variant.width,
+                variant.height,
+                str(variant.path),
+                pending.size_bytes,
+                pending.mtime_ns,
+            )
+            for variant in variants
+        ],
+    )
 
 
 def _pending_asset(source: SourceConfig, file_path: Path) -> PendingAsset:
@@ -877,6 +939,7 @@ def _prepare_asset(
             size_bytes=pending.size_bytes,
             mtime_ns=pending.mtime_ns,
             media_type=pending.media_type,
+            additional_thumbnail_mipmaps=config.additional_thumbnail_mipmaps,
         )
         worker_elapsed_seconds = time.monotonic() - started
         return PreparedAsset(
@@ -1095,6 +1158,7 @@ def _thumbnail_for(
     size_bytes: int,
     mtime_ns: int,
     media_type: str,
+    additional_thumbnail_mipmaps: tuple[int, ...],
 ) -> ThumbnailResult | None:
     if media_type == "image":
         return generate_thumbnail(
@@ -1105,6 +1169,7 @@ def _thumbnail_for(
             relative_path=relative_path,
             size_bytes=size_bytes,
             mtime_ns=mtime_ns,
+            additional_max_edges=additional_thumbnail_mipmaps,
         )
     if media_type == "video":
         return generate_video_poster(
@@ -1115,5 +1180,6 @@ def _thumbnail_for(
             relative_path=relative_path,
             size_bytes=size_bytes,
             mtime_ns=mtime_ns,
+            additional_max_edges=additional_thumbnail_mipmaps,
         )
     return None

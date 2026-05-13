@@ -616,7 +616,8 @@ def test_index_sources_marks_worker_timeout_as_failure(tmp_path: Path, monkeypat
         size_bytes: int,
         mtime_ns: int,
         media_type: str,
-        ) -> thumbnails.ThumbnailResult:
+        additional_thumbnail_mipmaps: tuple[int, ...],
+    ) -> thumbnails.ThumbnailResult:
         time.sleep(0.2)
         return thumbnails.generate_thumbnail(
             source_path,
@@ -626,6 +627,7 @@ def test_index_sources_marks_worker_timeout_as_failure(tmp_path: Path, monkeypat
             relative_path=relative_path,
             size_bytes=size_bytes,
             mtime_ns=mtime_ns,
+            additional_max_edges=additional_thumbnail_mipmaps,
         )
 
     monkeypatch.setattr(indexer, "_thumbnail_for", slow_thumbnail)
@@ -685,6 +687,7 @@ def test_index_sources_disables_zero_second_timeout(tmp_path: Path, monkeypatch)
         size_bytes: int,
         mtime_ns: int,
         media_type: str,
+        additional_thumbnail_mipmaps: tuple[int, ...],
     ) -> thumbnails.ThumbnailResult:
         time.sleep(0.2)
         return original_generate_thumbnail(
@@ -695,6 +698,7 @@ def test_index_sources_disables_zero_second_timeout(tmp_path: Path, monkeypatch)
             relative_path=relative_path,
             size_bytes=size_bytes,
             mtime_ns=mtime_ns,
+            additional_max_edges=additional_thumbnail_mipmaps,
         )
 
     monkeypatch.setattr(indexer, "_thumbnail_for", slow_thumbnail)

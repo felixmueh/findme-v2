@@ -65,6 +65,15 @@ def _unreferenced_thumbnail_files(
             """
         )
     }
+    referenced.update(
+        Path(row["cache_path"]).as_posix()
+        for row in db.execute(
+            """
+            SELECT cache_path
+            FROM asset_thumbnail_variants
+            """
+        )
+    )
     unreferenced: list[Path] = []
     count = 0
     for count, path in enumerate(thumbs_root.rglob("*.webp"), start=1):

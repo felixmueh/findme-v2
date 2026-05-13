@@ -97,6 +97,23 @@ def initialize_database(db: sqlite3.Connection) -> None:
 
         CREATE INDEX IF NOT EXISTS idx_assets_directory
           ON assets (source_id, directory);
+
+        CREATE TABLE IF NOT EXISTS asset_thumbnail_variants (
+          asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
+          source_id TEXT NOT NULL,
+          relative_path TEXT NOT NULL,
+          kind TEXT NOT NULL CHECK (kind IN ('thumbnail', 'poster')),
+          max_edge INTEGER NOT NULL,
+          width INTEGER NOT NULL,
+          height INTEGER NOT NULL,
+          cache_path TEXT NOT NULL,
+          generated_from_size_bytes INTEGER NOT NULL,
+          generated_from_mtime_ns INTEGER NOT NULL,
+          PRIMARY KEY (asset_id, kind, max_edge)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_asset_thumbnail_variants_source_path
+          ON asset_thumbnail_variants(source_id, relative_path);
         """
     )
     db.execute(

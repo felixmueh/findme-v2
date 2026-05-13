@@ -27,6 +27,7 @@ def test_initialize_database_creates_schema_and_wal_database(tmp_path: Path) -> 
     assert {
         "sources",
         "assets",
+        "asset_thumbnail_variants",
         "search_profiles",
         "search_profile_folder_settings",
         "schema_migrations",

@@ -1,7 +1,35 @@
 # Thumbnail Mipmap Design Notes
 
-This document captures the working design for multi-size thumbnails/posters.
-It is a planning note, not an implemented contract.
+This document captures the implemented backend/indexer design for multi-size
+thumbnails/posters and the remaining caller work.
+
+## Current Status
+
+Done:
+
+- Backend config supports app-wide extra sizes with
+  `additional_thumbnail_mipmaps = [512, 1024]`.
+- The canonical `asset_thumbnail_variants` table records available thumbnail
+  and poster sizes.
+- Still images generate variants with Pillow, BICUBIC resampling, WebP quality
+  `82`, method `2`.
+- Video posters generate eligible variants with `ffmpeg` in one multi-output
+  invocation.
+- Indexing writes thumbnail DB updates in batches and keeps
+  `assets.thumbnail_*` populated as the temporary `256` baseline path.
+- Production DND rebuild completed successfully on 2026-05-13:
+  `287113` assets indexed, `281505` baseline thumbnails/posters generated,
+  `415923` variant rows/files written, thumbnail cache size about `12G`.
+
+Next step:
+
+- Update the search/API/frontend path to consume `asset_thumbnail_variants`
+  metadata, choose the best available variant at render time, and then revisit
+  whether `assets.thumbnail_path`, `assets.thumbnail_width`, and
+  `assets.thumbnail_height` should be removed or derived from the variant table.
+
+Do not continue evaluating alternative still-image thumbnail generators for now.
+Pillow is the chosen implementation path.
 
 ## Goal
 
@@ -24,6 +52,14 @@ Initial generated sizes:
 - `512`
 - `1024`
 
+`256` is the required baseline size. Additional generated sizes are configured
+app-wide:
+
+```toml
+[app]
+additional_thumbnail_mipmaps = [512, 1024]
+```
+
 Not every asset should have every size. The database/API must represent which
 variants actually exist for each asset.
 
@@ -33,14 +69,14 @@ For still images:
 
 - Generate `256` as the baseline thumbnail.
 - Generate `512` only if the original image is larger than `512`.
-- Generate `1024` only if the original image is meaningfully larger than
-  `1024`.
+- Generate `1024` only if the original image is larger than `1024`.
 - Do not upscale originals into larger thumbnail variants.
 - If the original is smaller than a candidate size, treat the original as the
   effective upper bound instead of generating that variant.
 
-The exact "meaningfully larger" threshold for `1024` is still open. It should
-avoid producing a `1024` derivative when the original is only trivially larger.
+The chosen implementation uses Pillow with BICUBIC resampling. It opens the
+source once, generates the largest eligible derivative first, then downscales
+from that derivative to smaller variants.
 
 ## Frontend Selection Heuristic
 
@@ -110,14 +146,10 @@ Avoid it when:
 For video assets, the mipmap concept applies to poster images, not to loading
 the full video in card grids.
 
-Open performance question:
+Implemented behavior:
 
-- Is it faster to ask `ffmpeg` to extract each target poster size separately?
-- Or is it faster to extract the largest poster size we care about, then
-  downscale that image into `512` and `256`?
-- Can extraction/downscaling be batched efficiently in one ffmpeg invocation?
-
-This should be measured locally before choosing the indexing pipeline.
+- Video posters use the same configured sizes as still-image thumbnails.
+- `ffmpeg` generates all eligible poster sizes in one multi-output invocation.
 
 ## Storage And API Shape
 
@@ -125,6 +157,7 @@ The database should be canonical for variant availability. A likely model:
 
 ```text
 asset_thumbnail_variants
+- asset_id
 - source_id
 - relative_path
 - kind: thumbnail | poster
@@ -132,8 +165,15 @@ asset_thumbnail_variants
 - width
 - height
 - cache_path
-- generated_from_fingerprint
+- generated_from_size_bytes
+- generated_from_mtime_ns
 ```
+
+During the transition, `assets.thumbnail_path`, `assets.thumbnail_width`, and
+`assets.thumbnail_height` remain as denormalized baseline `256` fields for the
+current search/API/frontend path. `asset_thumbnail_variants` is the canonical
+mipmap table, and the duplicated baseline path should be revisited after callers
+consume variant metadata directly.
 
 The search result/card payload should include compact variant metadata, for
 example:
@@ -148,3 +188,15 @@ thumbnail_variants: [
 The search corpus likely needs this compact display metadata too, because the
 hot path should not hydrate every card from the canonical database just to know
 which thumbnails exist.
+
+## Completed Benchmark Notes
+
+The exploratory benchmark work is complete. Rough conclusions:
+
+- Pillow was fastest enough and simplest enough for still images.
+- Generating the largest eligible still-image derivative first and cascading
+  down to smaller variants avoided a near-3x cost for three configured sizes.
+- Fixture benchmark: single-size cold run was about `12s`; mipmap cold runs
+  were about `13s` to `18s` for the same fixture.
+- Production rebuild runtime was about `2h20m` for the real DND corpus.
+- The bottleneck was image decode/resize/write work, not SQLite writes.

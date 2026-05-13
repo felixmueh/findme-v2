@@ -1,6 +1,7 @@
 [app]
 data_root = "/var/lib/findme-v2"
 thumbnail_workers = 2
+additional_thumbnail_mipmaps = [512, 1024]
 
 [search]
 domain_vocabulary = "search-vocabulary.yaml"

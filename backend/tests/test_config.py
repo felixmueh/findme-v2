@@ -85,6 +85,55 @@ priority = 10
     assert config.thumbnail_workers == 4
 
 
+def test_load_config_reads_additional_thumbnail_mipmaps(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    config_path = tmp_path / "findme.toml"
+    config_path.write_text(
+        f"""
+[app]
+data_root = "{tmp_path / "data"}"
+additional_thumbnail_mipmaps = [1024, 512, 512]
+
+[[sources]]
+id = "dnd"
+display_name = "DND"
+root = "{source_root}"
+priority = 10
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config.additional_thumbnail_mipmaps == (512, 1024)
+
+
+def test_load_config_rejects_baseline_thumbnail_mipmap_in_additional_sizes(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    config_path = tmp_path / "findme.toml"
+    config_path.write_text(
+        f"""
+[app]
+data_root = "{tmp_path / "data"}"
+additional_thumbnail_mipmaps = [256]
+
+[[sources]]
+id = "dnd"
+display_name = "DND"
+root = "{source_root}"
+priority = 10
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="greater than 256"):
+        load_config(config_path)
+
+
 def test_load_config_reads_domain_vocabulary_path_relative_to_config(
     tmp_path: Path,
 ) -> None:
