@@ -368,7 +368,6 @@ a:focus-visible {
 .audio-asset-card:hover .card-audio-controls {
   opacity: 1;
   visibility: visible;
-  pointer-events: auto;
 }
 
 .preview-mute-button {
@@ -380,6 +379,7 @@ a:focus-visible {
   border-radius: 6px;
   background: color-mix(in srgb, var(--surface), transparent 8%);
   color: var(--text);
+  pointer-events: auto;
 }
 
 .preview-mute-button:hover {

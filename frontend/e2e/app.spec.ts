@@ -1465,6 +1465,89 @@ test('highlights the hovered asset folder path', async ({ page }) => {
   await expect(page.getByRole('group', { name: 'maps folder' })).toHaveClass(/direct-highlight/)
 })
 
+test('selects an audio card when clicking beneath the hidden preview volume control', async ({ page }) => {
+  const audioAsset = {
+    ...sampleAsset,
+    asset_id: 'asset-thunder',
+    relative_path: 'sounds/thunder.mp3',
+    filename: 'thunder.mp3',
+    stem: 'thunder',
+    extension: '.mp3',
+    directory: 'sounds',
+    media_type: 'audio',
+    duration_seconds: 125,
+  }
+
+  await page.addInitScript(() => {
+    Object.defineProperty(HTMLMediaElement.prototype, 'play', {
+      configurable: true,
+      value() {
+        return Promise.resolve()
+      },
+    })
+  })
+
+  await page.route('**/api/search-with-directory-counts?*', async (route) => {
+    await route.fulfill({
+      json: {
+        total: 1,
+        cards: [{ kind: 'asset', asset: audioAsset }],
+        directories: [
+          sampleRootDirectory(),
+          {
+            source_id: 'sample',
+            path: 'sounds',
+            name: 'sounds',
+            depth: 1,
+            asset_count: 1,
+            matched_asset_count: 1,
+            included_asset_count: 1,
+            quality: 5,
+            quality_override: null,
+            selection_state: null,
+          },
+        ],
+      },
+    })
+  })
+  await page.route('**/api/search?*', async (route) => {
+    await route.fulfill({
+      json: {
+        total: 1,
+        cards: [{ kind: 'asset', asset: audioAsset }],
+      },
+    })
+  })
+  await page.route('**/api/assets/asset-thunder', async (route) => {
+    await route.fulfill({
+      json: {
+        asset: audioAsset,
+        actions: actionsFor(audioAsset, '/tmp/sample-assets/sounds/thunder.mp3'),
+      },
+    })
+  })
+  await page.route('**/api/assets/asset-thunder/file', async (route) => {
+    await route.fulfill({
+      contentType: 'audio/mpeg',
+      body: Buffer.from('audio'),
+    })
+  })
+
+  await page.goto('/')
+  const tile = page.getByRole('button', { name: /thunder\.mp3/i })
+  await tile.hover({ position: { x: 8, y: 8 } })
+  const audioCard = page.getByRole('group', { name: 'Audio asset card for thunder.mp3' })
+  const muteButton = audioCard.getByRole('button', { name: 'Unmute preview' })
+  const muteButtonBox = await muteButton.boundingBox()
+  if (!muteButtonBox) throw new Error('mute button is missing')
+  await page.mouse.move(muteButtonBox.x + muteButtonBox.width / 2, muteButtonBox.y + muteButtonBox.height + 32)
+  await expect(audioCard.getByRole('slider', { name: 'Preview volume' })).toBeHidden()
+
+  await page.mouse.click(muteButtonBox.x + muteButtonBox.width / 2, muteButtonBox.y + muteButtonBox.height + 32)
+
+  await expect(page.getByLabel('Selected asset')).toContainText('thunder.mp3')
+})
+
 test('previews audio on hover and shows playback controls when selected', async ({ page }) => {
   const audioAsset = {
     ...sampleAsset,
