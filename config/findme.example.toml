@@ -11,6 +11,7 @@ id = "dnd"
 display_name = "DND"
 root = "/media/NAS/main/Documents/DND"
 priority = 100
+file_browser_url_prefix = "https://filebrowser.example/files/DND"
 media_extensions = [".png", ".jpg", ".jpeg", ".webp", ".gif", ".webm", ".mp4"]
 primary_output = "foundry"
 

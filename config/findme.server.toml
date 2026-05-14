@@ -10,6 +10,7 @@ id = "tokens"
 display_name = "Tokens"
 root = "/media/NAS/main/Documents/DND/Tokens"
 priority = 50
+file_browser_url_prefix = "https://filebrowser.example/files/DND/Tokens"
 media_extensions = [".png", ".jpg", ".jpeg", ".webp", ".gif", ".webm", ".mp4"]
 primary_output = "foundry"
 
@@ -23,6 +24,7 @@ id = "maps"
 display_name = "Maps"
 root = "/media/NAS/main/Documents/DND/Maps"
 priority = 50
+file_browser_url_prefix = "https://filebrowser.example/files/DND/Maps"
 media_extensions = [".png", ".jpg", ".jpeg", ".webp", ".gif", ".webm", ".mp4"]
 primary_output = "foundry"
 
@@ -36,6 +38,7 @@ id = "mapmaking"
 display_name = "MapMaking"
 root = "/media/NAS/main/Documents/DND/MapMaking"
 priority = 50
+file_browser_url_prefix = "https://filebrowser.example/files/DND/MapMaking"
 media_extensions = [".png", ".jpg", ".jpeg", ".webp", ".gif", ".webm", ".mp4"]
 primary_output = "foundry"
 
@@ -49,6 +52,7 @@ id = "music"
 display_name = "Music"
 root = "/media/NAS/main/Documents/DND/Music"
 priority = 50
+file_browser_url_prefix = "https://filebrowser.example/files/DND/Music"
 media_extensions = [".mp3", ".ogg", ".wav", ".aif", ".m4a", ".flac"]
 primary_output = "foundry"
 
@@ -62,6 +66,7 @@ id = "sounds"
 display_name = "Sounds"
 root = "/media/NAS/main/Documents/DND/Sounds"
 priority = 50
+file_browser_url_prefix = "https://filebrowser.example/files/DND/Sounds"
 media_extensions = [".mp3", ".ogg", ".wav", ".aif", ".m4a", ".flac"]
 primary_output = "foundry"
 
@@ -75,6 +80,7 @@ id = "adventures"
 display_name = "Adventures"
 root = "/media/NAS/main/Documents/DND/Adventures"
 priority = 50
+file_browser_url_prefix = "https://filebrowser.example/files/DND/Adventures"
 media_extensions = [
   ".png",
   ".jpg",

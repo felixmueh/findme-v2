@@ -50,6 +50,7 @@
     profile_dirty: boolean
     has_descendant_whitelist: boolean
     has_descendant_blacklist: boolean
+    file_browser_url?: string | null
   }
 
   type DirectoryState = [
@@ -1067,6 +1068,13 @@
     toggleDirectoryView(directory)
   }
 
+  function handleDirectoryAuxClick(event: MouseEvent, directory: DirectoryNode) {
+    if (event.button !== 1 || !directory.file_browser_url) return
+    event.preventDefault()
+    event.stopPropagation()
+    openUrl(directory.file_browser_url)
+  }
+
   function toggleDirectoryView(directory: DirectoryNode) {
     const key = directoryKey(directory)
     const nextView = viewDirectoryKey === key
@@ -1191,13 +1199,23 @@
   }
 
   function openAsset(asset: Asset) {
-    window.open(assetFileUrl(asset), '_blank', 'noopener')
+    openUrl(assetFileUrl(asset))
+  }
+
+  function openUrl(url: string) {
+    window.open(url, '_blank', 'noopener')
   }
 
   function handleAssetAuxClick(event: MouseEvent, asset: Asset) {
     if (event.button !== 1) return
     event.preventDefault()
     openAsset(asset)
+  }
+
+  function handleSelectedPreviewAuxClick(event: MouseEvent) {
+    if (event.button !== 1 || !selected) return
+    event.preventDefault()
+    openUrl(selected.actions.open.url)
   }
 
   function entryAsset(entry: VisibleEntry) {
@@ -1655,10 +1673,24 @@
             style={selectedPreviewStyle(selected.asset)}
           >
             {#if selected.asset.media_type === 'image'}
-              <img src={actions.open.url} alt={selected.asset.filename} decoding="async" />
+              <img
+                src={actions.open.url}
+                alt={selected.asset.filename}
+                decoding="async"
+                onauxclick={handleSelectedPreviewAuxClick}
+              />
             {:else if selected.asset.media_type === 'video'}
               <!-- svelte-ignore a11y_media_has_caption -->
-              <video src={actions.open.url} controls preload="metadata" autoplay muted loop playsinline></video>
+              <video
+                src={actions.open.url}
+                controls
+                preload="metadata"
+                autoplay
+                muted
+                loop
+                playsinline
+                onauxclick={handleSelectedPreviewAuxClick}
+              ></video>
             {:else if selected.asset.media_type === 'audio'}
               <div class="audio-preview">
                 <div class="file-preview">
@@ -1795,6 +1827,7 @@
             type="button"
             aria-pressed={viewDirectoryKey === directoryKey(directory)}
             onclick={(event) => handleDirectoryNameClick(event, directory)}
+            onauxclick={(event) => handleDirectoryAuxClick(event, directory)}
           >
             <Folder size={15} />
             <span>{directory.name}</span>

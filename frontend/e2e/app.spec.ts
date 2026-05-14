@@ -62,6 +62,7 @@ function sampleDirectory(
     profile_dirty: profileDirty,
     has_descendant_whitelist: hasDescendantWhitelist,
     has_descendant_blacklist: hasDescendantBlacklist,
+    file_browser_url: 'https://filebrowser.example/files/DND/maps',
   }
 }
 
@@ -82,6 +83,7 @@ function sampleRootDirectory() {
     profile_dirty: false,
     has_descendant_whitelist: false,
     has_descendant_blacklist: false,
+    file_browser_url: 'https://filebrowser.example/files/DND',
   }
 }
 
@@ -194,6 +196,16 @@ async function disableAutomaticInfiniteScroll(page: Page) {
   })
 }
 
+async function captureWindowOpen(page: Page) {
+  await page.addInitScript(() => {
+    window.open = ((url?: string | URL) => {
+      const testWindow = window as Window & typeof globalThis & { __openedUrl?: string }
+      testWindow.__openedUrl = url?.toString()
+      return null
+    }) as typeof window.open
+  })
+}
+
 test.beforeEach(async ({ page }) => {
   let directoryQuality = 4
   let directorySelectionState: FilterRuleState | null = null
@@ -285,6 +297,35 @@ test('searches through the real browser UI', async ({ page }) => {
   await searchRequest
 
   await expect(page.getByRole('button', { name: /castle\.png/i })).toBeVisible()
+})
+
+test('middle-clicking the selected image preview opens the asset file in a new tab', async ({ page }) => {
+  await captureWindowOpen(page)
+  await page.goto('/')
+
+  await page.getByRole('button', { name: /castle\.png/i }).click()
+  const previewImage = page.getByLabel('Selected asset').locator('.preview img')
+  await expect(previewImage).toBeVisible()
+
+  await previewImage.click({ button: 'middle' })
+
+  await expect
+    .poll(() => page.evaluate(() => (window as Window & typeof globalThis & { __openedUrl?: string }).__openedUrl))
+    .toBe('/api/assets/asset-castle/file')
+})
+
+test('middle-clicking a folder row opens its configured file browser URL in a new tab', async ({ page }) => {
+  await captureWindowOpen(page)
+  await page.goto('/')
+  await revealSampleFolder(page)
+
+  await page.getByRole('group', { name: 'maps folder' }).getByRole('button', { name: 'maps', exact: true }).click({
+    button: 'middle',
+  })
+
+  await expect
+    .poll(() => page.evaluate(() => (window as Window & typeof globalThis & { __openedUrl?: string }).__openedUrl))
+    .toBe('https://filebrowser.example/files/DND/maps')
 })
 
 test('changes the number of visible grid columns from the toolbar', async ({ page }) => {

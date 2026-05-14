@@ -101,6 +101,7 @@ Path transformations should be source-owned with named output profiles. A global
 Example actions include:
 
 - open original in a new tab
+- open the containing source directory or subdirectory in the configured File Browser instance
 - copy the original image to the clipboard when the browser supports it
 - copy the generated thumbnail to the clipboard
 - download the original file
@@ -120,6 +121,11 @@ An action can produce:
 - future Foundry-specific payloads
 
 Derived actions are computed from the indexed asset plus current source configuration. They should not require re-indexing when changed.
+
+Folder File Browser links are also source-owned configuration. A source can
+provide a `file_browser_url_prefix`, and directory rows derive their external
+URL from that prefix plus the source-relative directory path. Changing that
+prefix should not require re-indexing.
 
 FoundryVTT paths are configured per source using output profiles. On the server, the Foundry `Data/library` directory contains symlinks into `/media/NAS/main/Documents/DND`, so copied Foundry paths are relative to `Data` and start with `library/...`.
 

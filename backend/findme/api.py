@@ -5,6 +5,7 @@ from pathlib import Path
 import sqlite3
 import threading
 import time
+from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse, Response
@@ -544,7 +545,11 @@ def create_app(
                 return Response(status_code=204)
             if directory_only:
                 return JSONResponse(
-                    _directory_payload(directories, state_only=directory_state_only)
+                    _directory_payload(
+                        config,
+                        directories,
+                        state_only=directory_state_only,
+                    )
                 )
             cards, total = card_page_for_browse_scope(
                 preferences=preferences,
@@ -559,7 +564,11 @@ def create_app(
                     "cards": cards,
                     "total": total,
                     "next_offset": offset + len(cards),
-                    **_directory_payload(directories, state_only=directory_state_only),
+                    **_directory_payload(
+                        config,
+                        directories,
+                        state_only=directory_state_only,
+                    ),
                 }
             )
         domain_vocabulary = _load_domain_vocabulary(config)
@@ -581,7 +590,11 @@ def create_app(
             except SearchSuperseded:
                 return Response(status_code=204)
             return JSONResponse(
-                _directory_payload(directories, state_only=directory_state_only)
+                _directory_payload(
+                    config,
+                    directories,
+                    state_only=directory_state_only,
+                )
             )
         try:
             search_response = search_index.search_with_directory_responses(
@@ -620,6 +633,7 @@ def create_app(
                 "next_offset": next_offset,
                 "has_more": has_more,
                 **_directory_payload(
+                    config,
                     search_response.directories,
                     state_only=directory_state_only,
                 ),
@@ -724,6 +738,7 @@ def _search_response(result: SearchResult) -> dict[str, object]:
 
 
 def _directory_payload(
+    config: AppConfig,
     directories: list[dict[str, object]],
     *,
     state_only: bool,
@@ -734,7 +749,37 @@ def _directory_payload(
                 _directory_state_response(directory) for directory in directories
             ]
         }
-    return {"directories": directories}
+    return {"directories": [_directory_response(config, directory) for directory in directories]}
+
+
+def _directory_response(
+    config: AppConfig,
+    directory: dict[str, object],
+) -> dict[str, object]:
+    response = dict(directory)
+    file_browser_url = _directory_file_browser_url(
+        config,
+        source_id=str(directory["source_id"]),
+        path=str(directory["path"]),
+    )
+    if file_browser_url is not None:
+        response["file_browser_url"] = file_browser_url
+    return response
+
+
+def _directory_file_browser_url(
+    config: AppConfig,
+    *,
+    source_id: str,
+    path: str,
+) -> str | None:
+    source = next((source for source in config.sources if source.id == source_id), None)
+    if source is None or source.file_browser_url_prefix is None:
+        return None
+    if not path:
+        return source.file_browser_url_prefix
+    encoded_path = "/".join(quote(segment) for segment in path.split("/"))
+    return f"{source.file_browser_url_prefix}/{encoded_path}"
 
 
 def _directory_state_response(directory: dict[str, object]) -> list[object]:

@@ -28,6 +28,7 @@ class SourceConfig:
     display_name: str
     root: Path
     priority: int
+    file_browser_url_prefix: str | None = None
     media_extensions: frozenset[str] = DEFAULT_MEDIA_EXTENSIONS
     primary_output: str | None = None
     output_profiles: tuple[OutputProfile, ...] = ()
@@ -177,6 +178,11 @@ def _load_source(table: dict[str, object]) -> SourceConfig:
         display_name=display_name,
         root=root.resolve(),
         priority=priority,
+        file_browser_url_prefix=_load_optional_url_prefix(
+            table,
+            "file_browser_url_prefix",
+            source_id,
+        ),
         media_extensions=extensions,
         primary_output=primary_output,
         output_profiles=profiles,
@@ -188,6 +194,19 @@ def _required_string(table: dict[str, object], key: str, label: str) -> str:
     if not isinstance(value, str) or not value:
         raise ConfigError(f"{label} must be a non-empty string")
     return value
+
+
+def _load_optional_url_prefix(
+    table: dict[str, object],
+    key: str,
+    source_id: str,
+) -> str | None:
+    value = table.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value:
+        raise ConfigError(f"source {source_id} {key} must be a non-empty string")
+    return value.rstrip("/")
 
 
 def _load_extensions(raw: object, source_id: str) -> frozenset[str]:

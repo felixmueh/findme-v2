@@ -61,6 +61,30 @@ prefix = "library/DND"
     assert config.sources[0].output_profiles[0].prefix == "library/DND"
 
 
+def test_load_config_reads_source_file_browser_url_prefix(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    config_path = tmp_path / "findme.toml"
+    config_path.write_text(
+        f"""
+[app]
+data_root = "{tmp_path / "data"}"
+
+[[sources]]
+id = "maps"
+display_name = "Maps"
+root = "{source_root}"
+priority = 10
+file_browser_url_prefix = "https://filebrowser.example/files/DND/Maps/"
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config.sources[0].file_browser_url_prefix == "https://filebrowser.example/files/DND/Maps"
+
+
 def test_load_config_reads_thumbnail_worker_count(tmp_path: Path) -> None:
     source_root = tmp_path / "assets"
     source_root.mkdir()

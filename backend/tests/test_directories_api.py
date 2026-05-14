@@ -107,6 +107,40 @@ def test_api_lists_indexed_directory_tree(tmp_path: Path) -> None:
     ]
 
 
+def test_api_directory_rows_include_configured_file_browser_urls(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    write_image(source_root / "Paper" / "Plain.png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="maps",
+                display_name="Maps",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+                file_browser_url_prefix="https://filebrowser.example/files/DND/Maps",
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+    rebuild_search_corpus(config, db_path)
+    client = TestClient(create_app(config, db_path))
+
+    directories = client.get("/api/search-with-directory-counts").json()["directories"]
+    urls_by_path = {
+        directory["path"]: directory["file_browser_url"] for directory in directories
+    }
+
+    assert urls_by_path == {
+        "": "https://filebrowser.example/files/DND/Maps",
+        "Paper": "https://filebrowser.example/files/DND/Maps/Paper",
+    }
+
+
 def test_api_lists_only_directories_with_search_matches(tmp_path: Path) -> None:
     source_root = tmp_path / "assets"
     write_image(source_root / "Tokens" / "Goblins" / "Goblin.png")
