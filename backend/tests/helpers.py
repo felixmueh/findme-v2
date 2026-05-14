@@ -33,3 +33,24 @@ def write_video(path: Path, *, size: tuple[int, int] = (640, 360)) -> None:
         ],
         check=True,
     )
+
+
+def write_audio(path: Path, *, duration_seconds: float = 2.0) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            f"sine=frequency=440:duration={duration_seconds}",
+            "-c:a",
+            "libmp3lame" if path.suffix.lower() == ".mp3" else "aac",
+            str(path),
+        ],
+        check=True,
+    )

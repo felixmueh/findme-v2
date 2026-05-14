@@ -1475,6 +1475,7 @@ test('previews audio on hover and shows playback controls when selected', async 
     extension: '.mp3',
     directory: 'sounds',
     media_type: 'audio',
+    duration_seconds: 125,
   }
   const secondAudioAsset = {
     ...audioAsset,
@@ -1579,6 +1580,7 @@ test('previews audio on hover and shows playback controls when selected', async 
   await expect(audioCard.getByRole('button', { name: 'Unmute preview' })).toBeVisible()
   await expect(audioCard.getByRole('slider', { name: 'Preview volume' })).toBeHidden()
   await expect(page.getByLabel('Hovered asset preview').getByRole('button', { name: 'Unmute preview' })).toHaveCount(0)
+  await expect(page.getByLabel('Hovered asset preview')).toContainText('2:05')
 
   const muteButton = audioCard.getByRole('button', { name: 'Unmute preview' })
   const muteButtonBox = await muteButton.boundingBox()
@@ -1624,6 +1626,8 @@ test('previews audio on hover and shows playback controls when selected', async 
   )
   const selectedPanel = page.getByLabel('Selected asset')
   await expect(selectedPanel.locator('audio[controls]')).toHaveAttribute('src', '/api/assets/asset-thunder/file')
+  await expect(selectedPanel).toContainText('Length')
+  await expect(selectedPanel).toContainText('2:05')
 })
 
 test('selecting an asset unfolds and scrolls to its folder path without refolding user-opened folders', async ({ page }) => {

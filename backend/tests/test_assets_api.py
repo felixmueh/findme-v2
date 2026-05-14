@@ -8,7 +8,7 @@ from findme.db import connect, initialize_database
 from findme.indexer import index_sources
 from findme.search_corpus import rebuild_search_corpus
 
-from helpers import write_image, write_video
+from helpers import write_audio, write_image, write_video
 
 
 def test_asset_detail_includes_derived_actions_and_serves_file(tmp_path: Path) -> None:
@@ -166,3 +166,39 @@ def test_asset_metadata_includes_image_size_and_video_duration(tmp_path: Path) -
     assert search_asset["media_width"] == 640
     assert search_asset["media_height"] == 360
     assert search_asset["duration_seconds"] >= 0.9
+
+
+def test_asset_metadata_includes_audio_duration(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    write_audio(source_root / "sounds" / "Thunder.mp3", duration_seconds=2.5)
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".mp3"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config, thumbnail_workers=1)
+        audio_id = db.execute("SELECT asset_id FROM assets").fetchone()["asset_id"]
+    rebuild_search_corpus(config, db_path)
+
+    client = TestClient(create_app(config, db_path))
+
+    audio_asset = client.get(f"/api/assets/{audio_id}").json()["asset"]
+    assert audio_asset["media_type"] == "audio"
+    assert audio_asset["media_width"] is None
+    assert audio_asset["media_height"] is None
+    assert audio_asset["duration_seconds"] >= 2.4
+
+    search_asset = client.get("/api/search", params={"q": "thunder"}).json()["cards"][0][
+        "asset"
+    ]
+    assert search_asset["duration_seconds"] >= 2.4

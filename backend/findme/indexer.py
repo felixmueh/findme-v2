@@ -149,7 +149,7 @@ def index_sources(
         thumbnail_worker_timeout_seconds = None
 
     selected_sources = _filter_sources(config.sources, source_ids)
-    thumbnail_work: list[PendingAsset] = []
+    processing_work: list[PendingAsset] = []
     index_changed = False
     needs_existing_metadata = retry_failed_thumbnails or rebuild_thumbnails
 
@@ -220,8 +220,8 @@ def index_sources(
                 new_assets.append(prepared)
             elif _existing_asset_needs_update(discovered, current):
                 updated_assets.append(prepared)
-            if _should_generate_thumbnail(prepared):
-                thumbnail_work.append(pending)
+            if _should_process_asset(prepared):
+                processing_work.append(pending)
             if progress is not None:
                 progress(
                     IndexProgress(
@@ -273,7 +273,7 @@ def index_sources(
     pending_thumbnail_commits = 0
     for prepared in _generate_thumbnails(
         config,
-        thumbnail_work,
+        processing_work,
         max_workers=worker_count,
         thumbnail_worker_timeout_seconds=thumbnail_worker_timeout_seconds,
         progress=progress,
@@ -302,7 +302,7 @@ def index_sources(
                     current_thumbnail=_thumbnail_status(prepared),
                 )
             )
-    if thumbnail_work:
+    if processing_work:
         if pending_thumbnail_commits:
             db.commit()
         refresh_index_fingerprint(db)
@@ -592,6 +592,13 @@ def _should_generate_thumbnail(prepared: PreparedAsset) -> bool:
         prepared.thumbnail is None
         and prepared.processing_required
         and _needs_thumbnail(prepared.pending)
+    )
+
+
+def _should_process_asset(prepared: PreparedAsset) -> bool:
+    return prepared.processing_required and (
+        _needs_thumbnail(prepared.pending)
+        or prepared.pending.media_type == "audio"
     )
 
 
@@ -1116,9 +1123,17 @@ def _load_source_asset_paths_missing_media_metadata(
         SELECT relative_path
         FROM assets
         WHERE source_id = ?
-          AND media_type IN ('image', 'video')
-          AND thumbnail_path IS NOT NULL
-          AND (media_width IS NULL OR media_height IS NULL)
+          AND (
+            (
+              media_type IN ('image', 'video')
+              AND thumbnail_path IS NOT NULL
+              AND (media_width IS NULL OR media_height IS NULL)
+            )
+            OR (
+              media_type = 'audio'
+              AND duration_seconds IS NULL
+            )
+          )
         """,
         (source.id,),
     ).fetchall()
@@ -1213,12 +1228,14 @@ def _needs_thumbnail(pending: PendingAsset) -> bool:
 
 
 def _needs_media_metadata(pending: PendingAsset, current: CurrentAsset) -> bool:
-    if pending.media_type not in {"image", "video"}:
+    if pending.media_type not in {"image", "video", "audio"}:
         return False
     return _needs_media_metadata_for_current(current)
 
 
 def _needs_media_metadata_for_current(current: CurrentAsset) -> bool:
+    if current.media_type == "audio":
+        return current.duration_seconds is None
     return (
         current.media_type in {"image", "video"}
         and (current.media_width is None or current.media_height is None)

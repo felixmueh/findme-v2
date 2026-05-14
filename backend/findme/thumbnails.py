@@ -120,6 +120,12 @@ def read_media_metadata(source_path: Path, media_type: str) -> MediaMetadata | N
             height=height,
             duration_seconds=duration_seconds,
         )
+    if media_type == "audio":
+        ffprobe = shutil.which("ffprobe")
+        if ffprobe is None:
+            raise ThumbnailError("ffprobe is required to read audio metadata")
+        duration_seconds = _audio_duration(ffprobe, source_path)
+        return MediaMetadata(duration_seconds=duration_seconds)
     return None
 
 
@@ -305,6 +311,45 @@ def _positive_float_or_none(value: object) -> float | None:
     if parsed <= 0:
         return None
     return parsed
+
+
+def _audio_duration(ffprobe: str, source_path: Path) -> float | None:
+    command = [
+        ffprobe,
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "json",
+        str(source_path),
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=VIDEO_POSTER_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise ThumbnailError(
+            f"could not read audio duration for {source_path}: "
+            f"ffprobe timed out after {VIDEO_POSTER_TIMEOUT_SECONDS:.1f}s"
+        ) from exc
+    except OSError as exc:
+        raise ThumbnailError(f"could not read audio duration for {source_path}: {exc}") from exc
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or f"ffprobe exited with {completed.returncode}"
+        raise ThumbnailError(f"could not read audio duration for {source_path}: {detail}")
+    try:
+        data = json.loads(completed.stdout)
+        return _positive_float_or_none(data.get("format", {}).get("duration"))
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise ThumbnailError(
+            f"could not read audio duration for {source_path}: invalid ffprobe output"
+        ) from exc
 
 
 def _extract_video_poster_variants(

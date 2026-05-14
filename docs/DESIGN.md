@@ -62,6 +62,7 @@ Each indexed asset should know:
 - file size
 - modified time
 - image/video dimensions when available
+- video/audio duration when available
 - media type
 - thumbnail/poster cache references
 - current index membership
@@ -240,10 +241,20 @@ V1 should support common image and VTT media assets:
 - `.gif`
 - `.webm`
 - `.mp4`
+- `.mp3`
+- `.ogg`
+- `.wav`
+- `.aif`
+- `.aiff`
+- `.m4a`
+- `.flac`
 
 Static images should get generated thumbnails.
 
 Animated/video assets should get representative poster thumbnails. Playback/preview can happen only when explicitly opened or selected.
+
+Audio assets should have duration indexed when `ffprobe` can read it. They do
+not need generated thumbnails.
 
 PDF support is a future goal. The media pipeline should remain extensible and not hard-code assumptions that every asset is a raster image.
 
