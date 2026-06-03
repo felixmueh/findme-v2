@@ -11,3 +11,5 @@ sample-assets
 *.org
 .port
 .sbx
+.codex
+.agents
