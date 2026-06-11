@@ -82,6 +82,17 @@ The `asset_id` must be collision-resistant. It is an ergonomic handle, not the s
 
 Content-hash deduplication and move detection are future features.
 
+User-authored metadata needs a stronger identity than the path-derived
+`asset_id`. Tagged files should use a Hydrus-style content identity: the first
+time a file receives durable user metadata, the app hashes that file and records
+metadata against the content hash, not against the current indexed path. Normal
+indexing should not hash every asset just to make this possible. Hashing is
+lazy and metadata-driven for v1.
+
+The path-derived `asset_id` remains the normal API, thumbnail, and client-state
+handle for current indexed assets. Content hashes are durable metadata identity,
+not a replacement for current asset handles.
+
 ## Sources And Configuration
 
 Configuration is server-owned and personal. It can live in a config file checked into the repo or in server-side files. It does not need a UI editor.
@@ -179,7 +190,7 @@ The server owns a local persistent index database under the app data directory. 
 
 Development may override this path.
 
-The database is canonical for metadata:
+The index database is canonical for current indexed metadata:
 
 - assets
 - sources
@@ -200,6 +211,26 @@ source_id + relative_path + size + mtime
 ```
 
 This avoids content hashing in v1 while still invalidating derived files when an asset changes.
+
+Durable user-authored metadata, including tags, should live in a separate
+metadata database under the app data root rather than in the index database. The
+index database and search corpus are rebuild-sensitive views of the current
+filesystem. The metadata database is not an indexing artifact and should remain
+valid across index rebuilds and missing indexed files.
+
+The metadata database should store:
+
+- content identities for files that have user-authored metadata
+- known current and historical source-relative locations for those files
+- tag definitions
+- tag assignments keyed by content identity
+
+The initial tagging path should hash only files that are actually tagged. V1
+should not discover moved tagged files, either during normal indexing or through
+a separate reconciliation command. If a tagged file disappears from its recorded
+location, keep its content identity and tags in the metadata database but mark
+the known location missing. Move discovery and broader file migration need a
+separate design pass later.
 
 ### Thumbnail Variant Transition
 
@@ -419,6 +450,22 @@ For animated/video assets, the UI can show a poster thumbnail first and only pla
 
 V1 precomputes named derivatives rather than arbitrary sizes. Exact sizes are implementation decisions; for example, v1 might start with a single thumbnail size named by its actual dimensions, such as `thumb_512`, plus a separate larger preview derivative. The derivative pipeline should stay open to additional named sizes later.
 
+## Tagging Experience
+
+Tags are durable user-authored metadata. V1 tagging should focus on applying
+and removing tags, not on filtering or search behavior. Tag filtering and
+tag-aware search can be added later through a separate search design pass.
+
+The UI should support tagging the selected asset and tagging a multi-selection
+of assets. Multi-selection is in scope specifically so a user can tag a range of
+visible assets, all assets in the current result set, or all assets in a folder
+view. This does not imply general bulk file actions such as bulk downloads,
+bulk copy actions, deletes, moves, or edits.
+
+Applying a tag to many assets should hash only the assets that receive metadata.
+The operation can be explicit and progress-reporting if needed; it should not
+turn normal browsing or indexing into a full-library hashing pass.
+
 ## Layout
 
 The suggested v1 desktop layout is two-pane:
@@ -514,6 +561,6 @@ Future goals include:
 - live filesystem watching
 - slow filesystem search fallback
 - full image editor
-- bulk asset actions
+- bulk asset actions other than tag assignment
 - general-purpose configuration UI
 - legacy JSON metadata dictionary support

@@ -90,6 +90,319 @@ def test_asset_detail_includes_derived_actions_and_serves_file(tmp_path: Path) -
     )
 
 
+def test_asset_tags_are_stored_in_metadata_database(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    write_image(source_root / "Goblin Warrior.png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+        asset_id = db.execute("SELECT asset_id FROM assets").fetchone()["asset_id"]
+    rebuild_search_corpus(config, db_path)
+
+    client = TestClient(create_app(config, db_path))
+    response = client.put(
+        f"/api/assets/{asset_id}/tags",
+        json={"tags": ["NPC", "Goblin Warrior"]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["tags"] == [
+        {"slug": "goblin-warrior", "label": "Goblin Warrior"},
+        {"slug": "npc", "label": "NPC"},
+    ]
+    detail = client.get(f"/api/assets/{asset_id}").json()
+    assert detail["asset"]["tags"] == [
+        {"slug": "goblin-warrior", "label": "Goblin Warrior"},
+        {"slug": "npc", "label": "NPC"},
+    ]
+    search_asset = client.get("/api/search", params={"q": "goblin"}).json()["cards"][0][
+        "asset"
+    ]
+    assert search_asset["tags"] == [
+        {"slug": "goblin-warrior", "label": "Goblin Warrior"},
+        {"slug": "npc", "label": "NPC"},
+    ]
+
+    metadata_db = config.data_root / "metadata.sqlite3"
+    assert metadata_db.is_file()
+    with connect(metadata_db) as metadata:
+        tag_rows = metadata.execute(
+            "SELECT slug, label FROM tags ORDER BY slug"
+        ).fetchall()
+        file_rows = metadata.execute(
+            "SELECT file_id, hash_algorithm, length(content_hash) FROM metadata_files"
+        ).fetchall()
+    assert [tuple(row) for row in tag_rows] == [
+        ("goblin-warrior", "Goblin Warrior"),
+        ("npc", "NPC"),
+    ]
+    assert len(file_rows) == 1
+    assert tuple(file_rows[0])[1:] == ("sha256", 64)
+
+    with connect(db_path) as db:
+        index_tables = {
+            row[0]
+            for row in db.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+    assert "tags" not in index_tables
+
+
+def test_asset_tags_sort_number_tags_before_other_tags(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    write_image(source_root / "Goblin.png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+        asset_id = db.execute("SELECT asset_id FROM assets").fetchone()["asset_id"]
+    rebuild_search_corpus(config, db_path)
+    client = TestClient(create_app(config, db_path))
+
+    response = client.put(
+        f"/api/assets/{asset_id}/tags",
+        json={"tags": ["zeta", "2", "alpha", "10"]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["tags"] == [
+        {"slug": "2", "label": "2"},
+        {"slug": "10", "label": "10"},
+        {"slug": "alpha", "label": "alpha"},
+        {"slug": "zeta", "label": "zeta"},
+    ]
+
+
+def test_batch_adds_tags_to_selected_assets(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    write_image(source_root / "Goblins" / "Goblin A.png")
+    write_image(source_root / "Goblins" / "Goblin B.png")
+    write_image(source_root / "Orcs" / "Orc.png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+        rows = db.execute(
+            "SELECT asset_id, relative_path FROM assets ORDER BY relative_path"
+        ).fetchall()
+    rebuild_search_corpus(config, db_path)
+    ids_by_path = {row["relative_path"]: row["asset_id"] for row in rows}
+    client = TestClient(create_app(config, db_path))
+
+    response = client.post(
+        "/api/tags/batch",
+        json={
+            "asset_ids": [
+                ids_by_path["Goblins/Goblin A.png"],
+                ids_by_path["Goblins/Goblin B.png"],
+            ],
+            "add_tags": ["Encounter"],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"matched": 2, "tagged": 2, "failed": []}
+    assert client.get(f"/api/assets/{ids_by_path['Goblins/Goblin A.png']}").json()[
+        "asset"
+    ]["tags"] == [{"slug": "encounter", "label": "Encounter"}]
+    assert client.get(f"/api/assets/{ids_by_path['Goblins/Goblin B.png']}").json()[
+        "asset"
+    ]["tags"] == [{"slug": "encounter", "label": "Encounter"}]
+    assert client.get(f"/api/assets/{ids_by_path['Orcs/Orc.png']}").json()["asset"][
+        "tags"
+    ] == []
+
+
+def test_batch_tags_full_backend_search_result_scope(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    write_image(source_root / "Goblins" / "Goblin A.png")
+    write_image(source_root / "Goblins" / "Goblin B.png")
+    write_image(source_root / "Goblins" / "Goblin C.png")
+    write_image(source_root / "Orcs" / "Orc.png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+        rows = db.execute(
+            "SELECT asset_id, relative_path FROM assets ORDER BY relative_path"
+        ).fetchall()
+    rebuild_search_corpus(config, db_path)
+    ids_by_path = {row["relative_path"]: row["asset_id"] for row in rows}
+    client = TestClient(create_app(config, db_path))
+
+    response = client.post(
+        "/api/tags/batch",
+        json={
+            "scope": {"kind": "search", "q": "goblin", "mode": "strict"},
+            "add_tags": ["Goblins"],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"matched": 3, "tagged": 3, "failed": []}
+    for path in (
+        "Goblins/Goblin A.png",
+        "Goblins/Goblin B.png",
+        "Goblins/Goblin C.png",
+    ):
+        assert client.get(f"/api/assets/{ids_by_path[path]}").json()["asset"][
+            "tags"
+        ] == [{"slug": "goblins", "label": "Goblins"}]
+    assert client.get(f"/api/assets/{ids_by_path['Orcs/Orc.png']}").json()["asset"][
+        "tags"
+    ] == []
+
+
+def test_batch_tags_folder_subtree_scope(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    write_image(source_root / "Goblins" / "Goblin A.png")
+    write_image(source_root / "Goblins" / "Nested" / "Goblin B.png")
+    write_image(source_root / "Orcs" / "Orc.png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+        rows = db.execute(
+            "SELECT asset_id, relative_path FROM assets ORDER BY relative_path"
+        ).fetchall()
+    rebuild_search_corpus(config, db_path)
+    ids_by_path = {row["relative_path"]: row["asset_id"] for row in rows}
+    client = TestClient(create_app(config, db_path))
+
+    response = client.post(
+        "/api/tags/batch",
+        json={
+            "scope": {"kind": "folder", "source_id": "dnd", "directory": "Goblins"},
+            "add_tags": ["Goblins"],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"matched": 2, "tagged": 2, "failed": []}
+    assert client.get(f"/api/assets/{ids_by_path['Goblins/Goblin A.png']}").json()[
+        "asset"
+    ]["tags"] == [{"slug": "goblins", "label": "Goblins"}]
+    assert client.get(
+        f"/api/assets/{ids_by_path['Goblins/Nested/Goblin B.png']}"
+    ).json()["asset"]["tags"] == [{"slug": "goblins", "label": "Goblins"}]
+    assert client.get(f"/api/assets/{ids_by_path['Orcs/Orc.png']}").json()["asset"][
+        "tags"
+    ] == []
+
+
+def test_batch_removes_tags_from_mixed_selection(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    write_image(source_root / "Goblin A.png")
+    write_image(source_root / "Goblin B.png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+        rows = db.execute(
+            "SELECT asset_id, relative_path FROM assets ORDER BY relative_path"
+        ).fetchall()
+    rebuild_search_corpus(config, db_path)
+    ids_by_path = {row["relative_path"]: row["asset_id"] for row in rows}
+    client = TestClient(create_app(config, db_path))
+    first_id = ids_by_path["Goblin A.png"]
+    second_id = ids_by_path["Goblin B.png"]
+    client.put(f"/api/assets/{first_id}/tags", json={"tags": ["Encounter", "NPC"]})
+    client.put(f"/api/assets/{second_id}/tags", json={"tags": ["NPC"]})
+
+    response = client.post(
+        "/api/tags/batch",
+        json={
+            "asset_ids": [first_id, second_id],
+            "remove_tags": ["Encounter"],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"matched": 2, "tagged": 2, "failed": []}
+    assert client.get(f"/api/assets/{first_id}").json()["asset"]["tags"] == [
+        {"slug": "npc", "label": "NPC"}
+    ]
+    assert client.get(f"/api/assets/{second_id}").json()["asset"]["tags"] == [
+        {"slug": "npc", "label": "NPC"}
+    ]
+
+
 def test_missing_asset_file_returns_404(tmp_path: Path) -> None:
     source_root = tmp_path / "assets"
     source_root.mkdir()

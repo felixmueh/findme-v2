@@ -18,14 +18,17 @@
     Plus,
     RotateCcw,
     Save,
+    Tags,
     Trash2,
     Volume2,
     VolumeX,
+    X,
   } from 'lucide-svelte'
   import {
     type Asset,
     type CollectionCard,
     type ResultCard,
+    type Tag,
     type VisibleEntry,
     cardContainsAsset,
     collectionColor,
@@ -117,6 +120,12 @@
     }
   }
 
+  type BatchTagResponse = {
+    matched: number
+    tagged: number
+    failed: Array<{ asset_id: string; message: string }>
+  }
+
   let query = $state('')
   let searchMode = $state<SearchMode>('strict')
   let profiles = $state<SearchProfile[]>([])
@@ -128,6 +137,12 @@
   let cards = $state<ResultCard[]>([])
   let expandedCollections = $state<Set<string>>(new Set())
   let selected = $state<AssetDetail | null>(null)
+  let selectedAssetIds = $state<Set<string>>(new Set())
+  let lastMultiSelectedAssetId = $state('')
+  let assetTagInput = $state('')
+  let batchTagInput = $state('')
+  let tagging = $state(false)
+  let tagStatus = $state('')
   let hoveredAsset = $state<Asset | null>(null)
   let hoveredCollection = $state<CollectionCard | null>(null)
   let qualityTargetKey = $state('')
@@ -186,6 +201,12 @@
   const selectedIndex = $derived(
     visibleEntries.findIndex((entry) => entry.kind === 'asset' && entry.asset.asset_id === selectedAssetId)
   )
+  const multiSelectedCount = $derived(selectedAssetIds.size)
+  const selectedBatchTags = $derived.by(() => {
+    selectedAssetIds
+    cards
+    return tagsForSelectedAssets()
+  })
   const hoverPreviewAsset = $derived(
     hoveredCollection ? collectionDisplayAsset(hoveredCollection) : hoveredAsset
   )
@@ -485,6 +506,281 @@
     revealSelectedAssetDirectory(detail.asset)
   }
 
+  function handleAssetClick(event: MouseEvent, asset: Asset) {
+    if (event.shiftKey || event.metaKey || event.ctrlKey) {
+      event.preventDefault()
+      if (event.shiftKey) {
+        selectRangeToAsset(asset)
+      } else {
+        toggleAssetMultiSelection(asset)
+      }
+      return
+    }
+    void selectAsset(asset)
+  }
+
+  function handleCollectionClick(event: MouseEvent, collection: CollectionCard) {
+    if (event.shiftKey || event.metaKey || event.ctrlKey) {
+      event.preventDefault()
+      toggleCollectionMultiSelection(collection)
+      return
+    }
+    expandCollection(collection)
+  }
+
+  function toggleAssetMultiSelection(asset: Asset) {
+    const next = new Set(selectedAssetIds)
+    if (next.has(asset.asset_id)) {
+      next.delete(asset.asset_id)
+    } else {
+      next.add(asset.asset_id)
+    }
+    selectedAssetIds = next
+    lastMultiSelectedAssetId = asset.asset_id
+  }
+
+  function toggleCollectionMultiSelection(collection: CollectionCard) {
+    const ids = collection.variants.map((asset) => asset.asset_id)
+    const next = new Set(selectedAssetIds)
+    const shouldSelect = ids.some((assetId) => !next.has(assetId))
+    for (const assetId of ids) {
+      if (shouldSelect) {
+        next.add(assetId)
+      } else {
+        next.delete(assetId)
+      }
+    }
+    selectedAssetIds = next
+    lastMultiSelectedAssetId = ids[0] ?? ''
+  }
+
+  function collectionFullySelected(collection: CollectionCard) {
+    return collection.variants.every((asset) => selectedAssetIds.has(asset.asset_id))
+  }
+
+  function selectRangeToAsset(asset: Asset) {
+    const orderedIds = visibleSelectionAssetIds()
+    const end = orderedIds.indexOf(asset.asset_id)
+    const anchorId = selectedAssetId || lastMultiSelectedAssetId
+    const start = orderedIds.indexOf(anchorId)
+    if (start < 0 || end < 0) {
+      toggleAssetMultiSelection(asset)
+      return
+    }
+    const [from, to] = start <= end ? [start, end] : [end, start]
+    const next = new Set(selectedAssetIds)
+    for (const assetId of orderedIds.slice(from, to + 1)) next.add(assetId)
+    selectedAssetIds = next
+  }
+
+  function visibleSelectionAssetIds() {
+    const ids: string[] = []
+    for (const entry of visibleEntries) {
+      if (entry.kind === 'asset') {
+        ids.push(entry.asset.asset_id)
+      } else if (entry.kind === 'collection') {
+        ids.push(...entry.collection.variants.map((asset) => asset.asset_id))
+      }
+    }
+    return ids
+  }
+
+  function visibleAssetsById() {
+    const assets = new Map<string, Asset>()
+    for (const card of cards) {
+      if (card.kind === 'asset') {
+        assets.set(card.asset.asset_id, card.asset)
+      } else {
+        for (const asset of card.variants) assets.set(asset.asset_id, asset)
+      }
+    }
+    return assets
+  }
+
+  function tagsForSelectedAssets() {
+    const assets = visibleAssetsById()
+    const tagsBySlug = new Map<string, Tag>()
+    for (const assetId of selectedAssetIds) {
+      const asset = assets.get(assetId)
+      if (!asset) continue
+      for (const tag of asset.tags ?? []) tagsBySlug.set(tag.slug, tag)
+    }
+    return sortedTags(Array.from(tagsBySlug.values()))
+  }
+
+  function clearMultiSelection() {
+    selectedAssetIds = new Set()
+    lastMultiSelectedAssetId = ''
+  }
+
+  async function submitSelectedAssetTag(event: KeyboardEvent) {
+    if (event.key !== 'Enter') return
+    event.preventDefault()
+    if (!selected) return
+    const label = assetTagInput.trim()
+    if (!label) return
+    await updateSelectedAssetTags([...(selected.asset.tags ?? []).map((tag) => tag.label), label])
+    assetTagInput = ''
+  }
+
+  async function removeSelectedAssetTag(tag: Tag) {
+    if (!selected) return
+    await updateSelectedAssetTags(
+      (selected.asset.tags ?? []).filter((current) => current.slug !== tag.slug).map((current) => current.label)
+    )
+  }
+
+  async function updateSelectedAssetTags(labels: string[]) {
+    if (!selected) return
+    const assetId = selected.asset.asset_id
+    try {
+      const response = await fetch(`/api/assets/${assetId}/tags`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tags: labels }),
+      })
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const body = (await response.json()) as { tags: Tag[] }
+      selected = {
+        ...selected,
+        asset: { ...selected.asset, tags: body.tags },
+      }
+      patchAssetTags(assetId, body.tags)
+    } catch {
+      showError('Could not update tags', { transient: true })
+    }
+  }
+
+  function patchAssetTags(assetId: string, tags: Tag[]) {
+    cards = cards.map((card) => {
+      if (card.kind === 'asset') {
+        return card.asset.asset_id === assetId ? { ...card, asset: { ...card.asset, tags } } : card
+      }
+      return {
+        ...card,
+        representative:
+          card.representative.asset_id === assetId ? { ...card.representative, tags } : card.representative,
+        variants: card.variants.map((asset) => (asset.asset_id === assetId ? { ...asset, tags } : asset)),
+      }
+    })
+    if (hoveredAsset?.asset_id === assetId) hoveredAsset = { ...hoveredAsset, tags }
+    if (hoveredCollection?.variants.some((asset) => asset.asset_id === assetId)) {
+      hoveredCollection = {
+        ...hoveredCollection,
+        representative:
+          hoveredCollection.representative.asset_id === assetId
+            ? { ...hoveredCollection.representative, tags }
+            : hoveredCollection.representative,
+        variants: hoveredCollection.variants.map((asset) => (asset.asset_id === assetId ? { ...asset, tags } : asset)),
+      }
+    }
+  }
+
+  async function setHoveredNumberTag(value: string) {
+    const asset = hoverPreviewAsset
+    if (!asset) return
+    try {
+      const detailResponse = await fetch(`/api/assets/${asset.asset_id}`)
+      if (!detailResponse.ok) throw new Error(`HTTP ${detailResponse.status}`)
+      const detail = (await detailResponse.json()) as AssetDetail
+      const labels = (detail.asset.tags ?? [])
+        .filter((tag) => !isNumberTag(tag))
+        .map((tag) => tag.label)
+      if (value !== '0') labels.push(value)
+      const updateResponse = await fetch(`/api/assets/${asset.asset_id}/tags`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tags: labels }),
+      })
+      if (!updateResponse.ok) throw new Error(`HTTP ${updateResponse.status}`)
+      const body = (await updateResponse.json()) as { tags: Tag[] }
+      patchAssetTags(asset.asset_id, body.tags)
+      if (selected?.asset.asset_id === asset.asset_id) {
+        selected = { ...selected, asset: { ...selected.asset, tags: body.tags } }
+      }
+      tagStatus = value === '0' ? `${asset.filename}: number cleared` : `${asset.filename}: ${value}`
+    } catch {
+      showError('Could not update number tag', { transient: true })
+    }
+  }
+
+  function isNumberTag(tag: Tag) {
+    return /^[0-9]+$/.test(tag.slug)
+  }
+
+  async function applyBatchTagToSelected() {
+    const label = batchTagInput.trim()
+    if (!label || selectedAssetIds.size === 0) return
+    await runBatchTagRequest({
+      asset_ids: Array.from(selectedAssetIds),
+      add_tags: [label],
+    })
+  }
+
+  async function removeBatchTagFromSelected(tag: Tag) {
+    if (selectedAssetIds.size === 0) return
+    await runBatchTagRequest({
+      asset_ids: Array.from(selectedAssetIds),
+      remove_tags: [tag.label],
+    })
+  }
+
+  async function applyBatchTagToAllResults() {
+    const label = batchTagInput.trim()
+    if (!label) return
+    const trimmed = query.trim()
+    await runBatchTagRequest({
+      scope: {
+        kind: 'search',
+        q: trimmed || null,
+        mode: searchMode,
+        search_session: searchSessionId,
+        view_source_id: viewDirectory?.source_id ?? null,
+        view_directory: viewDirectory?.path ?? null,
+      },
+      add_tags: [label],
+    })
+  }
+
+  async function applyBatchTagToFolderView() {
+    const label = batchTagInput.trim()
+    if (!label || !viewDirectory) return
+    await runBatchTagRequest({
+      scope: {
+        kind: 'folder',
+        source_id: viewDirectory.source_id,
+        directory: viewDirectory.path,
+        search_session: searchSessionId,
+      },
+      add_tags: [label],
+    })
+  }
+
+  async function runBatchTagRequest(payload: object) {
+    tagging = true
+    tagStatus = ''
+    try {
+      const response = await fetch('/api/tags/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const body = (await response.json()) as BatchTagResponse
+      tagStatus = body.failed.length > 0
+        ? `Updated ${body.tagged} of ${body.matched}; ${body.failed.length} failed`
+        : `Updated ${body.tagged}`
+      batchTagInput = ''
+      const revision = ++searchRevision
+      await loadAssets(revision)
+      if (selected) void selectAsset(selected.asset)
+    } catch {
+      showError('Could not tag assets', { transient: true })
+    } finally {
+      tagging = false
+    }
+  }
+
   async function copyFoundryVttPath() {
     if (!selected) return
     await copyValueAction(selected.actions.copy_foundryvtt_path)
@@ -639,8 +935,17 @@
     }
     if (event.key === 'Escape') {
       event.preventDefault()
-      selected = null
+      if (selectedAssetIds.size > 0) {
+        clearMultiSelection()
+      } else {
+        selected = null
+      }
       qualityTargetKey = ''
+      return
+    }
+    if (!isTyping && /^[0-9]$/.test(event.key) && hoverPreviewAsset) {
+      event.preventDefault()
+      void setHoveredNumberTag(event.key)
       return
     }
     if (handleFolderQualityShortcut(event)) return
@@ -779,6 +1084,25 @@
       formatDimensions(asset),
       formatDuration(asset.duration_seconds),
     ].filter(Boolean)
+  }
+
+  function tagSummary(asset: Pick<Asset, 'tags'>) {
+    return sortedTags(asset.tags ?? []).map((tag) => tag.label).join(' ')
+  }
+
+  function sortedTags(tags: Tag[]) {
+    return [...tags].sort((left, right) => {
+      const leftNumber = numberTagValue(left)
+      const rightNumber = numberTagValue(right)
+      if (leftNumber !== null && rightNumber !== null) return leftNumber - rightNumber
+      if (leftNumber !== null) return -1
+      if (rightNumber !== null) return 1
+      return left.label.localeCompare(right.label, undefined, { sensitivity: 'base' })
+    })
+  }
+
+  function numberTagValue(tag: Tag) {
+    return /^[0-9]+$/.test(tag.slug) ? Number(tag.slug) : null
   }
 
   function directoryKey(directory: Pick<DirectoryNode, 'source_id' | 'path'>) {
@@ -1478,12 +1802,69 @@
   <section class="workspace">
     <section class="main-region" aria-label="Assets">
       <div class="tile-grid" bind:this={tileGridElement} style={gridWidthStyle} onwheel={scrollTileGridWithWheel}>
+        <div class="batch-tag-bar" role="group" aria-label="Batch tagging">
+          <span>
+            {#if multiSelectedCount > 0}
+              {multiSelectedCount} selected
+            {:else if tagStatus}
+              {tagStatus}
+            {:else}
+              Tags
+            {/if}
+          </span>
+          <label>
+            <Tags size={15} />
+            <input
+              bind:value={batchTagInput}
+              type="text"
+              autocomplete="off"
+              placeholder="Add tag"
+              aria-label="Batch tag"
+              disabled={tagging}
+              onkeydown={(event) => {
+                if (event.key === 'Enter') void applyBatchTagToSelected()
+              }}
+            />
+          </label>
+          <button
+            type="button"
+            onclick={applyBatchTagToSelected}
+            disabled={tagging || multiSelectedCount === 0 || !batchTagInput.trim()}
+          >
+            Apply
+          </button>
+          <button type="button" onclick={applyBatchTagToAllResults} disabled={tagging || !batchTagInput.trim()}>
+            All results
+          </button>
+          <button
+            type="button"
+            onclick={applyBatchTagToFolderView}
+            disabled={tagging || !viewDirectory || !batchTagInput.trim()}
+          >
+            Folder
+          </button>
+          <button type="button" onclick={clearMultiSelection} disabled={tagging || multiSelectedCount === 0}>
+            Clear
+          </button>
+        </div>
+        {#if multiSelectedCount > 0 && selectedBatchTags.length > 0}
+          <div class="selection-tag-bar" role="group" aria-label="Selected asset tags">
+            <span>Remove</span>
+            {#each selectedBatchTags as tag (tag.slug)}
+              <button type="button" class="tag-chip" onclick={() => removeBatchTagFromSelected(tag)} disabled={tagging}>
+                <span>{tag.label}</span>
+                <X size={12} />
+              </button>
+            {/each}
+          </div>
+        {/if}
         {#each visibleEntries as entry (visibleEntryKey(entry))}
           {#if entry.kind === 'collection'}
             {@const collection = entry.collection}
             {@const displayAsset = collection.representative}
             {@const Icon = assetIcon(displayAsset)}
             <button
+              class:multi-selected={collectionFullySelected(collection)}
               class="asset-tile collection-tile"
               style={`--collection-color: ${collectionColor(collection.collection_key)}`}
               type="button"
@@ -1491,7 +1872,7 @@
               onmouseleave={() => stopCollectionCycle(collection.collection_key)}
               onfocus={() => startCollectionCycle(collection)}
               onblur={() => stopCollectionCycle(collection.collection_key)}
-              onclick={() => expandCollection(collection)}
+              onclick={(event) => handleCollectionClick(event, collection)}
               ondblclick={() => expandCollection(collection)}
             >
               <span class="tile-thumb">
@@ -1506,7 +1887,7 @@
                 <span class="collection-count">{collection.count}</span>
               </span>
               <span class="tile-name">{displayAsset.filename}</span>
-              <span class="tile-meta">{displayAsset.directory || displayAsset.source_display_name}</span>
+              <span class="tile-meta">{tagSummary(displayAsset)}</span>
             </button>
           {:else if entry.kind === 'collection-header'}
             {@const collection = entry.collection}
@@ -1530,6 +1911,7 @@
             {#if asset.media_type === 'audio'}
               <div
                 class:selected={asset.asset_id === selectedAssetId}
+                class:multi-selected={selectedAssetIds.has(asset.asset_id)}
                 class:collection-member={Boolean(entry.collection_key)}
                 class="asset-card audio-asset-card"
                 style={entry.collection_key ? `--collection-color: ${collectionColor(entry.collection_key)}` : ''}
@@ -1543,7 +1925,7 @@
                 <button
                   class="asset-card-main"
                   type="button"
-                  onclick={() => selectAsset(asset)}
+                  onclick={(event) => handleAssetClick(event, asset)}
                   onauxclick={(event) => handleAssetAuxClick(event, asset)}
                 >
                   <span class="tile-thumb">
@@ -1557,7 +1939,7 @@
                     {/if}
                   </span>
                   <span class="tile-name">{asset.filename}</span>
-                  <span class="tile-meta">{asset.directory || asset.source_display_name}</span>
+                  <span class="tile-meta">{tagSummary(asset)}</span>
                 </button>
                 <div class="card-audio-controls" role="group" aria-label="Audio preview controls">
                   <button
@@ -1589,6 +1971,7 @@
             {:else}
               <button
                 class:selected={asset.asset_id === selectedAssetId}
+                class:multi-selected={selectedAssetIds.has(asset.asset_id)}
                 class:collection-member={Boolean(entry.collection_key)}
                 class="asset-tile"
                 style={entry.collection_key ? `--collection-color: ${collectionColor(entry.collection_key)}` : ''}
@@ -1599,7 +1982,7 @@
                 onblur={() => {
                   if (hoveredAsset?.asset_id === asset.asset_id) clearHoverPreview()
                 }}
-                onclick={() => selectAsset(asset)}
+                onclick={(event) => handleAssetClick(event, asset)}
                 onauxclick={(event) => handleAssetAuxClick(event, asset)}
               >
                 <span class="tile-thumb">
@@ -1613,7 +1996,7 @@
                   {/if}
                 </span>
                 <span class="tile-name">{asset.filename}</span>
-                <span class="tile-meta">{asset.directory || asset.source_display_name}</span>
+                <span class="tile-meta">{tagSummary(asset)}</span>
               </button>
             {/if}
           {/if}
@@ -1659,6 +2042,13 @@
               <span>{item}</span>
             {/each}
           </span>
+          {#if hoverPreviewAsset.tags?.length}
+            <span class="hover-preview-tags">
+              {#each sortedTags(hoverPreviewAsset.tags) as tag (tag.slug)}
+                <span>{tag.label}</span>
+              {/each}
+            </span>
+          {/if}
         </aside>
       {/if}
 
@@ -1710,6 +2100,28 @@
 
           <div class="asset-title">
             <strong>{selected.asset.filename}</strong>
+          </div>
+
+          <div class="tag-editor" role="group" aria-label="Asset tags">
+            <div class="tag-list">
+              {#each sortedTags(selected.asset.tags ?? []) as tag (tag.slug)}
+                <button type="button" class="tag-chip" onclick={() => removeSelectedAssetTag(tag)}>
+                  <span>{tag.label}</span>
+                  <X size={12} />
+                </button>
+              {/each}
+            </div>
+            <label class="tag-input">
+              <Tags size={15} />
+              <input
+                bind:value={assetTagInput}
+                type="text"
+                autocomplete="off"
+                placeholder="Add tag"
+                aria-label="Add tag"
+                onkeydown={submitSelectedAssetTag}
+              />
+            </label>
           </div>
 
           <dl class="asset-metadata">

@@ -6,6 +6,11 @@ export type ThumbnailVariant = {
   url: string
 }
 
+export type Tag = {
+  slug: string
+  label: string
+}
+
 export type Asset = {
   asset_id: string
   source_id: string
@@ -24,6 +29,7 @@ export type Asset = {
   thumbnail_width?: number
   thumbnail_height?: number
   thumbnail_variants?: ThumbnailVariant[]
+  tags?: Tag[]
   score?: number
 }
 

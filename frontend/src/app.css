@@ -352,6 +352,12 @@ a:focus-visible {
   outline-offset: -2px;
 }
 
+.asset-tile.multi-selected,
+.asset-card.multi-selected {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent), transparent 52%);
+}
+
 .card-audio-controls {
   position: absolute;
   top: 12px;
@@ -550,6 +556,25 @@ a:focus-visible {
   line-height: 1.35;
 }
 
+.hover-preview-tags {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.hover-preview-tags span {
+  min-height: 20px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0 6px;
+  background: var(--surface-alt);
+  color: var(--text);
+  font-size: 11px;
+}
+
 .preview {
   min-height: 230px;
   display: grid;
@@ -651,6 +676,82 @@ a:focus-visible {
   overflow-wrap: anywhere;
   color: var(--muted);
   font-size: 12px;
+}
+
+.tag-editor {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tag-list {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.tag-chip {
+  min-width: 0;
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0 7px;
+  background: var(--surface-alt);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.tag-chip:hover {
+  border-color: var(--border-strong);
+}
+
+.tag-chip span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tag-chip svg,
+.tag-input svg,
+.batch-tag-bar svg {
+  color: var(--muted);
+}
+
+.tag-input,
+.batch-tag-bar label {
+  min-width: 0;
+  min-height: 30px;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 6px;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  padding: 0 8px;
+}
+
+.tag-input input,
+.batch-tag-bar input {
+  min-width: 0;
+  height: 28px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.tag-input:focus-within,
+.batch-tag-bar label:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .asset-metadata {
@@ -1103,6 +1204,57 @@ button.folder-row.retained {
 .load-more button:disabled {
   cursor: default;
   color: var(--faint);
+}
+
+.batch-tag-bar {
+  grid-column: 1 / -1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(150px, 260px) repeat(4, auto);
+  gap: 6px;
+  align-items: center;
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.selection-tag-bar {
+  grid-column: 1 / -1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  align-items: center;
+  padding: 0 8px 4px;
+}
+
+.batch-tag-bar > span {
+  min-width: 82px;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.selection-tag-bar > span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.batch-tag-bar button {
+  min-height: 30px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 0 9px;
+  background: var(--surface-alt);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.batch-tag-bar button:disabled {
+  color: var(--faint);
+  border-color: var(--border);
+  background: transparent;
 }
 
 @keyframes spin {

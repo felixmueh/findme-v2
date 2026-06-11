@@ -5,6 +5,7 @@ from pathlib import Path
 import sqlite3
 import threading
 import time
+from typing import Literal
 from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException, Query
@@ -22,6 +23,15 @@ from findme.assets import (
 )
 from findme.config import AppConfig
 from findme.db import connect
+from findme.metadata import (
+    MetadataValidationError,
+    add_asset_tags,
+    remove_asset_tags,
+    set_asset_tags,
+    tag_response,
+    tags_for_asset,
+)
+from findme.metadata_db import connect_metadata, initialize_metadata_database
 from findme.result_cards import ResultCardResolver
 from findme.search import (
     SearchIndex,
@@ -72,10 +82,34 @@ class SearchProfileDeleteRequest(BaseModel):
     discard: bool = False
 
 
+class AssetTagsRequest(BaseModel):
+    tags: list[str]
+
+
+class BatchTagsScope(BaseModel):
+    kind: Literal["search", "folder"]
+    q: str | None = None
+    mode: SearchMode = "strict"
+    source_id: str | None = None
+    directory: str = ""
+    directory_prefix: str | None = None
+    view_source_id: str | None = None
+    view_directory: str | None = None
+    search_session: str | None = None
+
+
+class BatchTagsRequest(BaseModel):
+    asset_ids: list[str] = Field(default_factory=list)
+    scope: BatchTagsScope | None = None
+    add_tags: list[str] = Field(default_factory=list)
+    remove_tags: list[str] = Field(default_factory=list)
+
+
 def create_app(
     config: AppConfig, db_path: Path | None = None, static_dir: Path | None = None
 ) -> FastAPI:
     database_path = db_path or config.data_root / "findme.sqlite3"
+    metadata_database_path = config.data_root / "metadata.sqlite3"
     snapshot_path = search_corpus_snapshot_path(config.data_root, config.search_corpus_path)
     lexical_path = search_corpus_lexical_path(config.data_root, config.search_corpus_path)
     snapshot = load_search_corpus_snapshot(snapshot_path)
@@ -236,6 +270,50 @@ def create_app(
                 return cards, page.total, offset + len(cards), not raw_exhausted
             raw_limit = min(page.total, raw_limit + max(limit, raw_limit))
 
+    def _asset_ids_for_batch_scope(scope: BatchTagsScope) -> tuple[str, ...]:
+        if scope.kind == "folder":
+            if scope.source_id is None:
+                raise HTTPException(status_code=400, detail="folder scope requires source_id")
+            source_id = scope.source_id
+            directory = None
+            directory_prefix = scope.directory
+            query = ""
+            mode = "strict"
+        else:
+            source_id, directory, directory_prefix = resolve_view_scope(
+                source_id=scope.source_id,
+                directory=None,
+                directory_prefix=scope.directory_prefix,
+                view_source_id=scope.view_source_id,
+                view_directory=scope.view_directory,
+            )
+            query = _trimmed_query(scope.q)
+            mode = scope.mode
+        with connect(database_path) as db:
+            try:
+                _profile_session, preferences = session_and_preferences(
+                    db,
+                    search_session=scope.search_session,
+                    view_source_id=scope.view_source_id if scope.kind == "search" else None,
+                    view_directory=scope.view_directory if scope.kind == "search" else None,
+                )
+            except SearchProfileValidationError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        domain_vocabulary = _load_domain_vocabulary(config)
+        asset_indexes = search_index.search_asset_index_array(
+            query,
+            source_id=source_id,
+            directory=directory,
+            directory_prefix=directory_prefix,
+            preferences=preferences,
+            domain_vocabulary=domain_vocabulary,
+            mode=mode,
+        )
+        return tuple(
+            search_index.assets[int(asset_index)].asset_id
+            for asset_index in asset_indexes
+        )
+
     app = FastAPI(title="Findme V2")
 
     @app.get("/api/health")
@@ -291,7 +369,9 @@ def create_app(
             offset=offset,
             limit=limit,
         )
-        return JSONResponse({"cards": cards, "total": total})
+        return JSONResponse(
+            {"cards": _cards_with_tags(metadata_database_path, cards), "total": total}
+        )
 
     @app.get("/api/search-profiles")
     def list_search_profiles(search_session: str | None = None) -> dict[str, object]:
@@ -458,7 +538,11 @@ def create_app(
                 limit=limit,
             )
             return JSONResponse(
-                {"cards": cards, "total": total, "next_offset": offset + len(cards)}
+                {
+                    "cards": _cards_with_tags(metadata_database_path, cards),
+                    "total": total,
+                    "next_offset": offset + len(cards),
+                }
             )
         domain_vocabulary = _load_domain_vocabulary(config)
         try:
@@ -478,7 +562,7 @@ def create_app(
             return Response(status_code=204)
         return JSONResponse(
             {
-                "cards": cards,
+                "cards": _cards_with_tags(metadata_database_path, cards),
                 "total": total,
                 "next_offset": next_offset,
                 "has_more": has_more,
@@ -561,7 +645,7 @@ def create_app(
             )
             return JSONResponse(
                 {
-                    "cards": cards,
+                    "cards": _cards_with_tags(metadata_database_path, cards),
                     "total": total,
                     "next_offset": offset + len(cards),
                     **_directory_payload(
@@ -628,7 +712,7 @@ def create_app(
             return Response(status_code=204)
         return JSONResponse(
             {
-                "cards": cards,
+                "cards": _cards_with_tags(metadata_database_path, cards),
                 "total": total,
                 "next_offset": next_offset,
                 "has_more": has_more,
@@ -644,7 +728,67 @@ def create_app(
     def asset_detail(asset_id: str) -> dict[str, object]:
         with connect(database_path) as db:
             asset = _load_asset_or_404(db, config, asset_id)
-        return {"asset": asset_response(asset), "actions": asset_actions(config, asset)}
+        response = asset_response(asset)
+        response["tags"] = _tags_for_asset_response(metadata_database_path, asset)
+        return {"asset": response, "actions": asset_actions(config, asset)}
+
+    @app.put("/api/assets/{asset_id}/tags")
+    def update_asset_tags(
+        asset_id: str,
+        request: AssetTagsRequest,
+    ) -> dict[str, object]:
+        with connect(database_path) as db:
+            asset = _load_asset_or_404(db, config, asset_id)
+        if not asset.absolute_path.is_file():
+            raise HTTPException(status_code=404, detail="asset file is missing")
+        try:
+            with connect_metadata(metadata_database_path) as metadata_db:
+                initialize_metadata_database(metadata_db)
+                tags = set_asset_tags(metadata_db, asset, request.tags)
+        except MetadataValidationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"tags": [tag_response(tag) for tag in tags]}
+
+    @app.post("/api/tags/batch")
+    def batch_update_tags(request: BatchTagsRequest) -> dict[str, object]:
+        if bool(request.asset_ids) == bool(request.scope):
+            raise HTTPException(
+                status_code=400,
+                detail="provide exactly one of asset_ids or scope",
+            )
+        if not request.add_tags and not request.remove_tags:
+            raise HTTPException(status_code=400, detail="add_tags or remove_tags is required")
+        asset_ids = (
+            tuple(dict.fromkeys(request.asset_ids))
+            if request.asset_ids
+            else _asset_ids_for_batch_scope(request.scope)  # type: ignore[arg-type]
+        )
+        tagged = 0
+        failures: list[dict[str, str]] = []
+        with connect_metadata(metadata_database_path) as metadata_db:
+            initialize_metadata_database(metadata_db)
+            for asset_id in asset_ids:
+                try:
+                    with connect(database_path) as db:
+                        asset = get_asset(db, config, asset_id)
+                    if not asset.absolute_path.is_file():
+                        raise AssetNotFoundError("asset file is missing")
+                    if request.add_tags:
+                        add_asset_tags(metadata_db, asset, request.add_tags)
+                    if request.remove_tags:
+                        remove_asset_tags(metadata_db, asset, request.remove_tags)
+                    tagged += 1
+                except (
+                    AssetNotFoundError,
+                    MetadataValidationError,
+                    UnsafeAssetPathError,
+                ) as exc:
+                    failures.append({"asset_id": asset_id, "message": str(exc)})
+        return {
+            "matched": len(asset_ids),
+            "tagged": tagged,
+            "failed": failures,
+        }
 
     @app.get("/api/assets/{asset_id}/file")
     def asset_file(asset_id: str, download: bool = False) -> FileResponse:
@@ -731,6 +875,116 @@ def _load_asset_or_404(db: sqlite3.Connection, config: AppConfig, asset_id: str)
         raise HTTPException(status_code=404, detail="asset not found") from exc
     except UnsafeAssetPathError as exc:
         raise HTTPException(status_code=500, detail="asset path is outside source root") from exc
+
+
+def _tags_for_asset_response(metadata_database_path: Path, asset) -> list[dict[str, str]]:
+    if not metadata_database_path.is_file():
+        return []
+    with connect_metadata(metadata_database_path) as metadata_db:
+        initialize_metadata_database(metadata_db)
+        return [tag_response(tag) for tag in tags_for_asset(metadata_db, asset)]
+
+
+def _cards_with_tags(
+    metadata_database_path: Path,
+    cards: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    tags_by_asset_id = _tags_by_asset_id_for_cards(metadata_database_path, cards)
+    if not tags_by_asset_id:
+        return cards
+    return [_card_with_tags(card, tags_by_asset_id) for card in cards]
+
+
+def _card_with_tags(
+    card: dict[str, object],
+    tags_by_asset_id: dict[str, list[dict[str, str]]],
+) -> dict[str, object]:
+    if card["kind"] == "asset":
+        response = dict(card)
+        response["asset"] = _asset_with_tags(
+            card["asset"],  # type: ignore[arg-type]
+            tags_by_asset_id,
+        )
+        return response
+    response = dict(card)
+    response["representative"] = _asset_with_tags(
+        card["representative"],  # type: ignore[arg-type]
+        tags_by_asset_id,
+    )
+    response["variants"] = [
+        _asset_with_tags(asset, tags_by_asset_id)
+        for asset in card["variants"]  # type: ignore[union-attr]
+    ]
+    return response
+
+
+def _asset_with_tags(
+    asset: dict[str, object],
+    tags_by_asset_id: dict[str, list[dict[str, str]]],
+) -> dict[str, object]:
+    response = dict(asset)
+    response["tags"] = tags_by_asset_id.get(str(asset["asset_id"]), [])
+    return response
+
+
+def _tags_by_asset_id_for_cards(
+    metadata_database_path: Path,
+    cards: list[dict[str, object]],
+) -> dict[str, list[dict[str, str]]]:
+    asset_ids = tuple(dict.fromkeys(_asset_ids_for_cards(cards)))
+    if not asset_ids or not metadata_database_path.is_file():
+        return {}
+    placeholders = ", ".join("?" for _ in asset_ids)
+    with connect_metadata(metadata_database_path) as metadata_db:
+        initialize_metadata_database(metadata_db)
+        rows = metadata_db.execute(
+            f"""
+            SELECT
+              metadata_file_locations.asset_id,
+              tags.slug,
+              tags.label
+            FROM metadata_file_locations
+            JOIN file_tags ON file_tags.file_id = metadata_file_locations.file_id
+            JOIN tags ON tags.tag_id = file_tags.tag_id
+            WHERE metadata_file_locations.asset_id IN ({placeholders})
+              AND metadata_file_locations.missing_at IS NULL
+            ORDER BY
+              metadata_file_locations.asset_id,
+              CASE
+                WHEN tags.slug GLOB '[0-9]*' AND tags.slug NOT GLOB '*[^0-9]*'
+                THEN 0
+                ELSE 1
+              END,
+              CASE
+                WHEN tags.slug GLOB '[0-9]*' AND tags.slug NOT GLOB '*[^0-9]*'
+                THEN CAST(tags.slug AS INTEGER)
+                ELSE 0
+              END,
+              tags.label COLLATE NOCASE,
+              tags.slug
+            """,
+            asset_ids,
+        ).fetchall()
+    tags_by_asset_id: dict[str, list[dict[str, str]]] = {}
+    for row in rows:
+        tags_by_asset_id.setdefault(row["asset_id"], []).append(
+            {"slug": row["slug"], "label": row["label"]}
+        )
+    return tags_by_asset_id
+
+
+def _asset_ids_for_cards(cards: list[dict[str, object]]) -> list[str]:
+    asset_ids: list[str] = []
+    for card in cards:
+        if card["kind"] == "asset":
+            asset = card["asset"]  # type: ignore[assignment]
+            asset_ids.append(str(asset["asset_id"]))
+            continue
+        representative = card["representative"]  # type: ignore[assignment]
+        asset_ids.append(str(representative["asset_id"]))
+        for asset in card["variants"]:  # type: ignore[union-attr]
+            asset_ids.append(str(asset["asset_id"]))
+    return asset_ids
 
 
 def _search_response(result: SearchResult) -> dict[str, object]:
