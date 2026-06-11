@@ -81,6 +81,40 @@ def list_tags(metadata_db: sqlite3.Connection) -> tuple[TagRecord, ...]:
     return tuple(TagRecord(slug=row["slug"], label=row["label"]) for row in rows)
 
 
+def tag_by_slug(metadata_db: sqlite3.Connection, slug: str) -> TagRecord | None:
+    row = metadata_db.execute(
+        """
+        SELECT slug, label
+        FROM tags
+        WHERE slug = ?
+        """,
+        (slug,),
+    ).fetchone()
+    if row is None:
+        return None
+    return TagRecord(slug=row["slug"], label=row["label"])
+
+
+def asset_ids_for_tag(
+    metadata_db: sqlite3.Connection,
+    slug: str,
+) -> tuple[str, ...]:
+    rows = metadata_db.execute(
+        """
+        SELECT DISTINCT metadata_file_locations.asset_id
+        FROM tags
+        JOIN file_tags ON file_tags.tag_id = tags.tag_id
+        JOIN metadata_file_locations
+          ON metadata_file_locations.file_id = file_tags.file_id
+        WHERE tags.slug = ?
+          AND metadata_file_locations.asset_id IS NOT NULL
+          AND metadata_file_locations.missing_at IS NULL
+        """,
+        (slug,),
+    ).fetchall()
+    return tuple(row["asset_id"] for row in rows)
+
+
 def set_asset_tags(
     metadata_db: sqlite3.Connection,
     asset: AssetRecord,

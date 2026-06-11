@@ -26,9 +26,11 @@ from findme.db import connect
 from findme.metadata import (
     MetadataValidationError,
     add_asset_tags,
+    asset_ids_for_tag,
     list_tags,
     remove_asset_tags,
     set_asset_tags,
+    tag_by_slug,
     tag_response,
     tags_for_asset,
 )
@@ -341,6 +343,38 @@ def create_app(
         with connect_metadata(metadata_database_path) as metadata_db:
             initialize_metadata_database(metadata_db)
             return {"tags": [tag_response(tag) for tag in list_tags(metadata_db)]}
+
+    @app.get("/api/tags/{slug}/assets")
+    def list_assets_for_tag(
+        slug: str,
+        limit: int = Query(default=100, ge=1, le=500),
+        offset: int = Query(default=0, ge=0),
+    ) -> JSONResponse:
+        if not metadata_database_path.is_file():
+            raise HTTPException(status_code=404, detail="tag not found")
+        with connect_metadata(metadata_database_path) as metadata_db:
+            initialize_metadata_database(metadata_db)
+            tag = tag_by_slug(metadata_db, slug)
+            if tag is None:
+                raise HTTPException(status_code=404, detail="tag not found")
+            tagged_asset_ids = set(asset_ids_for_tag(metadata_db, slug))
+        matching_cards = [
+            {"kind": "asset", "asset": _asset_result_response(asset, score=0.0)}
+            for asset in search_index.assets
+            if asset.asset_id in tagged_asset_ids
+        ]
+        total = len(matching_cards)
+        cards = matching_cards[offset : offset + limit]
+        next_offset = offset + len(cards)
+        return JSONResponse(
+            {
+                "tag": tag_response(tag),
+                "cards": _cards_with_tags(metadata_database_path, cards),
+                "total": total,
+                "next_offset": next_offset,
+                "has_more": next_offset < total,
+            }
+        )
 
     @app.get("/api/assets")
     def list_assets(

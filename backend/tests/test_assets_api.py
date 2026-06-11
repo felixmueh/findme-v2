@@ -199,6 +199,88 @@ def test_api_lists_existing_tags_from_metadata_database(tmp_path: Path) -> None:
     }
 
 
+def test_api_lists_assets_for_tag_with_pagination(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    write_image(source_root / "Goblins" / "Goblin A.png", size=(32, 24))
+    write_image(source_root / "Goblins" / "Goblin B.png", size=(33, 24))
+    write_image(source_root / "Orcs" / "Orc.png", size=(34, 24))
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+        rows = db.execute(
+            "SELECT asset_id, relative_path FROM assets ORDER BY relative_path"
+        ).fetchall()
+    rebuild_search_corpus(config, db_path)
+    ids_by_path = {row["relative_path"]: row["asset_id"] for row in rows}
+    client = TestClient(create_app(config, db_path))
+    client.put(
+        f"/api/assets/{ids_by_path['Goblins/Goblin A.png']}/tags",
+        json={"tags": ["NPC"]},
+    )
+    client.put(
+        f"/api/assets/{ids_by_path['Goblins/Goblin B.png']}/tags",
+        json={"tags": ["NPC"]},
+    )
+    client.put(
+        f"/api/assets/{ids_by_path['Orcs/Orc.png']}/tags",
+        json={"tags": ["Monster"]},
+    )
+
+    response = client.get("/api/tags/npc/assets", params={"limit": 1, "offset": 1})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["tag"] == {"slug": "npc", "label": "NPC"}
+    assert body["total"] == 2
+    assert body["next_offset"] == 2
+    assert body["has_more"] is False
+    assert [card["asset"]["relative_path"] for card in body["cards"]] == [
+        "Goblins/Goblin B.png"
+    ]
+    assert body["cards"][0]["asset"]["tags"] == [{"slug": "npc", "label": "NPC"}]
+
+
+def test_api_returns_404_for_missing_tag_assets(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    write_image(source_root / "Goblin.png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+    rebuild_search_corpus(config, db_path)
+    client = TestClient(create_app(config, db_path))
+
+    response = client.get("/api/tags/missing/assets")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "tag not found"}
+
+
 def test_api_prunes_unused_tag_definitions(tmp_path: Path) -> None:
     source_root = tmp_path / "assets"
     source_root.mkdir()
