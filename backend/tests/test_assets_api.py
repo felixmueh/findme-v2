@@ -163,6 +163,77 @@ def test_asset_tags_are_stored_in_metadata_database(tmp_path: Path) -> None:
     assert "tags" not in index_tables
 
 
+def test_api_lists_existing_tags_from_metadata_database(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    write_image(source_root / "Goblin.png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+        asset_id = db.execute("SELECT asset_id FROM assets").fetchone()["asset_id"]
+    rebuild_search_corpus(config, db_path)
+    client = TestClient(create_app(config, db_path))
+    client.put(f"/api/assets/{asset_id}/tags", json={"tags": ["NPC", "Goblin"]})
+
+    response = client.get("/api/tags")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "tags": [
+            {"slug": "goblin", "label": "Goblin"},
+            {"slug": "npc", "label": "NPC"},
+        ]
+    }
+
+
+def test_api_prunes_unused_tag_definitions(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    write_image(source_root / "Goblin.png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+        asset_id = db.execute("SELECT asset_id FROM assets").fetchone()["asset_id"]
+    rebuild_search_corpus(config, db_path)
+    client = TestClient(create_app(config, db_path))
+    client.put(f"/api/assets/{asset_id}/tags", json={"tags": ["NPC", "Goblin"]})
+
+    response = client.put(f"/api/assets/{asset_id}/tags", json={"tags": ["NPC"]})
+
+    assert response.status_code == 200
+    assert client.get("/api/tags").json() == {
+        "tags": [
+            {"slug": "npc", "label": "NPC"},
+        ]
+    }
+
+
 def test_asset_tags_sort_number_tags_before_other_tags(tmp_path: Path) -> None:
     source_root = tmp_path / "assets"
     source_root.mkdir()

@@ -26,6 +26,7 @@ from findme.db import connect
 from findme.metadata import (
     MetadataValidationError,
     add_asset_tags,
+    list_tags,
     remove_asset_tags,
     set_asset_tags,
     tag_response,
@@ -332,6 +333,14 @@ def create_app(
             for source in sorted(config.sources, key=lambda item: item.priority, reverse=True)
         ]
         return {"sources": sources}
+
+    @app.get("/api/tags")
+    def list_existing_tags() -> dict[str, list[dict[str, str]]]:
+        if not metadata_database_path.is_file():
+            return {"tags": []}
+        with connect_metadata(metadata_database_path) as metadata_db:
+            initialize_metadata_database(metadata_db)
+            return {"tags": [tag_response(tag) for tag in list_tags(metadata_db)]}
 
     @app.get("/api/assets")
     def list_assets(

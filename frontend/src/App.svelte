@@ -141,6 +141,9 @@
   let lastMultiSelectedAssetId = $state('')
   let assetTagInput = $state('')
   let batchTagInput = $state('')
+  let knownTags = $state<Tag[]>([])
+  let assetTagInputFocused = $state(false)
+  let batchTagInputFocused = $state(false)
   let tagging = $state(false)
   let tagStatus = $state('')
   let hoveredAsset = $state<Asset | null>(null)
@@ -207,6 +210,12 @@
     cards
     return tagsForSelectedAssets()
   })
+  const assetTagSuggestions = $derived.by(() =>
+    tagSuggestions(assetTagInput, selected?.asset.tags ?? [])
+  )
+  const batchTagSuggestions = $derived.by(() =>
+    tagSuggestions(batchTagInput, [])
+  )
   const hoverPreviewAsset = $derived(
     hoveredCollection ? collectionDisplayAsset(hoveredCollection) : hoveredAsset
   )
@@ -257,6 +266,7 @@
   )
   const directoryPathsWithChildren = $derived.by(() => directoryParentKeys(activeDirectories))
   void loadSearchProfiles()
+  void loadKnownTags()
 
   $effect(() => {
     query
@@ -646,6 +656,7 @@
         asset: { ...selected.asset, tags: body.tags },
       }
       patchAssetTags(assetId, body.tags)
+      void loadKnownTags()
     } catch {
       showError('Could not update tags', { transient: true })
     }
@@ -695,6 +706,7 @@
       if (!updateResponse.ok) throw new Error(`HTTP ${updateResponse.status}`)
       const body = (await updateResponse.json()) as { tags: Tag[] }
       patchAssetTags(asset.asset_id, body.tags)
+      void loadKnownTags()
       if (selected?.asset.asset_id === asset.asset_id) {
         selected = { ...selected, asset: { ...selected.asset, tags: body.tags } }
       }
@@ -774,6 +786,7 @@
       const revision = ++searchRevision
       await loadAssets(revision)
       if (selected) void selectAsset(selected.asset)
+      void loadKnownTags()
     } catch {
       showError('Could not tag assets', { transient: true })
     } finally {
@@ -1103,6 +1116,42 @@
 
   function numberTagValue(tag: Tag) {
     return /^[0-9]+$/.test(tag.slug) ? Number(tag.slug) : null
+  }
+
+  async function loadKnownTags() {
+    try {
+      const response = await fetch('/api/tags')
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const body = (await response.json()) as { tags: Tag[] }
+      knownTags = sortedTags(body.tags)
+    } catch {
+      knownTags = []
+    }
+  }
+
+  function tagSuggestions(input: string, excludedTags: Tag[]) {
+    const query = input.trim().toLocaleLowerCase()
+    const excluded = new Set(excludedTags.map((tag) => tag.slug))
+    return knownTags
+      .filter((tag) => !excluded.has(tag.slug))
+      .filter((tag) => !query || tag.label.toLocaleLowerCase().includes(query) || tag.slug.includes(query))
+      .slice(0, 8)
+  }
+
+  async function useAssetTagSuggestion(tag: Tag) {
+    assetTagInputFocused = false
+    assetTagInput = ''
+    await updateSelectedAssetTags([...(selected?.asset.tags ?? []).map((current) => current.label), tag.label])
+  }
+
+  async function useBatchTagSuggestion(tag: Tag) {
+    batchTagInput = tag.label
+    batchTagInputFocused = false
+    if (selectedAssetIds.size === 0) return
+    await runBatchTagRequest({
+      asset_ids: Array.from(selectedAssetIds),
+      add_tags: [tag.label],
+    })
   }
 
   function directoryKey(directory: Pick<DirectoryNode, 'source_id' | 'path'>) {
@@ -1821,10 +1870,27 @@
               placeholder="Add tag"
               aria-label="Batch tag"
               disabled={tagging}
+              onfocus={() => {
+                batchTagInputFocused = true
+              }}
+              onblur={() => {
+                window.setTimeout(() => {
+                  batchTagInputFocused = false
+                }, 120)
+              }}
               onkeydown={(event) => {
                 if (event.key === 'Enter') void applyBatchTagToSelected()
               }}
             />
+            {#if batchTagInputFocused && batchTagSuggestions.length > 0}
+              <span class="tag-suggestions" role="listbox" aria-label="Existing tags">
+                {#each batchTagSuggestions as tag (tag.slug)}
+                  <button type="button" role="option" aria-selected="false" onclick={() => void useBatchTagSuggestion(tag)}>
+                    {tag.label}
+                  </button>
+                {/each}
+              </span>
+            {/if}
           </label>
           <button
             type="button"
@@ -2119,8 +2185,25 @@
                 autocomplete="off"
                 placeholder="Add tag"
                 aria-label="Add tag"
+                onfocus={() => {
+                  assetTagInputFocused = true
+                }}
+                onblur={() => {
+                  window.setTimeout(() => {
+                    assetTagInputFocused = false
+                  }, 120)
+                }}
                 onkeydown={submitSelectedAssetTag}
               />
+              {#if assetTagInputFocused && assetTagSuggestions.length > 0}
+                <span class="tag-suggestions" role="listbox" aria-label="Existing tags">
+                  {#each assetTagSuggestions as tag (tag.slug)}
+                    <button type="button" role="option" aria-selected="false" onclick={() => void useAssetTagSuggestion(tag)}>
+                      {tag.label}
+                    </button>
+                  {/each}
+                </span>
+              {/if}
             </label>
           </div>
 

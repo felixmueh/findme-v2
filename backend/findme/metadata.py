@@ -58,6 +58,29 @@ def tags_for_file(
     return _sort_tags(tuple(TagRecord(slug=row["slug"], label=row["label"]) for row in rows))
 
 
+def list_tags(metadata_db: sqlite3.Connection) -> tuple[TagRecord, ...]:
+    rows = metadata_db.execute(
+        """
+        SELECT slug, label
+        FROM tags
+        ORDER BY
+          CASE
+            WHEN slug GLOB '[0-9]*' AND slug NOT GLOB '*[^0-9]*'
+            THEN 0
+            ELSE 1
+          END,
+          CASE
+            WHEN slug GLOB '[0-9]*' AND slug NOT GLOB '*[^0-9]*'
+            THEN CAST(slug AS INTEGER)
+            ELSE 0
+          END,
+          label COLLATE NOCASE,
+          slug
+        """
+    ).fetchall()
+    return tuple(TagRecord(slug=row["slug"], label=row["label"]) for row in rows)
+
+
 def set_asset_tags(
     metadata_db: sqlite3.Connection,
     asset: AssetRecord,
@@ -181,6 +204,16 @@ def _replace_file_tags(
             """,
             (file_id, tag_id, index),
         )
+    metadata_db.execute(
+        """
+        DELETE FROM tags
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM file_tags
+          WHERE file_tags.tag_id = tags.tag_id
+        )
+        """
+    )
     return tags
 
 
