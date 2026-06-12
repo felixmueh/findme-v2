@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from hashlib import blake2b
 from typing import Any
@@ -153,6 +153,90 @@ class ResultCardResolver:
             [self.browse_cards[int(card_index)] for card_index in page_card_indexes],
             len(ordered_card_indexes) if total is None else total,
         )
+
+    def page_for_search_asset_index_arrays(
+        self,
+        asset_indexes: np.ndarray,
+        scores: np.ndarray,
+        *,
+        offset: int,
+        limit: int | None,
+        asset_response_for_index: Callable[[int, float], AssetResponse],
+    ) -> tuple[list[ResultCard], int]:
+        emitted_collections: set[str] = set()
+        cards: list[ResultCard] = []
+        observed_total = 0
+
+        for asset_index, score in zip(asset_indexes, scores, strict=True):
+            grouped = self.by_asset_index[int(asset_index)]
+            if (
+                self.collection_counts[grouped.collection_key] < 2
+                or not self.has_variant_asset[grouped.collection_key]
+            ):
+                observed_total += 1
+                if observed_total > offset and (limit is None or len(cards) < limit):
+                    cards.append(
+                        {
+                            "kind": "asset",
+                            "asset": asset_response_for_index(
+                                int(asset_index),
+                                float(score),
+                            ),
+                        }
+                    )
+                if limit is not None and len(cards) >= limit:
+                    break
+                continue
+            if grouped.collection_key in emitted_collections:
+                continue
+            emitted_collections.add(grouped.collection_key)
+            observed_total += 1
+            if observed_total <= offset or (limit is not None and len(cards) >= limit):
+                continue
+            variants = self.by_collection[grouped.collection_key]
+            representative = grouped.asset
+            if float(score) != 0:
+                representative = asset_response_for_index(int(asset_index), float(score))
+            cards.append(
+                {
+                    "kind": "collection",
+                    "collection_key": _public_collection_key(grouped.collection_key),
+                    "representative": representative,
+                    "variants": [item.asset for item in variants],
+                    "count": len(variants),
+                }
+            )
+            if limit is not None and len(cards) >= limit:
+                break
+        return cards, observed_total
+
+    def search_card_count_for_asset_index_array(
+        self,
+        asset_indexes: np.ndarray,
+        *,
+        offset: int,
+        limit: int | None,
+    ) -> int:
+        emitted_collections: set[str] = set()
+        observed_total = 0
+        visible_total = 0
+
+        for asset_index in asset_indexes:
+            grouped = self.by_asset_index[int(asset_index)]
+            if (
+                self.collection_counts[grouped.collection_key] >= 2
+                and self.has_variant_asset[grouped.collection_key]
+            ):
+                if grouped.collection_key in emitted_collections:
+                    continue
+                emitted_collections.add(grouped.collection_key)
+            observed_total += 1
+            if observed_total <= offset:
+                continue
+            visible_total += 1
+            if limit is not None and visible_total >= limit:
+                break
+        return visible_total
 
     def _page_for_grouped_assets(
         self,

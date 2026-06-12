@@ -71,6 +71,8 @@ Use `config/findme.dev.toml` on laptop and laptop-sbx. This indexes only `sample
 
 Use `config/findme.server.local.toml` on server and server-sbx. It is git-ignored and exists only on the server; `config/findme.example.toml` shows the format. Both server environments may assume `/media/NAS/main/Documents/DND` is mounted and may share `/var/lib/findme-v2`.
 
+Treat `/var/lib/findme-v2` as potentially the main production index even from server-sbx. Do not assume the sandbox has a disposable copy of the index; avoid destructive cleanup or long rebuilds unless the user explicitly confirms that this environment should mutate the shared index.
+
 Install development tools or dependencies in the sandbox when they are needed to build, test, or evaluate the project. Keep production deployment assumptions documented in `docs/DESIGN.md` or `docs/STACK.md` rather than inferring them from the sandbox.
 
 ## No Generic Fallbacks

@@ -259,9 +259,12 @@ def create_app(
         limit: int,
         control: SearchControl | None,
     ) -> tuple[list[dict[str, object]], int, int, bool]:
+        def asset_response_for_index(asset_index: int, score: float) -> dict[str, object]:
+            return _asset_result_response(search_index.assets[asset_index], score=score)
+
         raw_limit = max(offset + limit, limit)
         while True:
-            page = search_index.search(
+            page = search_index.search_asset_index_page(
                 query,
                 source_id=source_id,
                 directory=directory,
@@ -273,13 +276,22 @@ def create_app(
                 offset=0,
                 control=control,
             )
-            cards, _observed_total = card_resolver.page_for(
-                [_search_response(result) for result in page.assets],
+            visible_cards = card_resolver.search_card_count_for_asset_index_array(
+                page.asset_indexes,
                 offset=offset,
                 limit=limit,
             )
             raw_exhausted = raw_limit >= page.total
-            if len(cards) >= limit or raw_exhausted:
+            if visible_cards >= limit or raw_exhausted:
+                cards, _observed_total = (
+                    card_resolver.page_for_search_asset_index_arrays(
+                        page.asset_indexes,
+                        page.scores,
+                        offset=offset,
+                        limit=limit,
+                        asset_response_for_index=asset_response_for_index,
+                    )
+                )
                 return cards, page.total, offset + len(cards), not raw_exhausted
             raw_limit = min(page.total, raw_limit + max(limit, raw_limit))
 
@@ -789,7 +801,7 @@ def create_app(
                 )
             )
         try:
-            search_response = search_index.search_with_directory_responses(
+            directories = search_index.directory_responses_for_search(
                 trimmed_query,
                 source_id=source_id,
                 directory=directory,
@@ -797,8 +809,6 @@ def create_app(
                 preferences=preferences,
                 domain_vocabulary=domain_vocabulary,
                 mode=mode,
-                limit=limit,
-                offset=0,
                 dirty_folder_subtree_keys=dirty_folder_subtree_keys,
                 descendant_whitelist_keys=descendant_whitelist_keys,
                 descendant_blacklist_keys=descendant_blacklist_keys,
@@ -826,7 +836,7 @@ def create_app(
                 "has_more": has_more,
                 **_directory_payload(
                     config,
-                    search_response.directories,
+                    directories,
                     state_only=directory_state_only,
                 ),
             }

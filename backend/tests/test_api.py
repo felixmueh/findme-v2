@@ -1875,7 +1875,7 @@ def test_api_search_with_directory_counts_rejects_superseded_directory_counts(
 
     monkeypatch.setattr(
         SearchIndex,
-        "search_with_directory_responses",
+        "directory_responses_for_search",
         supersede_directory_counts,
     )
 

@@ -60,6 +60,13 @@ class SearchResultsPage:
 
 
 @dataclass(frozen=True)
+class SearchAssetIndexPage:
+    asset_indexes: np.ndarray
+    scores: np.ndarray
+    total: int
+
+
+@dataclass(frozen=True)
 class DirectoryFilterRule:
     source_id: str
     path: str
@@ -323,6 +330,48 @@ class SearchIndex:
             limit=limit,
             offset=offset,
             control=control,
+        )
+
+    def search_asset_index_page(
+        self,
+        query: str,
+        *,
+        source_id: str | None = None,
+        directory: str | None = None,
+        directory_prefix: str | None = None,
+        preferences: SearchPreferences | None = None,
+        domain_vocabulary: DomainVocabulary | None = None,
+        mode: SearchMode = "strict",
+        limit: int = 100,
+        offset: int = 0,
+        control: SearchControl | None = None,
+    ) -> SearchAssetIndexPage:
+        preferences = preferences or empty_search_preferences(self.assets)
+        domain_vocabulary = domain_vocabulary or DEFAULT_DOMAIN_VOCABULARY
+        matches = self._search_match_arrays(
+            query,
+            source_id=source_id,
+            directory=directory,
+            directory_prefix=directory_prefix,
+            domain_vocabulary=domain_vocabulary,
+            mode=mode,
+            control=control,
+        )
+        asset_indexes, scores = self._apply_preferences_to_match_arrays(
+            matches.asset_indexes,
+            matches.scores,
+            preferences=preferences,
+        )
+        page_indexes, page_scores = self._top_page_indexes(
+            asset_indexes,
+            scores,
+            limit=limit,
+            offset=offset,
+        )
+        return SearchAssetIndexPage(
+            asset_indexes=page_indexes,
+            scores=page_scores,
+            total=len(asset_indexes),
         )
 
     def browse(
