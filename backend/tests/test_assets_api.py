@@ -281,6 +281,138 @@ def test_api_returns_404_for_missing_tag_assets(tmp_path: Path) -> None:
     assert response.json() == {"detail": "tag not found"}
 
 
+def test_api_queries_assets_with_boolean_tag_selector(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    matching_audio = source_root / "combat_boss" / "Tough Fight.mp3"
+    excluded_audio = source_root / "combat_boss" / "Vocal Fight.mp3"
+    other_directory_audio = source_root / "ambient" / "Tough Road.mp3"
+    image_asset = source_root / "combat_boss" / "Tough Fight.png"
+    matching_audio.parent.mkdir(parents=True)
+    other_directory_audio.parent.mkdir(parents=True)
+    matching_audio.write_bytes(b"audio-a")
+    excluded_audio.write_bytes(b"audio-b")
+    other_directory_audio.write_bytes(b"audio-c")
+    write_image(image_asset)
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="music",
+                display_name="Music",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".mp3", ".png"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+        rows = db.execute(
+            """
+            SELECT asset_id, relative_path, absolute_path, size_bytes, mtime_ns
+            FROM assets
+            ORDER BY relative_path
+            """
+        ).fetchall()
+    rebuild_search_corpus(config, db_path)
+    rows_by_path = {row["relative_path"]: row for row in rows}
+    client = TestClient(create_app(config, db_path))
+    client.put(
+        f"/api/assets/{rows_by_path['combat_boss/Tough Fight.mp3']['asset_id']}/tags",
+        json={"tags": ["combat", "tough"]},
+    )
+    client.put(
+        f"/api/assets/{rows_by_path['combat_boss/Vocal Fight.mp3']['asset_id']}/tags",
+        json={"tags": ["combat", "boss", "vocals"]},
+    )
+    client.put(
+        f"/api/assets/{rows_by_path['ambient/Tough Road.mp3']['asset_id']}/tags",
+        json={"tags": ["combat", "tough"]},
+    )
+    client.put(
+        f"/api/assets/{rows_by_path['combat_boss/Tough Fight.png']['asset_id']}/tags",
+        json={"tags": ["combat", "tough"]},
+    )
+
+    response = client.post(
+        "/api/assets/query",
+        json={
+            "media_type": "audio",
+            "source_ids": ["music"],
+            "directory_prefix": "combat_boss",
+            "where": {
+                "and": [
+                    {"tag": "combat"},
+                    {"or": [{"tag": "boss"}, {"tag": "tough"}]},
+                    {"not": {"tag": "vocals"}},
+                ]
+            },
+            "limit": 1,
+            "offset": 0,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 1
+    assert body["next_offset"] == 1
+    assert body["has_more"] is False
+    asset = body["assets"][0]
+    row = rows_by_path["combat_boss/Tough Fight.mp3"]
+    assert asset["asset_id"] == row["asset_id"]
+    assert asset["source_id"] == "music"
+    assert asset["relative_path"] == "combat_boss/Tough Fight.mp3"
+    assert asset["filename"] == "Tough Fight.mp3"
+    assert asset["media_type"] == "audio"
+    assert asset["size_bytes"] == row["size_bytes"]
+    assert asset["mtime_ns"] == row["mtime_ns"]
+    assert asset["duration_seconds"] is None
+    assert asset["absolute_path"] == row["absolute_path"]
+    assert asset["tags"] == [
+        {"slug": "combat", "label": "combat"},
+        {"slug": "tough", "label": "tough"},
+    ]
+    assert asset["actions"]["download"] == {
+        "id": "download",
+        "label": "Download",
+        "url": f"/api/assets/{row['asset_id']}/file?download=1",
+    }
+    assert asset["actions"]["copy_path"]["value"] == row["absolute_path"]
+
+
+def test_api_rejects_invalid_asset_query_where_clause(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    write_image(source_root / "Goblin.png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+    rebuild_search_corpus(config, db_path)
+    client = TestClient(create_app(config, db_path))
+
+    response = client.post(
+        "/api/assets/query",
+        json={"where": {"and": []}},
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "and must contain at least one clause"}
+
+
 def test_api_prunes_unused_tag_definitions(tmp_path: Path) -> None:
     source_root = tmp_path / "assets"
     source_root.mkdir()

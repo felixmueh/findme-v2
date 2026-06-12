@@ -947,15 +947,30 @@ def test_api_result_totals_ignore_limit_and_offset(tmp_path: Path) -> None:
     rebuild_search_corpus(config, db_path)
     client = TestClient(create_app(config, db_path))
 
+    assets_api_body = client.get("/api/assets", params={"limit": 1, "offset": 1}).json()
     assets_body = client.get("/api/search", params={"limit": 1, "offset": 1}).json()
     search_body = client.get("/api/search", params={"q": "goblin", "limit": 1, "offset": 1}).json()
+    directories_body = client.get(
+        "/api/search-with-directory-counts",
+        params={"limit": 1, "offset": 1},
+    ).json()
 
+    assert assets_api_body["total"] == 3
+    assert len(assets_api_body["cards"]) == 1
+    assert assets_api_body["next_offset"] == 2
+    assert assets_api_body["has_more"] is True
     assert assets_body["total"] == 3
     assert len(assets_body["cards"]) == 1
     assert assets_body["next_offset"] == 2
+    assert assets_body["has_more"] is True
     assert search_body["total"] == 2
     assert len(search_body["cards"]) == 1
     assert search_body["next_offset"] == 2
+    assert search_body["has_more"] is False
+    assert directories_body["total"] == 3
+    assert len(directories_body["cards"]) == 1
+    assert directories_body["next_offset"] == 2
+    assert directories_body["has_more"] is True
 
 
 def test_api_search_paginates_grouped_cards_without_repeating_collection_keys(

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Callable
 from pathlib import Path
 import sqlite3
 import threading
 import time
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException, Query
@@ -106,6 +107,15 @@ class BatchTagsRequest(BaseModel):
     scope: BatchTagsScope | None = None
     add_tags: list[str] = Field(default_factory=list)
     remove_tags: list[str] = Field(default_factory=list)
+
+
+class AssetQueryRequest(BaseModel):
+    media_type: Literal["image", "video", "audio", "other"] | None = None
+    source_ids: list[str] = Field(default_factory=list)
+    directory_prefix: str | None = None
+    where: dict[str, Any] | None = None
+    limit: int = Field(default=100, ge=1, le=500)
+    offset: int = Field(default=0, ge=0)
 
 
 def create_app(
@@ -372,7 +382,52 @@ def create_app(
                 "cards": _cards_with_tags(metadata_database_path, cards),
                 "total": total,
                 "next_offset": next_offset,
-                "has_more": next_offset < total,
+                "has_more": _has_more(next_offset, total),
+            }
+        )
+
+    @app.post("/api/assets/query")
+    def query_assets(request: AssetQueryRequest) -> JSONResponse:
+        try:
+            tag_predicate = _compile_tag_where(request.where)
+            _validate_source_ids(config, request.source_ids)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        source_ids = set(request.source_ids)
+        current_asset_ids = tuple(asset.asset_id for asset in search_index.assets)
+        tags_by_asset_id = _tags_by_asset_id_for_asset_ids(
+            metadata_database_path,
+            current_asset_ids,
+        )
+        matching_asset_ids = [
+            asset.asset_id
+            for asset in search_index.assets
+            if (request.media_type is None or asset.media_type == request.media_type)
+            and (not source_ids or asset.source_id in source_ids)
+            and _asset_matches_directory_prefix(asset, request.directory_prefix)
+            and tag_predicate(_tag_slugs(tags_by_asset_id.get(asset.asset_id, [])))
+        ]
+        total = len(matching_asset_ids)
+        page_asset_ids = matching_asset_ids[request.offset : request.offset + request.limit]
+        page_tags_by_asset_id = {
+            asset_id: tags_by_asset_id.get(asset_id, []) for asset_id in page_asset_ids
+        }
+        with connect(database_path) as db:
+            assets = [
+                _asset_query_response(
+                    config,
+                    _load_asset_or_404(db, config, asset_id),
+                    page_tags_by_asset_id.get(asset_id, []),
+                )
+                for asset_id in page_asset_ids
+            ]
+        next_offset = request.offset + len(assets)
+        return JSONResponse(
+            {
+                "assets": assets,
+                "total": total,
+                "next_offset": next_offset,
+                "has_more": _has_more(next_offset, total),
             }
         )
 
@@ -412,8 +467,14 @@ def create_app(
             offset=offset,
             limit=limit,
         )
+        next_offset = offset + len(cards)
         return JSONResponse(
-            {"cards": _cards_with_tags(metadata_database_path, cards), "total": total}
+            {
+                "cards": _cards_with_tags(metadata_database_path, cards),
+                "total": total,
+                "next_offset": next_offset,
+                "has_more": _has_more(next_offset, total),
+            }
         )
 
     @app.get("/api/search-profiles")
@@ -580,11 +641,13 @@ def create_app(
                 offset=offset,
                 limit=limit,
             )
+            next_offset = offset + len(cards)
             return JSONResponse(
                 {
                     "cards": _cards_with_tags(metadata_database_path, cards),
                     "total": total,
-                    "next_offset": offset + len(cards),
+                    "next_offset": next_offset,
+                    "has_more": _has_more(next_offset, total),
                 }
             )
         domain_vocabulary = _load_domain_vocabulary(config)
@@ -686,11 +749,13 @@ def create_app(
                 offset=offset,
                 limit=limit,
             )
+            next_offset = offset + len(cards)
             return JSONResponse(
                 {
                     "cards": _cards_with_tags(metadata_database_path, cards),
                     "total": total,
-                    "next_offset": offset + len(cards),
+                    "next_offset": next_offset,
+                    "has_more": _has_more(next_offset, total),
                     **_directory_payload(
                         config,
                         directories,
@@ -911,6 +976,84 @@ def _trimmed_query(query: str | None) -> str:
     return query.strip() if query is not None else ""
 
 
+def _has_more(next_offset: int, total: int) -> bool:
+    return next_offset < total
+
+
+def _validate_source_ids(config: AppConfig, source_ids: list[str]) -> None:
+    configured_source_ids = {source.id for source in config.sources}
+    unknown = sorted(set(source_ids).difference(configured_source_ids))
+    if unknown:
+        raise ValueError(f"unknown source_id: {unknown[0]}")
+
+
+def _asset_matches_directory_prefix(asset, directory_prefix: str | None) -> bool:
+    if not directory_prefix:
+        return True
+    return asset.directory == directory_prefix or asset.directory.startswith(
+        f"{directory_prefix}/"
+    )
+
+
+TagPredicate = Callable[[set[str]], bool]
+
+_MAX_TAG_WHERE_DEPTH = 8
+_MAX_TAG_WHERE_LEAVES = 100
+
+
+def _compile_tag_where(where: dict[str, Any] | None) -> TagPredicate:
+    if where is None:
+        return lambda _tags: True
+    leaf_count = _validate_tag_where(where)
+    if leaf_count > _MAX_TAG_WHERE_LEAVES:
+        raise ValueError(f"where may contain at most {_MAX_TAG_WHERE_LEAVES} tag clauses")
+
+    def predicate(tags: set[str]) -> bool:
+        return _tag_where_matches(where, tags)
+
+    return predicate
+
+
+def _validate_tag_where(where: object, *, depth: int = 0) -> int:
+    if depth > _MAX_TAG_WHERE_DEPTH:
+        raise ValueError(f"where may be nested at most {_MAX_TAG_WHERE_DEPTH} levels")
+    if not isinstance(where, dict):
+        raise ValueError("where clause must be an object")
+    if len(where) != 1:
+        raise ValueError("where clause must contain exactly one operator")
+    operator, value = next(iter(where.items()))
+    if operator == "tag":
+        if not isinstance(value, str) or not value:
+            raise ValueError("tag must be a non-empty string")
+        return 1
+    if operator in {"and", "or"}:
+        if not isinstance(value, list):
+            raise ValueError(f"{operator} must contain a list of clauses")
+        if not value:
+            raise ValueError(f"{operator} must contain at least one clause")
+        return sum(_validate_tag_where(item, depth=depth + 1) for item in value)
+    if operator == "not":
+        return _validate_tag_where(value, depth=depth + 1)
+    raise ValueError(f"unsupported where operator: {operator}")
+
+
+def _tag_where_matches(where: dict[str, Any], tags: set[str]) -> bool:
+    operator, value = next(iter(where.items()))
+    if operator == "tag":
+        return value in tags
+    if operator == "and":
+        return all(_tag_where_matches(item, tags) for item in value)
+    if operator == "or":
+        return any(_tag_where_matches(item, tags) for item in value)
+    if operator == "not":
+        return not _tag_where_matches(value, tags)
+    raise AssertionError(f"validated where operator became unsupported: {operator}")
+
+
+def _tag_slugs(tags: list[dict[str, str]]) -> set[str]:
+    return {tag["slug"] for tag in tags}
+
+
 def _load_asset_or_404(db: sqlite3.Connection, config: AppConfig, asset_id: str):
     try:
         return get_asset(db, config, asset_id)
@@ -1016,6 +1159,53 @@ def _tags_by_asset_id_for_cards(
     return tags_by_asset_id
 
 
+def _tags_by_asset_id_for_asset_ids(
+    metadata_database_path: Path,
+    asset_ids: tuple[str, ...],
+) -> dict[str, list[dict[str, str]]]:
+    wanted_asset_ids = set(asset_ids)
+    if not wanted_asset_ids or not metadata_database_path.is_file():
+        return {}
+    with connect_metadata(metadata_database_path) as metadata_db:
+        initialize_metadata_database(metadata_db)
+        rows = metadata_db.execute(
+            """
+            SELECT
+              metadata_file_locations.asset_id,
+              tags.slug,
+              tags.label
+            FROM metadata_file_locations
+            JOIN file_tags ON file_tags.file_id = metadata_file_locations.file_id
+            JOIN tags ON tags.tag_id = file_tags.tag_id
+            WHERE metadata_file_locations.asset_id IS NOT NULL
+              AND metadata_file_locations.missing_at IS NULL
+            ORDER BY
+              metadata_file_locations.asset_id,
+              CASE
+                WHEN tags.slug GLOB '[0-9]*' AND tags.slug NOT GLOB '*[^0-9]*'
+                THEN 0
+                ELSE 1
+              END,
+              CASE
+                WHEN tags.slug GLOB '[0-9]*' AND tags.slug NOT GLOB '*[^0-9]*'
+                THEN CAST(tags.slug AS INTEGER)
+                ELSE 0
+              END,
+              tags.label COLLATE NOCASE,
+              tags.slug
+            """
+        ).fetchall()
+    tags_by_asset_id: dict[str, list[dict[str, str]]] = {}
+    for row in rows:
+        asset_id = row["asset_id"]
+        if asset_id not in wanted_asset_ids:
+            continue
+        tags_by_asset_id.setdefault(asset_id, []).append(
+            {"slug": row["slug"], "label": row["label"]}
+        )
+    return tags_by_asset_id
+
+
 def _asset_ids_for_cards(cards: list[dict[str, object]]) -> list[str]:
     asset_ids: list[str] = []
     for card in cards:
@@ -1028,6 +1218,19 @@ def _asset_ids_for_cards(cards: list[dict[str, object]]) -> list[str]:
         for asset in card["variants"]:  # type: ignore[union-attr]
             asset_ids.append(str(asset["asset_id"]))
     return asset_ids
+
+
+def _asset_query_response(
+    config: AppConfig,
+    asset,
+    tags: list[dict[str, str]],
+) -> dict[str, object]:
+    response = asset_response(asset)
+    response["mtime_ns"] = asset.mtime_ns
+    response["absolute_path"] = str(asset.absolute_path)
+    response["tags"] = tags
+    response["actions"] = asset_actions(config, asset)
+    return response
 
 
 def _search_response(result: SearchResult) -> dict[str, object]:

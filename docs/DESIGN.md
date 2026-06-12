@@ -453,8 +453,10 @@ V1 precomputes named derivatives rather than arbitrary sizes. Exact sizes are im
 ## Tagging Experience
 
 Tags are durable user-authored metadata. V1 tagging should focus on applying
-and removing tags, not on filtering or search behavior. Tag filtering and
-tag-aware search can be added later through a separate search design pass.
+and removing tags in the browser UI, with exact tag queries available through
+the server API for integrations and automation. Exact tag queries are separate
+from text search: a tag predicate matches normalized tag slugs, while `/api/search`
+remains for manual fuzzy/domain search and discovery.
 
 The UI should support tagging the selected asset and tagging a multi-selection
 of assets. Multi-selection is in scope specifically so a user can tag a range of
@@ -465,6 +467,39 @@ bulk copy actions, deletes, moves, or edits.
 Applying a tag to many assets should hash only the assets that receive metadata.
 The operation can be explicit and progress-reporting if needed; it should not
 turn normal browsing or indexing into a full-library hashing pass.
+
+Machine-oriented asset selection should use `POST /api/assets/query`. The query
+can combine top-level indexed filters, such as media type, source ids, and a
+directory subtree, with a tag-only boolean `where` expression:
+
+```json
+{
+  "media_type": "audio",
+  "source_ids": ["music"],
+  "directory_prefix": "combat_boss",
+  "where": {
+    "and": [
+      {"tag": "combat"},
+      {"or": [{"tag": "boss"}, {"tag": "tough"}]},
+      {"not": {"tag": "vocals"}}
+    ]
+  },
+  "limit": 50,
+  "offset": 0
+}
+```
+
+The supported tag expression grammar is deliberately small: `tag`, `and`, `or`,
+and `not`. Empty `and`/`or` clauses are invalid. Ranking, preference boosts,
+least-recently-used rotation, and anti-repetition policy belong in the calling
+application, not in FindMe's exact catalog query API.
+
+`GET /api/tags/{slug}/assets` remains available as a simple single-tag,
+card-shaped lookup and debugging endpoint. New integrations should prefer
+`POST /api/assets/query` for exact tag selection, including the single-tag case,
+because it returns flat cache-ready assets and supports boolean tag logic. Do
+not add new selector behavior to `/api/tags/{slug}/assets`; if it stops serving
+a concrete UI/debugging need, it can be removed in a later cleanup.
 
 ## Layout
 
