@@ -60,6 +60,11 @@ Current implementation status:
 - `fuzzy`: typo/separator-tolerant matching using RapidFuzz over indexed filename/path data.
 - `domain`: query-time vocabulary expansion from `config/search-vocabulary.yaml` or the configured `[search].domain_vocabulary` path.
 
+TODO: decide whether user-authored tags should become searchable keyword
+evidence. This is separate from exact tag filtering. If tags become keyword
+evidence, prefer a design that keeps tag edits visible without requiring a full
+search corpus rebuild, such as a runtime tag lane or metadata overlay.
+
 SQLite is durable storage for indexed assets, not the interactive search path. The
 running app loads the indexed rows into a process-local in-memory search
 representation at startup. Interactive search, ranking, and matched directory
