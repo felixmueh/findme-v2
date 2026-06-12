@@ -435,12 +435,16 @@ class SearchIndex:
 
         if source_id is None and directory is None and directory_prefix is None:
             if preferences.included_asset_index_order is not None:
-                return np.fromiter(
+                indexes = np.fromiter(
                     preferences.included_asset_index_order,
                     dtype=np.int32,
                     count=len(preferences.included_asset_index_order),
                 )
-            return np.arange(len(self.assets), dtype=np.int32)
+            else:
+                indexes = np.arange(len(self.assets), dtype=np.int32)
+            if preferences.included_asset_mask is not None:
+                indexes = indexes[preferences.included_asset_mask[indexes]]
+            return indexes
 
         if source_id is not None and directory is None:
             indexes = np.fromiter(
@@ -704,12 +708,48 @@ class SearchIndex:
         directory: str | None = None,
         directory_prefix: str | None = None,
         preferences: SearchPreferences | None = None,
+        match_asset_mask: np.ndarray | None = None,
         dirty_folder_subtree_keys: frozenset[tuple[str, str]] = frozenset(),
         descendant_whitelist_keys: frozenset[tuple[str, str]] = frozenset(),
         descendant_blacklist_keys: frozenset[tuple[str, str]] = frozenset(),
         control: SearchControl | None = None,
     ) -> list[dict[str, object]]:
         preferences = preferences or empty_search_preferences(self.assets)
+        if match_asset_mask is not None:
+            match_asset_indexes = self._asset_index_array_for_scope(
+                source_id=source_id,
+                directory=directory,
+                directory_prefix=directory_prefix,
+                preferences=empty_search_preferences(self.assets),
+                control=control,
+            )
+            match_asset_indexes = match_asset_indexes[
+                match_asset_mask[match_asset_indexes]
+            ]
+            match_counts = self._directory_count_array_for_asset_indexes(
+                match_asset_indexes
+            )
+            included_counts = (
+                match_counts
+                if preferences.included_asset_mask is None
+                else self._directory_count_array_for_asset_indexes(
+                    self._asset_index_array_for_scope(
+                        source_id=source_id,
+                        directory=directory,
+                        directory_prefix=directory_prefix,
+                        preferences=preferences,
+                        control=control,
+                    )
+                )
+            )
+            return self._directory_responses_from_count_arrays(
+                match_counts,
+                included_counts,
+                preferences=preferences,
+                dirty_folder_subtree_keys=dirty_folder_subtree_keys,
+                descendant_whitelist_keys=descendant_whitelist_keys,
+                descendant_blacklist_keys=descendant_blacklist_keys,
+            )
         if directory is None and directory_prefix is None:
             match_counts = (
                 self.directory_runtime.asset_counts
@@ -801,6 +841,7 @@ class SearchIndex:
         directory: str | None = None,
         directory_prefix: str | None = None,
         preferences: SearchPreferences | None = None,
+        match_asset_mask: np.ndarray | None = None,
         domain_vocabulary: DomainVocabulary | None = None,
         mode: SearchMode = "strict",
         dirty_folder_subtree_keys: frozenset[tuple[str, str]] = frozenset(),
@@ -815,6 +856,7 @@ class SearchIndex:
             directory=directory,
             directory_prefix=directory_prefix,
             preferences=preferences,
+            match_asset_mask=match_asset_mask,
             domain_vocabulary=domain_vocabulary or DEFAULT_DOMAIN_VOCABULARY,
             mode=mode,
             control=control,
@@ -972,6 +1014,7 @@ class SearchIndex:
         directory: str | None = None,
         directory_prefix: str | None = None,
         preferences: SearchPreferences,
+        match_asset_mask: np.ndarray | None = None,
         domain_vocabulary: DomainVocabulary,
         mode: SearchMode,
         control: SearchControl | None = None,
@@ -985,14 +1028,19 @@ class SearchIndex:
             mode=mode,
             control=control,
         )
+        match_asset_indexes = matches.asset_indexes
+        if match_asset_mask is not None:
+            match_asset_indexes = match_asset_indexes[
+                match_asset_mask[match_asset_indexes]
+            ]
         match_counts = self._directory_count_array_for_asset_indexes(
-            matches.asset_indexes
+            match_asset_indexes
         )
         selection = preferences.included_asset_mask
         included_indexes = (
-            matches.asset_indexes
+            match_asset_indexes
             if selection is None
-            else matches.asset_indexes[selection[matches.asset_indexes]]
+            else match_asset_indexes[selection[match_asset_indexes]]
         )
         included_counts = (
             match_counts

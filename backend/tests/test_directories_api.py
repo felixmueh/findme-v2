@@ -8,7 +8,7 @@ from findme.db import connect, initialize_database
 from findme.indexer import index_sources
 from findme.search_corpus import rebuild_search_corpus
 
-from helpers import write_image
+from helpers import directory_query, write_image
 
 
 def _stable_directory(directory: dict[str, object]) -> dict[str, object]:
@@ -51,7 +51,7 @@ def test_api_lists_indexed_directory_tree(tmp_path: Path) -> None:
         index_sources(db, config)
     rebuild_search_corpus(config, db_path)
     client = TestClient(create_app(config, db_path))
-    body = client.get("/api/search-with-directory-counts", params={"source_id": "dnd"}).json()
+    body = directory_query(client, {"source_id": "dnd"}).json()
 
     assert [_stable_directory(directory) for directory in body["directories"]] == [
         {
@@ -130,7 +130,7 @@ def test_api_directory_rows_include_configured_file_browser_urls(tmp_path: Path)
     rebuild_search_corpus(config, db_path)
     client = TestClient(create_app(config, db_path))
 
-    directories = client.get("/api/search-with-directory-counts").json()["directories"]
+    directories = directory_query(client).json()["directories"]
     urls_by_path = {
         directory["path"]: directory["file_browser_url"] for directory in directories
     }
@@ -164,7 +164,7 @@ def test_api_lists_only_directories_with_search_matches(tmp_path: Path) -> None:
         index_sources(db, config)
     rebuild_search_corpus(config, db_path)
     client = TestClient(create_app(config, db_path))
-    body = client.get("/api/search-with-directory-counts", params={"source_id": "dnd", "q": "goblin"}).json()
+    body = directory_query(client, {"source_id": "dnd", "q": "goblin"}).json()
 
     assert [_stable_directory(directory) for directory in body["directories"]] == [
         {
@@ -240,7 +240,7 @@ def test_api_directory_rows_are_source_scoped_for_all_sources(tmp_path: Path) ->
         index_sources(db, config)
     rebuild_search_corpus(config, db_path)
     client = TestClient(create_app(config, db_path))
-    body = client.get("/api/search-with-directory-counts").json()
+    body = directory_query(client).json()
 
     assert [_stable_directory(directory) for directory in body["directories"]] == [
         {

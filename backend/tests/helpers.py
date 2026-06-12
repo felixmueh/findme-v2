@@ -2,6 +2,7 @@ from pathlib import Path
 import subprocess
 
 from PIL import Image
+from fastapi.testclient import TestClient
 
 
 def write_image(path: Path, *, size: tuple[int, int] = (32, 24), alpha: int = 255) -> None:
@@ -54,3 +55,13 @@ def write_audio(path: Path, *, duration_seconds: float = 2.0) -> None:
         ],
         check=True,
     )
+
+
+def search_query(client: TestClient, params: dict[str, object] | None = None):
+    return client.post("/api/search/query", json=params or {})
+
+
+def directory_query(client: TestClient, params: dict[str, object] | None = None):
+    body = dict(params or {})
+    body["result_shape"] = "directories"
+    return client.post("/api/search/query", json=body)

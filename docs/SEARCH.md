@@ -89,6 +89,7 @@ The normal serving shape is:
 ```text
 retrieval lane -> asset_indexes + raw_scores arrays
 profile mask -> filter included assets
+tag/media masks -> filter included assets
 importance array -> add score adjustment
 top-k page -> only materialize returned assets
 directory ids -> bincount + parent rollup
@@ -97,6 +98,11 @@ API directory rows -> build response dicts directly
 
 Strict, fuzzy, and domain search all feed this same shape. Their semantic
 difference is retrieval, not separate ranking/paging/directory-count machinery.
+Exact tag predicates are hard filters, not retrieval lanes and not lexical
+evidence. At request time, the API validates the tag boolean AST, loads current
+metadata rows for the mentioned tag slugs with a small fixed number of SQLite
+queries, builds a boolean asset mask, and applies that mask through the same
+preference/filter machinery before paging and response materialization.
 
 Keep the code simple by removing old hot-path contracts instead of preserving
 parallel implementations. Normal API search should not build full ranked
@@ -232,6 +238,7 @@ Default behavior should be soft-ranked rather than strict Boolean filtering:
 - exact and all-token matches should rank highly
 - partial, fuzzy, infix, and domain-expanded matches can still appear lower
 - tree/source selection is a hard filter
+- exact tag predicates are hard filters
 
 Advanced query syntax, explicit Boolean operators, and quoted phrase behavior are deferred until real usage shows they are needed.
 

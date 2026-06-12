@@ -205,10 +205,9 @@ only `search_session`.
 - Duplicate rules for the same node should be rejected or last-write-wins consistently; rejecting is preferred because it surfaces client bugs.
 - Multiple whitelist rules in the same source subtree are allowed. The backend derives which ones are effective and should expose enough state for the UI to show superseded whitelist rows.
 
-The same parameter should be accepted by:
-
-- `GET /api/search`
-- `GET /api/search-with-directory-counts`
+The same scope fields should be accepted by `POST /api/search/query`. Clients
+that need directory rows should set `include_directories`; clients that only
+need folder state should set `result_shape` to `directories`.
 
 Transient directory views should be represented explicitly by the frontend and
 compiled by the backend into the same numeric runtime data as profile selection.

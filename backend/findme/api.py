@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 import sqlite3
 import threading
@@ -12,6 +13,7 @@ from urllib.parse import quote
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+import numpy as np
 from pydantic import BaseModel, Field
 
 from findme.assets import (
@@ -27,11 +29,9 @@ from findme.db import connect
 from findme.metadata import (
     MetadataValidationError,
     add_asset_tags,
-    asset_ids_for_tag,
     list_tags,
     remove_asset_tags,
     set_asset_tags,
-    tag_by_slug,
     tag_response,
     tags_for_asset,
 )
@@ -109,11 +109,21 @@ class BatchTagsRequest(BaseModel):
     remove_tags: list[str] = Field(default_factory=list)
 
 
-class AssetQueryRequest(BaseModel):
-    media_type: Literal["image", "video", "audio", "other"] | None = None
-    source_ids: list[str] = Field(default_factory=list)
+class SearchQueryRequest(BaseModel):
+    q: str | None = None
+    mode: SearchMode = "strict"
+    source_id: str | None = None
+    directory: str | None = None
     directory_prefix: str | None = None
+    view_source_id: str | None = None
+    view_directory: str | None = None
+    search_session: str | None = None
+    search_revision: int | None = None
+    media_type: Literal["image", "video", "audio", "other"] | None = None
     where: dict[str, Any] | None = None
+    result_shape: Literal["cards", "assets", "directories"] = "cards"
+    include_directories: bool = False
+    directory_state_only: bool = False
     limit: int = Field(default=100, ge=1, le=500)
     offset: int = Field(default=0, ge=0)
 
@@ -295,6 +305,62 @@ def create_app(
                 return cards, page.total, offset + len(cards), not raw_exhausted
             raw_limit = min(page.total, raw_limit + max(limit, raw_limit))
 
+    def asset_page_for_query(
+        *,
+        query: str,
+        mode: SearchMode,
+        source_id: str | None,
+        directory: str | None,
+        directory_prefix: str | None,
+        preferences,
+        domain_vocabulary,
+        offset: int,
+        limit: int,
+        control: SearchControl | None,
+    ) -> tuple[list[dict[str, object]], int]:
+        if not query:
+            asset_indexes = search_index.browse_asset_index_array(
+                source_id=source_id,
+                directory=directory,
+                directory_prefix=directory_prefix,
+                preferences=preferences,
+                control=control,
+            )
+            total = len(asset_indexes)
+            page_asset_indexes = asset_indexes[offset : offset + limit]
+        else:
+            page = search_index.search_asset_index_page(
+                query,
+                source_id=source_id,
+                directory=directory,
+                directory_prefix=directory_prefix,
+                preferences=preferences,
+                domain_vocabulary=domain_vocabulary,
+                mode=mode,
+                limit=limit,
+                offset=offset,
+                control=control,
+            )
+            total = page.total
+            page_asset_indexes = page.asset_indexes
+        page_asset_ids = tuple(
+            search_index.assets[int(asset_index)].asset_id
+            for asset_index in page_asset_indexes
+        )
+        tags_by_asset_id = _tags_by_asset_id_for_page_asset_ids(
+            metadata_database_path,
+            page_asset_ids,
+        )
+        with connect(database_path) as db:
+            return [
+                _asset_query_response(
+                    config,
+                    _load_asset_or_404(db, config, asset_id),
+                    tags_by_asset_id.get(asset_id, []),
+                )
+                for asset_id in page_asset_ids
+            ], total
+
     def _asset_ids_for_batch_scope(scope: BatchTagsScope) -> tuple[str, ...]:
         if scope.kind == "folder":
             if scope.source_id is None:
@@ -366,82 +432,145 @@ def create_app(
             initialize_metadata_database(metadata_db)
             return {"tags": [tag_response(tag) for tag in list_tags(metadata_db)]}
 
-    @app.get("/api/tags/{slug}/assets")
-    def list_assets_for_tag(
-        slug: str,
-        limit: int = Query(default=100, ge=1, le=500),
-        offset: int = Query(default=0, ge=0),
-    ) -> JSONResponse:
-        if not metadata_database_path.is_file():
-            raise HTTPException(status_code=404, detail="tag not found")
-        with connect_metadata(metadata_database_path) as metadata_db:
-            initialize_metadata_database(metadata_db)
-            tag = tag_by_slug(metadata_db, slug)
-            if tag is None:
-                raise HTTPException(status_code=404, detail="tag not found")
-            tagged_asset_ids = set(asset_ids_for_tag(metadata_db, slug))
-        matching_cards = [
-            {"kind": "asset", "asset": _asset_result_response(asset, score=0.0)}
-            for asset in search_index.assets
-            if asset.asset_id in tagged_asset_ids
-        ]
-        total = len(matching_cards)
-        cards = matching_cards[offset : offset + limit]
-        next_offset = offset + len(cards)
-        return JSONResponse(
-            {
-                "tag": tag_response(tag),
-                "cards": _cards_with_tags(metadata_database_path, cards),
-                "total": total,
-                "next_offset": next_offset,
-                "has_more": _has_more(next_offset, total),
-            }
-        )
-
-    @app.post("/api/assets/query")
-    def query_assets(request: AssetQueryRequest) -> JSONResponse:
+    @app.post("/api/search/query")
+    def query_search(request: SearchQueryRequest) -> object:
         try:
-            tag_predicate = _compile_tag_where(request.where)
-            _validate_source_ids(config, request.source_ids)
+            asset_mask = _asset_filter_mask(
+                metadata_database_path,
+                search_index,
+                media_type=request.media_type,
+                where=request.where,
+            )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        source_ids = set(request.source_ids)
-        current_asset_ids = tuple(asset.asset_id for asset in search_index.assets)
-        tags_by_asset_id = _tags_by_asset_id_for_asset_ids(
-            metadata_database_path,
-            current_asset_ids,
+        source_id, directory, directory_prefix = resolve_view_scope(
+            source_id=request.source_id,
+            directory=request.directory,
+            directory_prefix=request.directory_prefix,
+            view_source_id=request.view_source_id,
+            view_directory=request.view_directory,
         )
-        matching_asset_ids = [
-            asset.asset_id
-            for asset in search_index.assets
-            if (request.media_type is None or asset.media_type == request.media_type)
-            and (not source_ids or asset.source_id in source_ids)
-            and _asset_matches_directory_prefix(asset, request.directory_prefix)
-            and tag_predicate(_tag_slugs(tags_by_asset_id.get(asset.asset_id, [])))
-        ]
-        total = len(matching_asset_ids)
-        page_asset_ids = matching_asset_ids[request.offset : request.offset + request.limit]
-        page_tags_by_asset_id = {
-            asset_id: tags_by_asset_id.get(asset_id, []) for asset_id in page_asset_ids
-        }
         with connect(database_path) as db:
-            assets = [
-                _asset_query_response(
-                    config,
-                    _load_asset_or_404(db, config, asset_id),
-                    page_tags_by_asset_id.get(asset_id, []),
+            try:
+                profile_session, preferences = session_and_preferences(
+                    db,
+                    search_session=request.search_session,
+                    view_source_id=request.view_source_id,
+                    view_directory=request.view_directory,
                 )
-                for asset_id in page_asset_ids
-            ]
-        next_offset = request.offset + len(assets)
-        return JSONResponse(
-            {
-                "assets": assets,
-                "total": total,
-                "next_offset": next_offset,
-                "has_more": _has_more(next_offset, total),
-            }
-        )
+                dirty_folder_subtree_keys = profile_sessions.dirty_folder_subtree_keys(
+                    profile_session
+                )
+                (
+                    descendant_whitelist_keys,
+                    descendant_blacklist_keys,
+                ) = profile_sessions.selection_descendant_rule_keys(profile_session)
+            except SearchProfileValidationError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        preferences = _preferences_with_asset_mask(search_index, preferences, asset_mask)
+        control = search_revisions.control(request.search_session, request.search_revision)
+        if control and control.is_cancelled():
+            return Response(status_code=204)
+        trimmed_query = _trimmed_query(request.q)
+        domain_vocabulary = _load_domain_vocabulary(config) if trimmed_query else None
+        try:
+            directories = None
+            if request.include_directories or request.result_shape == "directories":
+                if trimmed_query:
+                    directories = search_index.directory_responses_for_search(
+                        trimmed_query,
+                        source_id=source_id,
+                        directory=directory,
+                        directory_prefix=directory_prefix,
+                        preferences=preferences,
+                        match_asset_mask=asset_mask,
+                        domain_vocabulary=domain_vocabulary,
+                        mode=request.mode,
+                        dirty_folder_subtree_keys=dirty_folder_subtree_keys,
+                        descendant_whitelist_keys=descendant_whitelist_keys,
+                        descendant_blacklist_keys=descendant_blacklist_keys,
+                        control=control,
+                    )
+                else:
+                    directories = search_index.directory_responses_for_scope(
+                        preferences=preferences,
+                        source_id=source_id,
+                        directory=directory,
+                        directory_prefix=directory_prefix,
+                        dirty_folder_subtree_keys=dirty_folder_subtree_keys,
+                        match_asset_mask=asset_mask,
+                        descendant_whitelist_keys=descendant_whitelist_keys,
+                        descendant_blacklist_keys=descendant_blacklist_keys,
+                        control=control,
+                    )
+            if request.result_shape == "directories":
+                payload: dict[str, object] = {}
+            elif request.result_shape == "assets":
+                assets, total = asset_page_for_query(
+                    query=trimmed_query,
+                    mode=request.mode,
+                    source_id=source_id,
+                    directory=directory,
+                    directory_prefix=directory_prefix,
+                    preferences=preferences,
+                    domain_vocabulary=domain_vocabulary,
+                    offset=request.offset,
+                    limit=request.limit,
+                    control=control,
+                )
+                next_offset = request.offset + len(assets)
+                payload: dict[str, object] = {
+                    "assets": assets,
+                    "total": total,
+                    "next_offset": next_offset,
+                    "has_more": _has_more(next_offset, total),
+                }
+            elif not trimmed_query:
+                cards, total = card_page_for_browse_scope(
+                    preferences=preferences,
+                    source_id=source_id,
+                    directory=directory,
+                    directory_prefix=directory_prefix,
+                    offset=request.offset,
+                    limit=request.limit,
+                )
+                next_offset = request.offset + len(cards)
+                payload = {
+                    "cards": _cards_with_tags(metadata_database_path, cards),
+                    "total": total,
+                    "next_offset": next_offset,
+                    "has_more": _has_more(next_offset, total),
+                }
+            else:
+                cards, total, next_offset, has_more = card_page_for_search(
+                    query=trimmed_query,
+                    mode=request.mode,
+                    source_id=source_id,
+                    directory=directory,
+                    directory_prefix=directory_prefix,
+                    preferences=preferences,
+                    domain_vocabulary=domain_vocabulary,
+                    offset=request.offset,
+                    limit=request.limit,
+                    control=control,
+                )
+                payload = {
+                    "cards": _cards_with_tags(metadata_database_path, cards),
+                    "total": total,
+                    "next_offset": next_offset,
+                    "has_more": has_more,
+                }
+        except SearchSuperseded:
+            return Response(status_code=204)
+        if directories is not None:
+            payload.update(
+                _directory_payload(
+                    config,
+                    directories,
+                    state_only=request.directory_state_only,
+                )
+            )
+        return JSONResponse(payload)
 
     @app.get("/api/assets")
     def list_assets(
@@ -609,239 +738,6 @@ def create_app(
             )
             return {"session": profile_sessions.session_response(session)}
 
-    @app.get("/api/search")
-    def search(
-        q: str | None = None,
-        mode: SearchMode = "strict",
-        source_id: str | None = None,
-        directory: str | None = None,
-        directory_prefix: str | None = None,
-        view_source_id: str | None = None,
-        view_directory: str | None = None,
-        limit: int = Query(default=100, ge=1, le=500),
-        offset: int = Query(default=0, ge=0),
-        search_session: str | None = None,
-        search_revision: int | None = None,
-    ) -> object:
-        source_id, directory, directory_prefix = resolve_view_scope(
-            source_id=source_id,
-            directory=directory,
-            directory_prefix=directory_prefix,
-            view_source_id=view_source_id,
-            view_directory=view_directory,
-        )
-        with connect(database_path) as db:
-            try:
-                _profile_session, preferences = session_and_preferences(
-                    db,
-                    search_session=search_session,
-                    view_source_id=view_source_id,
-                    view_directory=view_directory,
-                )
-            except SearchProfileValidationError as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
-        control = search_revisions.control(search_session, search_revision)
-        if control and control.is_cancelled():
-            return Response(status_code=204)
-        trimmed_query = _trimmed_query(q)
-        if not trimmed_query:
-            cards, total = card_page_for_browse_scope(
-                preferences=preferences,
-                source_id=source_id,
-                directory=directory,
-                directory_prefix=directory_prefix,
-                offset=offset,
-                limit=limit,
-            )
-            next_offset = offset + len(cards)
-            return JSONResponse(
-                {
-                    "cards": _cards_with_tags(metadata_database_path, cards),
-                    "total": total,
-                    "next_offset": next_offset,
-                    "has_more": _has_more(next_offset, total),
-                }
-            )
-        domain_vocabulary = _load_domain_vocabulary(config)
-        try:
-            cards, total, next_offset, has_more = card_page_for_search(
-                query=trimmed_query,
-                mode=mode,
-                source_id=source_id,
-                directory=directory,
-                directory_prefix=directory_prefix,
-                preferences=preferences,
-                domain_vocabulary=domain_vocabulary,
-                offset=offset,
-                limit=limit,
-                control=control,
-            )
-        except SearchSuperseded:
-            return Response(status_code=204)
-        return JSONResponse(
-            {
-                "cards": _cards_with_tags(metadata_database_path, cards),
-                "total": total,
-                "next_offset": next_offset,
-                "has_more": has_more,
-            }
-        )
-
-    @app.get("/api/search-with-directory-counts")
-    def search_with_directory_counts(
-        q: str | None = None,
-        mode: SearchMode = "strict",
-        source_id: str | None = None,
-        directory: str | None = None,
-        directory_prefix: str | None = None,
-        view_source_id: str | None = None,
-        view_directory: str | None = None,
-        limit: int = Query(default=100, ge=1, le=500),
-        offset: int = Query(default=0, ge=0),
-        search_session: str | None = None,
-        search_revision: int | None = None,
-        directory_state_only: bool = False,
-        directory_only: bool = False,
-    ) -> object:
-        source_id, directory, directory_prefix = resolve_view_scope(
-            source_id=source_id,
-            directory=directory,
-            directory_prefix=directory_prefix,
-            view_source_id=view_source_id,
-            view_directory=view_directory,
-        )
-        with connect(database_path) as db:
-            try:
-                profile_session, preferences = session_and_preferences(
-                    db,
-                    search_session=search_session,
-                    view_source_id=view_source_id,
-                    view_directory=view_directory,
-                )
-                dirty_folder_subtree_keys = profile_sessions.dirty_folder_subtree_keys(
-                    profile_session
-                )
-                (
-                    descendant_whitelist_keys,
-                    descendant_blacklist_keys,
-                ) = profile_sessions.selection_descendant_rule_keys(profile_session)
-            except SearchProfileValidationError as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
-        control = search_revisions.control(search_session, search_revision)
-        if control and control.is_cancelled():
-            return Response(status_code=204)
-        trimmed_query = _trimmed_query(q)
-        if not trimmed_query:
-            try:
-                directories = search_index.directory_responses_for_scope(
-                    preferences=preferences,
-                    source_id=source_id,
-                    directory=directory,
-                    directory_prefix=directory_prefix,
-                    dirty_folder_subtree_keys=dirty_folder_subtree_keys,
-                    descendant_whitelist_keys=descendant_whitelist_keys,
-                    descendant_blacklist_keys=descendant_blacklist_keys,
-                    control=control,
-                )
-            except SearchSuperseded:
-                return Response(status_code=204)
-            if directory_only:
-                return JSONResponse(
-                    _directory_payload(
-                        config,
-                        directories,
-                        state_only=directory_state_only,
-                    )
-                )
-            cards, total = card_page_for_browse_scope(
-                preferences=preferences,
-                source_id=source_id,
-                directory=directory,
-                directory_prefix=directory_prefix,
-                offset=offset,
-                limit=limit,
-            )
-            next_offset = offset + len(cards)
-            return JSONResponse(
-                {
-                    "cards": _cards_with_tags(metadata_database_path, cards),
-                    "total": total,
-                    "next_offset": next_offset,
-                    "has_more": _has_more(next_offset, total),
-                    **_directory_payload(
-                        config,
-                        directories,
-                        state_only=directory_state_only,
-                    ),
-                }
-            )
-        domain_vocabulary = _load_domain_vocabulary(config)
-        if directory_only:
-            try:
-                directories = search_index.directory_responses_for_search(
-                    trimmed_query,
-                    source_id=source_id,
-                    directory=directory,
-                    directory_prefix=directory_prefix,
-                    preferences=preferences,
-                    domain_vocabulary=domain_vocabulary,
-                    mode=mode,
-                    dirty_folder_subtree_keys=dirty_folder_subtree_keys,
-                    descendant_whitelist_keys=descendant_whitelist_keys,
-                    descendant_blacklist_keys=descendant_blacklist_keys,
-                    control=control,
-                )
-            except SearchSuperseded:
-                return Response(status_code=204)
-            return JSONResponse(
-                _directory_payload(
-                    config,
-                    directories,
-                    state_only=directory_state_only,
-                )
-            )
-        try:
-            directories = search_index.directory_responses_for_search(
-                trimmed_query,
-                source_id=source_id,
-                directory=directory,
-                directory_prefix=directory_prefix,
-                preferences=preferences,
-                domain_vocabulary=domain_vocabulary,
-                mode=mode,
-                dirty_folder_subtree_keys=dirty_folder_subtree_keys,
-                descendant_whitelist_keys=descendant_whitelist_keys,
-                descendant_blacklist_keys=descendant_blacklist_keys,
-                control=control,
-            )
-            cards, total, next_offset, has_more = card_page_for_search(
-                query=trimmed_query,
-                mode=mode,
-                source_id=source_id,
-                directory=directory,
-                directory_prefix=directory_prefix,
-                preferences=preferences,
-                domain_vocabulary=domain_vocabulary,
-                offset=offset,
-                limit=limit,
-                control=control,
-            )
-        except SearchSuperseded:
-            return Response(status_code=204)
-        return JSONResponse(
-            {
-                "cards": _cards_with_tags(metadata_database_path, cards),
-                "total": total,
-                "next_offset": next_offset,
-                "has_more": has_more,
-                **_directory_payload(
-                    config,
-                    directories,
-                    state_only=directory_state_only,
-                ),
-            }
-        )
-
     @app.get("/api/assets/{asset_id}")
     def asset_detail(asset_id: str) -> dict[str, object]:
         with connect(database_path) as db:
@@ -990,21 +886,6 @@ def _has_more(next_offset: int, total: int) -> bool:
     return next_offset < total
 
 
-def _validate_source_ids(config: AppConfig, source_ids: list[str]) -> None:
-    configured_source_ids = {source.id for source in config.sources}
-    unknown = sorted(set(source_ids).difference(configured_source_ids))
-    if unknown:
-        raise ValueError(f"unknown source_id: {unknown[0]}")
-
-
-def _asset_matches_directory_prefix(asset, directory_prefix: str | None) -> bool:
-    if not directory_prefix:
-        return True
-    return asset.directory == directory_prefix or asset.directory.startswith(
-        f"{directory_prefix}/"
-    )
-
-
 TagPredicate = Callable[[set[str]], bool]
 
 _MAX_TAG_WHERE_DEPTH = 8
@@ -1060,8 +941,120 @@ def _tag_where_matches(where: dict[str, Any], tags: set[str]) -> bool:
     raise AssertionError(f"validated where operator became unsupported: {operator}")
 
 
-def _tag_slugs(tags: list[dict[str, str]]) -> set[str]:
-    return {tag["slug"] for tag in tags}
+def _tag_slugs_in_where(where: dict[str, Any]) -> tuple[str, ...]:
+    operator, value = next(iter(where.items()))
+    if operator == "tag":
+        return (value,)
+    if operator in {"and", "or"}:
+        return tuple(
+            dict.fromkeys(
+                slug
+                for item in value
+                for slug in _tag_slugs_in_where(item)
+            )
+        )
+    if operator == "not":
+        return _tag_slugs_in_where(value)
+    raise AssertionError(f"validated where operator became unsupported: {operator}")
+
+
+def _asset_filter_mask(
+    metadata_database_path: Path,
+    search_index: SearchIndex,
+    *,
+    media_type: str | None,
+    where: dict[str, Any] | None,
+) -> np.ndarray | None:
+    masks: list[np.ndarray] = []
+    if media_type is not None:
+        masks.append(
+            np.fromiter(
+                (asset.media_type == media_type for asset in search_index.assets),
+                dtype=bool,
+                count=len(search_index.assets),
+            )
+        )
+    if where is not None:
+        tag_predicate = _compile_tag_where(where)
+        tags_by_asset_id = _tag_slugs_by_asset_id_for_where(
+            metadata_database_path,
+            where,
+        )
+        masks.append(
+            np.fromiter(
+                (
+                    tag_predicate(tags_by_asset_id.get(asset.asset_id, set()))
+                    for asset in search_index.assets
+                ),
+                dtype=bool,
+                count=len(search_index.assets),
+            )
+        )
+    if not masks:
+        return None
+    combined = masks[0]
+    for mask in masks[1:]:
+        combined = np.logical_and(combined, mask)
+    return combined
+
+
+def _tag_slugs_by_asset_id_for_where(
+    metadata_database_path: Path,
+    where: dict[str, Any],
+) -> dict[str, set[str]]:
+    slugs = _tag_slugs_in_where(where)
+    if not slugs or not metadata_database_path.is_file():
+        return {}
+    placeholders = ", ".join("?" for _ in slugs)
+    with connect_metadata(metadata_database_path) as metadata_db:
+        initialize_metadata_database(metadata_db)
+        rows = metadata_db.execute(
+            f"""
+            SELECT metadata_file_locations.asset_id, tags.slug
+            FROM tags
+            JOIN file_tags ON file_tags.tag_id = tags.tag_id
+            JOIN metadata_file_locations
+              ON metadata_file_locations.file_id = file_tags.file_id
+            WHERE tags.slug IN ({placeholders})
+              AND metadata_file_locations.asset_id IS NOT NULL
+              AND metadata_file_locations.missing_at IS NULL
+            """,
+            slugs,
+        ).fetchall()
+    tags_by_asset_id: dict[str, set[str]] = {}
+    for row in rows:
+        tags_by_asset_id.setdefault(row["asset_id"], set()).add(row["slug"])
+    return tags_by_asset_id
+
+
+def _preferences_with_asset_mask(
+    search_index: SearchIndex,
+    preferences,
+    mask: np.ndarray | None,
+):
+    if mask is None:
+        return preferences
+    combined_mask = (
+        mask
+        if preferences.included_asset_mask is None
+        else np.logical_and(preferences.included_asset_mask, mask)
+    )
+    included_asset_indexes = np.flatnonzero(combined_mask).astype(np.int32, copy=False)
+    included_directory_count_array = search_index._directory_count_array_for_asset_indexes(
+        included_asset_indexes
+    )
+    included_directory_counts = {
+        key: int(included_directory_count_array[directory_id])
+        for directory_id, key in enumerate(search_index.directory_runtime.keys)
+        if included_directory_count_array[directory_id] > 0
+    }
+    return replace(
+        preferences,
+        included_asset_mask=combined_mask,
+        included_asset_index_order=None,
+        included_directory_counts=included_directory_counts,
+        included_directory_count_array=included_directory_count_array,
+    )
 
 
 def _load_asset_or_404(db: sqlite3.Connection, config: AppConfig, asset_id: str):
@@ -1128,6 +1121,13 @@ def _tags_by_asset_id_for_cards(
     cards: list[dict[str, object]],
 ) -> dict[str, list[dict[str, str]]]:
     asset_ids = tuple(dict.fromkeys(_asset_ids_for_cards(cards)))
+    return _tags_by_asset_id_for_page_asset_ids(metadata_database_path, asset_ids)
+
+
+def _tags_by_asset_id_for_page_asset_ids(
+    metadata_database_path: Path,
+    asset_ids: tuple[str, ...],
+) -> dict[str, list[dict[str, str]]]:
     if not asset_ids or not metadata_database_path.is_file():
         return {}
     placeholders = ", ".join("?" for _ in asset_ids)
@@ -1164,53 +1164,6 @@ def _tags_by_asset_id_for_cards(
     tags_by_asset_id: dict[str, list[dict[str, str]]] = {}
     for row in rows:
         tags_by_asset_id.setdefault(row["asset_id"], []).append(
-            {"slug": row["slug"], "label": row["label"]}
-        )
-    return tags_by_asset_id
-
-
-def _tags_by_asset_id_for_asset_ids(
-    metadata_database_path: Path,
-    asset_ids: tuple[str, ...],
-) -> dict[str, list[dict[str, str]]]:
-    wanted_asset_ids = set(asset_ids)
-    if not wanted_asset_ids or not metadata_database_path.is_file():
-        return {}
-    with connect_metadata(metadata_database_path) as metadata_db:
-        initialize_metadata_database(metadata_db)
-        rows = metadata_db.execute(
-            """
-            SELECT
-              metadata_file_locations.asset_id,
-              tags.slug,
-              tags.label
-            FROM metadata_file_locations
-            JOIN file_tags ON file_tags.file_id = metadata_file_locations.file_id
-            JOIN tags ON tags.tag_id = file_tags.tag_id
-            WHERE metadata_file_locations.asset_id IS NOT NULL
-              AND metadata_file_locations.missing_at IS NULL
-            ORDER BY
-              metadata_file_locations.asset_id,
-              CASE
-                WHEN tags.slug GLOB '[0-9]*' AND tags.slug NOT GLOB '*[^0-9]*'
-                THEN 0
-                ELSE 1
-              END,
-              CASE
-                WHEN tags.slug GLOB '[0-9]*' AND tags.slug NOT GLOB '*[^0-9]*'
-                THEN CAST(tags.slug AS INTEGER)
-                ELSE 0
-              END,
-              tags.label COLLATE NOCASE,
-              tags.slug
-            """
-        ).fetchall()
-    tags_by_asset_id: dict[str, list[dict[str, str]]] = {}
-    for row in rows:
-        asset_id = row["asset_id"]
-        if asset_id not in wanted_asset_ids:
-            continue
-        tags_by_asset_id.setdefault(asset_id, []).append(
             {"slug": row["slug"], "label": row["label"]}
         )
     return tags_by_asset_id

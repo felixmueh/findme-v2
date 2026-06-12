@@ -311,7 +311,7 @@ Settled design constraints:
 - search lanes are directly requestable user-facing modes
 - each lane may use its engine's own ranking when that is faster and good enough
 - selected source/directory filters should be hard filters
-- result cards and matched directory counts should come from the same search scope; clients should use a search-with-directory-counts response when both are needed
+- result cards and matched directory counts should come from the same search scope; clients should use `POST /api/search/query` with `include_directories` when both are needed
 - ranking explainability is optional; ranking quality and tunability matter more
 
 Initial search lanes should include strict lexical evidence, fuzzy lexical evidence, and domain-expanded evidence. Future semantic/image-text evidence should fit the same lane model. Strict and fuzzy lexical search may share implementation machinery, but they should remain separate logical lanes because they have different precision, recall, and ranking weight expectations.
@@ -454,9 +454,9 @@ V1 precomputes named derivatives rather than arbitrary sizes. Exact sizes are im
 
 Tags are durable user-authored metadata. V1 tagging should focus on applying
 and removing tags in the browser UI, with exact tag queries available through
-the server API for integrations and automation. Exact tag queries are separate
-from text search: a tag predicate matches normalized tag slugs, while `/api/search`
-remains for manual fuzzy/domain search and discovery.
+the server API for integrations and automation. A tag predicate matches
+normalized tag slugs. Tags are not text-search keywords in v1, but exact tag
+predicates can act as hard filters over search and browse results.
 
 The UI should support tagging the selected asset and tagging a multi-selection
 of assets. Multi-selection is in scope specifically so a user can tag a range of
@@ -468,14 +468,17 @@ Applying a tag to many assets should hash only the assets that receive metadata.
 The operation can be explicit and progress-reporting if needed; it should not
 turn normal browsing or indexing into a full-library hashing pass.
 
-Machine-oriented asset selection should use `POST /api/assets/query`. The query
-can combine top-level indexed filters, such as media type, source ids, and a
-directory subtree, with a tag-only boolean `where` expression:
+Unified search and browse queries should use `POST /api/search/query`. The
+query can combine text search, top-level indexed filters such as media type,
+source and directory subtree filters, and a tag-only boolean `where`
+expression:
 
 ```json
 {
+  "q": "boss fight",
+  "mode": "strict",
   "media_type": "audio",
-  "source_ids": ["music"],
+  "source_id": "music",
   "directory_prefix": "combat_boss",
   "where": {
     "and": [
@@ -484,22 +487,26 @@ directory subtree, with a tag-only boolean `where` expression:
       {"not": {"tag": "vocals"}}
     ]
   },
+  "result_shape": "cards",
+  "include_directories": true,
   "limit": 50,
   "offset": 0
 }
 ```
 
+Set `result_shape` to `assets` when a caller needs flat cache-ready assets
+instead of UI card grouping. Set it to `directories` for folder state refreshes
+that should not also return result cards.
+
 The supported tag expression grammar is deliberately small: `tag`, `and`, `or`,
 and `not`. Empty `and`/`or` clauses are invalid. Ranking, preference boosts,
 least-recently-used rotation, and anti-repetition policy belong in the calling
-application, not in FindMe's exact catalog query API.
+application, not in FindMe's exact tag-filter grammar.
 
-`GET /api/tags/{slug}/assets` remains available as a simple single-tag,
-card-shaped lookup and debugging endpoint. New integrations should prefer
-`POST /api/assets/query` for exact tag selection, including the single-tag case,
-because it returns flat cache-ready assets and supports boolean tag logic. Do
-not add new selector behavior to `/api/tags/{slug}/assets`; if it stops serving
-a concrete UI/debugging need, it can be removed in a later cleanup.
+`POST /api/search/query` is the only search/browse selector API. The older
+`GET /api/search`, `GET /api/search-with-directory-counts`,
+`GET /api/tags/{slug}/assets`, and `POST /api/assets/query` routes were removed
+instead of kept as compatibility layers.
 
 ## Layout
 

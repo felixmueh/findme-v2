@@ -384,22 +384,34 @@
     return new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
   }
 
-  function searchParamsFor(revision: number, offset?: number, limit?: number) {
-    const params = new URLSearchParams()
-    if (limit !== undefined) params.set('limit', String(limit))
-    if (offset !== undefined) params.set('offset', String(offset))
-    params.set('search_session', searchSessionId)
+  type SearchQueryRequest = {
+    q?: string
+    mode?: SearchMode
+    view_source_id?: string
+    view_directory?: string
+    search_session: string
+    search_revision?: number
+    directory_state_only?: boolean
+    result_shape?: 'cards' | 'assets' | 'directories'
+    limit?: number
+    offset?: number
+  }
+
+  function searchRequestFor(revision: number, offset?: number, limit?: number): SearchQueryRequest {
+    const request: SearchQueryRequest = { search_session: searchSessionId }
+    if (limit !== undefined) request.limit = limit
+    if (offset !== undefined) request.offset = offset
     if (viewDirectory) {
-      params.set('view_source_id', viewDirectory.source_id)
-      params.set('view_directory', viewDirectory.path)
+      request.view_source_id = viewDirectory.source_id
+      request.view_directory = viewDirectory.path
     }
     const trimmed = query.trim()
     if (trimmed) {
-      params.set('q', trimmed)
-      params.set('mode', searchMode)
-      params.set('search_revision', String(revision))
+      request.q = trimmed
+      request.mode = searchMode
+      request.search_revision = revision
     }
-    return params
+    return request
   }
 
   async function loadAssetPage({
@@ -417,7 +429,7 @@
     assetRequestController?.abort()
     const controller = new AbortController()
     assetRequestController = controller
-    const params = searchParamsFor(revision, offset, limit)
+    const request = searchRequestFor(revision, offset, limit)
 
     if (append) {
       loadingMore = true
@@ -429,7 +441,12 @@
     }
     clearError()
     try {
-      const response = await fetch(`/api/search?${params}`, { signal: controller.signal })
+      const response = await fetch('/api/search/query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+        signal: controller.signal,
+      })
       if (response.status === 204) return false
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       const body = await response.json()
@@ -469,11 +486,16 @@
     directoryRequestController?.abort()
     const controller = new AbortController()
     directoryRequestController = controller
-    const params = searchParamsFor(revision)
-    params.set('directory_only', 'true')
-    if (directories.length > 0) params.set('directory_state_only', 'true')
+    const request = searchRequestFor(revision)
+    request.result_shape = 'directories'
+    request.directory_state_only = directories.length > 0
     try {
-      const response = await fetch(`/api/search-with-directory-counts?${params}`, { signal: controller.signal })
+      const response = await fetch('/api/search/query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+        signal: controller.signal,
+      })
       if (response.status === 204) return
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       const body = await response.json()

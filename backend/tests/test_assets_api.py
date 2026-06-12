@@ -8,7 +8,7 @@ from findme.db import connect, initialize_database
 from findme.indexer import index_sources
 from findme.search_corpus import rebuild_search_corpus
 
-from helpers import write_audio, write_image, write_video
+from helpers import search_query, write_audio, write_image, write_video
 
 
 def test_asset_detail_includes_derived_actions_and_serves_file(tmp_path: Path) -> None:
@@ -129,7 +129,7 @@ def test_asset_tags_are_stored_in_metadata_database(tmp_path: Path) -> None:
         {"slug": "goblin-warrior", "label": "Goblin Warrior"},
         {"slug": "npc", "label": "NPC"},
     ]
-    search_asset = client.get("/api/search", params={"q": "goblin"}).json()["cards"][0][
+    search_asset = search_query(client, {"q": "goblin"}).json()["cards"][0][
         "asset"
     ]
     assert search_asset["tags"] == [
@@ -239,21 +239,28 @@ def test_api_lists_assets_for_tag_with_pagination(tmp_path: Path) -> None:
         json={"tags": ["Monster"]},
     )
 
-    response = client.get("/api/tags/npc/assets", params={"limit": 1, "offset": 1})
+    response = search_query(
+        client,
+        {
+            "where": {"tag": "npc"},
+            "result_shape": "assets",
+            "limit": 1,
+            "offset": 1,
+        },
+    )
 
     assert response.status_code == 200
     body = response.json()
-    assert body["tag"] == {"slug": "npc", "label": "NPC"}
     assert body["total"] == 2
     assert body["next_offset"] == 2
     assert body["has_more"] is False
-    assert [card["asset"]["relative_path"] for card in body["cards"]] == [
+    assert [asset["relative_path"] for asset in body["assets"]] == [
         "Goblins/Goblin B.png"
     ]
-    assert body["cards"][0]["asset"]["tags"] == [{"slug": "npc", "label": "NPC"}]
+    assert body["assets"][0]["tags"] == [{"slug": "npc", "label": "NPC"}]
 
 
-def test_api_returns_404_for_missing_tag_assets(tmp_path: Path) -> None:
+def test_api_missing_tag_filter_returns_empty_results(tmp_path: Path) -> None:
     source_root = tmp_path / "assets"
     write_image(source_root / "Goblin.png")
     config = AppConfig(
@@ -275,10 +282,10 @@ def test_api_returns_404_for_missing_tag_assets(tmp_path: Path) -> None:
     rebuild_search_corpus(config, db_path)
     client = TestClient(create_app(config, db_path))
 
-    response = client.get("/api/tags/missing/assets")
+    response = search_query(client, {"where": {"tag": "missing"}})
 
-    assert response.status_code == 404
-    assert response.json() == {"detail": "tag not found"}
+    assert response.status_code == 200
+    assert response.json()["total"] == 0
 
 
 def test_api_queries_assets_with_boolean_tag_selector(tmp_path: Path) -> None:
@@ -337,10 +344,11 @@ def test_api_queries_assets_with_boolean_tag_selector(tmp_path: Path) -> None:
     )
 
     response = client.post(
-        "/api/assets/query",
+        "/api/search/query",
         json={
+            "result_shape": "assets",
             "media_type": "audio",
-            "source_ids": ["music"],
+            "source_id": "music",
             "directory_prefix": "combat_boss",
             "where": {
                 "and": [
@@ -405,7 +413,7 @@ def test_api_rejects_invalid_asset_query_where_clause(tmp_path: Path) -> None:
     client = TestClient(create_app(config, db_path))
 
     response = client.post(
-        "/api/assets/query",
+        "/api/search/query",
         json={"where": {"and": []}},
     )
 
@@ -758,7 +766,7 @@ def test_asset_metadata_includes_image_size_and_video_duration(tmp_path: Path) -
     assert video_asset["media_height"] == 360
     assert video_asset["duration_seconds"] >= 0.9
 
-    search_asset = client.get("/api/search", params={"q": "portal"}).json()["cards"][0][
+    search_asset = search_query(client, {"q": "portal"}).json()["cards"][0][
         "asset"
     ]
     assert search_asset["media_width"] == 640
@@ -796,7 +804,7 @@ def test_asset_metadata_includes_audio_duration(tmp_path: Path) -> None:
     assert audio_asset["media_height"] is None
     assert audio_asset["duration_seconds"] >= 2.4
 
-    search_asset = client.get("/api/search", params={"q": "thunder"}).json()["cards"][0][
+    search_asset = search_query(client, {"q": "thunder"}).json()["cards"][0][
         "asset"
     ]
     assert search_asset["duration_seconds"] >= 2.4

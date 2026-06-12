@@ -10,7 +10,7 @@ from findme.result_cards import ResultCardResolver
 from findme.search import SearchIndex, SearchSuperseded
 from findme.search_corpus import SearchCorpus, rebuild_search_corpus
 
-from helpers import write_image
+from helpers import directory_query, search_query, write_image
 
 
 def _card_asset(card: dict[str, object]) -> dict[str, object]:
@@ -52,7 +52,7 @@ def test_api_lists_sources_and_current_assets(tmp_path: Path) -> None:
             "root": str(source_root),
         }
     ]
-    body = client.get("/api/search").json()
+    body = search_query(client).json()
     assert body["total"] == 1
     cards = body["cards"]
     assert len(cards) == 1
@@ -89,7 +89,7 @@ def test_api_search_card_includes_thumbnail_mipmap_variants(tmp_path: Path) -> N
     rebuild_search_corpus(config, db_path)
 
     client = TestClient(create_app(config, db_path))
-    body = client.get("/api/search").json()
+    body = search_query(client).json()
     asset = _card_asset(body["cards"][0])
 
     assert [
@@ -106,6 +106,122 @@ def test_api_search_card_includes_thumbnail_mipmap_variants(tmp_path: Path) -> N
     variant_response = client.get(variant_url)
     assert variant_response.status_code == 200
     assert variant_response.headers["content-type"] == "image/webp"
+
+
+def test_api_search_query_filters_text_search_by_tags(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    write_image(source_root / "Tokens" / "Goblin Warrior.png", size=(32, 24))
+    write_image(source_root / "Tokens" / "Goblin Mage.png", size=(33, 24))
+    write_image(source_root / "Tokens" / "Orc Warrior.png", size=(34, 24))
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+        rows = db.execute(
+            "SELECT asset_id, relative_path FROM assets ORDER BY relative_path"
+        ).fetchall()
+    rebuild_search_corpus(config, db_path)
+    ids_by_path = {row["relative_path"]: row["asset_id"] for row in rows}
+    client = TestClient(create_app(config, db_path))
+    client.put(
+        f"/api/assets/{ids_by_path['Tokens/Goblin Warrior.png']}/tags",
+        json={"tags": ["NPC", "Encounter"]},
+    )
+    client.put(
+        f"/api/assets/{ids_by_path['Tokens/Goblin Mage.png']}/tags",
+        json={"tags": ["NPC", "Hidden"]},
+    )
+    client.put(
+        f"/api/assets/{ids_by_path['Tokens/Orc Warrior.png']}/tags",
+        json={"tags": ["NPC", "Encounter"]},
+    )
+
+    response = client.post(
+        "/api/search/query",
+        json={
+            "q": "goblin",
+            "where": {
+                "and": [
+                    {"tag": "npc"},
+                    {"not": {"tag": "hidden"}},
+                ]
+            },
+            "limit": 10,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 1
+    assert body["next_offset"] == 1
+    assert body["has_more"] is False
+    assert [_card_asset(card)["relative_path"] for card in body["cards"]] == [
+        "Tokens/Goblin Warrior.png"
+    ]
+    assert _card_asset(body["cards"][0])["tags"] == [
+        {"slug": "encounter", "label": "Encounter"},
+        {"slug": "npc", "label": "NPC"},
+    ]
+
+    directory_response = search_query(
+        client,
+        {
+            "q": "goblin",
+            "where": {
+                "and": [
+                    {"tag": "npc"},
+                    {"not": {"tag": "hidden"}},
+                ]
+            },
+            "include_directories": True,
+            "limit": 10,
+        },
+    )
+
+    assert directory_response.status_code == 200
+    directories = {
+        directory["path"]: directory for directory in directory_response.json()["directories"]
+    }
+    assert directories["Tokens"]["matched_asset_count"] == 1
+    assert directories["Tokens"]["included_asset_count"] == 1
+
+    asset_response = client.post(
+        "/api/search/query",
+        json={
+            "where": {"tag": "encounter"},
+            "result_shape": "assets",
+            "limit": 1,
+            "offset": 1,
+        },
+    )
+
+    assert asset_response.status_code == 200
+    asset_body = asset_response.json()
+    assert asset_body["total"] == 2
+    assert asset_body["next_offset"] == 2
+    assert asset_body["has_more"] is False
+    assert [asset["relative_path"] for asset in asset_body["assets"]] == [
+        "Tokens/Orc Warrior.png"
+    ]
+    asset = asset_body["assets"][0]
+    assert asset["absolute_path"] == str(source_root / "Tokens" / "Orc Warrior.png")
+    assert asset["tags"] == [
+        {"slug": "encounter", "label": "Encounter"},
+        {"slug": "npc", "label": "NPC"},
+    ]
+    assert asset["actions"]["copy_path"]["value"] == asset["absolute_path"]
 
 
 def test_api_requires_prebuilt_search_corpus(tmp_path: Path) -> None:
@@ -168,7 +284,7 @@ def test_api_opens_prebuilt_lexical_index_without_rebuilding(
     monkeypatch.setattr("findme.search_corpus.SearchLexicalIndex.build", fail_lexical_rebuild)
 
     client = TestClient(create_app(config, db_path))
-    body = client.get("/api/search", params={"q": "goblin", "mode": "strict"}).json()
+    body = search_query(client, {"q": "goblin", "mode": "strict"}).json()
 
     assert body["total"] == 1
 
@@ -201,7 +317,7 @@ def test_api_lists_numbered_variants_as_collection_cards(tmp_path: Path) -> None
     rebuild_search_corpus(config, db_path)
     client = TestClient(create_app(config, db_path))
 
-    body = client.get("/api/search").json()
+    body = search_query(client).json()
 
     assert body["total"] == 3
     cards = body["cards"]
@@ -245,7 +361,7 @@ def test_api_updates_profile_quality_and_applies_it_to_current_ranking(
     rebuild_search_corpus(config, db_path)
     client = TestClient(create_app(config, db_path))
 
-    before = client.get("/api/search", params={"q": "goblin"}).json()
+    before = search_query(client, {"q": "goblin"}).json()
     assert [
         _card_asset(card)["relative_path"] for card in before["cards"]
     ] == [
@@ -265,13 +381,13 @@ def test_api_updates_profile_quality_and_applies_it_to_current_ranking(
 
     assert response.status_code == 200
     assert response.json()["session"]["dirty_scoring"] is True
-    after = client.get(
-        "/api/search",
-        params={"q": "goblin", "search_session": "tab-1"},
+    after = search_query(
+        client,
+        {"q": "goblin", "search_session": "tab-1"},
     ).json()
-    strict_after = client.get(
-        "/api/search",
-        params={"q": "goblin", "mode": "strict", "search_session": "tab-1"},
+    strict_after = search_query(
+        client,
+        {"q": "goblin", "mode": "strict", "search_session": "tab-1"},
     ).json()
 
     assert [
@@ -294,8 +410,9 @@ def test_api_updates_profile_quality_and_applies_it_to_current_ranking(
     assert save_response.status_code == 200
 
     persisted_client = TestClient(create_app(config, db_path))
-    directories = persisted_client.get(
-        "/api/search-with-directory-counts", params={"source_id": "dnd"}
+    directories = directory_query(
+        persisted_client,
+        {"source_id": "dnd"},
     ).json()["directories"]
 
     assert next(directory for directory in directories if directory["path"] == "Good")[
@@ -339,9 +456,9 @@ def test_api_marks_directory_subtrees_with_unsaved_profile_changes(
     )
     assert response.status_code == 200
 
-    dirty_body = client.get(
-        "/api/search-with-directory-counts",
-        params={"source_id": "dnd", "search_session": "tab-1"},
+    dirty_body = directory_query(
+        client,
+        {"source_id": "dnd", "search_session": "tab-1"},
     ).json()
     dirty_directories = {
         directory["path"]: directory["profile_dirty"]
@@ -361,9 +478,9 @@ def test_api_marks_directory_subtrees_with_unsaved_profile_changes(
     )
     assert save_response.status_code == 200
 
-    saved_body = client.get(
-        "/api/search-with-directory-counts",
-        params={"source_id": "dnd", "search_session": "tab-1"},
+    saved_body = directory_query(
+        client,
+        {"source_id": "dnd", "search_session": "tab-1"},
     ).json()
     assert {
         directory["path"]: directory["profile_dirty"]
@@ -428,9 +545,9 @@ def test_api_marks_directory_subtrees_with_descendant_selection_rules(
     assert blacklist_response.status_code == 200
     assert save_response.status_code == 200
 
-    body = client.get(
-        "/api/search-with-directory-counts",
-        params={"source_id": "dnd", "search_session": "tab-1"},
+    body = directory_query(
+        client,
+        {"source_id": "dnd", "search_session": "tab-1"},
     ).json()
 
     assert {
@@ -474,7 +591,7 @@ def test_api_groups_numbered_variants_with_accidental_embedded_image_extension(
     rebuild_search_corpus(config, db_path)
     client = TestClient(create_app(config, db_path))
 
-    body = client.get("/api/search").json()
+    body = search_query(client).json()
 
     assert body["total"] == 1
     card = body["cards"][0]
@@ -513,7 +630,7 @@ def test_api_groups_numeric_letter_variants_as_collection_cards(
     rebuild_search_corpus(config, db_path)
     client = TestClient(create_app(config, db_path))
 
-    body = client.get("/api/search").json()
+    body = search_query(client).json()
 
     assert body["total"] == 1
     card = body["cards"][0]
@@ -551,7 +668,7 @@ def test_api_groups_color_variants_inside_filename_stems(tmp_path: Path) -> None
     rebuild_search_corpus(config, db_path)
     client = TestClient(create_app(config, db_path))
 
-    body = client.get("/api/search").json()
+    body = search_query(client).json()
 
     assert body["total"] == 1
     card = body["cards"][0]
@@ -588,7 +705,7 @@ def test_api_groups_letter_variants_inside_filename_stems(tmp_path: Path) -> Non
     rebuild_search_corpus(config, db_path)
     client = TestClient(create_app(config, db_path))
 
-    body = client.get("/api/search").json()
+    body = search_query(client).json()
 
     assert body["total"] == 1
     card = body["cards"][0]
@@ -626,7 +743,7 @@ def test_api_groups_multiple_variant_positions_inside_filename_stems(
     rebuild_search_corpus(config, db_path)
     client = TestClient(create_app(config, db_path))
 
-    body = client.get("/api/search").json()
+    body = search_query(client).json()
 
     assert body["total"] == 1
     card = body["cards"][0]
@@ -661,7 +778,7 @@ def test_api_search_returns_ranked_results(tmp_path: Path) -> None:
     rebuild_search_corpus(config, db_path)
     client = TestClient(create_app(config, db_path))
 
-    response = client.get("/api/search", params={"q": "goblin"})
+    response = search_query(client, {"q": "goblin"})
 
     assert response.status_code == 200
     body = response.json()
@@ -699,7 +816,7 @@ def test_api_search_collection_includes_unmatched_variants(tmp_path: Path) -> No
     rebuild_search_corpus(config, db_path)
     client = TestClient(create_app(config, db_path))
 
-    body = client.get("/api/search", params={"q": "mage2", "mode": "strict"}).json()
+    body = search_query(client, {"q": "mage2", "mode": "strict"}).json()
 
     assert body["total"] == 1
     card = body["cards"][0]
@@ -735,13 +852,13 @@ def test_api_search_accepts_search_mode(tmp_path: Path) -> None:
     rebuild_search_corpus(config, db_path)
     client = TestClient(create_app(config, db_path))
 
-    strict_body = client.get(
-        "/api/search",
-        params={"q": "goblin warror", "mode": "strict"},
+    strict_body = search_query(
+        client,
+        {"q": "goblin warror", "mode": "strict"},
     ).json()
-    fuzzy_body = client.get(
-        "/api/search",
-        params={"q": "goblin warror", "mode": "fuzzy"},
+    fuzzy_body = search_query(
+        client,
+        {"q": "goblin warror", "mode": "fuzzy"},
     ).json()
 
     assert strict_body["total"] == 0
@@ -775,16 +892,17 @@ def test_api_search_with_directory_counts_uses_one_search_scope(
 
     client = TestClient(create_app(config, db_path))
 
-    strict_body = client.get(
-        "/api/search-with-directory-counts",
-        params={"q": "goblin warror", "mode": "strict"},
+    strict_body = search_query(
+        client,
+        {"q": "goblin warror", "mode": "strict", "include_directories": True},
     ).json()
-    fuzzy_body = client.get(
-        "/api/search-with-directory-counts",
-        params={
+    fuzzy_body = search_query(
+        client,
+        {
             "q": "goblin warror",
             "mode": "fuzzy",
             "directory_prefix": "Tokens",
+            "include_directories": True,
         },
     ).json()
 
@@ -842,13 +960,10 @@ expansions:
 
     client = TestClient(create_app(config, db_path))
 
-    search_body = client.get(
-        "/api/search",
-        params={"q": "goblin", "limit": 1},
-    ).json()
-    directory_body = client.get(
-        "/api/search-with-directory-counts",
-        params={"q": "goblin", "limit": 1},
+    search_body = search_query(client, {"q": "goblin", "limit": 1}).json()
+    directory_body = search_query(
+        client,
+        {"q": "goblin", "limit": 1, "include_directories": True},
     ).json()
 
     assert search_body["total"] == 4
@@ -863,13 +978,13 @@ expansions:
     assert directories[("dnd", "Maps")]["matched_asset_count"] == 2
     assert directories[("dnd", "Tokens")]["matched_asset_count"] == 2
 
-    fuzzy_body = client.get(
-        "/api/search",
-        params={"q": "goblin warror", "mode": "fuzzy", "limit": 1},
+    fuzzy_body = search_query(
+        client,
+        {"q": "goblin warror", "mode": "fuzzy", "limit": 1},
     ).json()
-    domain_body = client.get(
-        "/api/search-with-directory-counts",
-        params={"q": "hero", "mode": "domain", "limit": 1},
+    domain_body = search_query(
+        client,
+        {"q": "hero", "mode": "domain", "limit": 1, "include_directories": True},
     ).json()
 
     assert fuzzy_body["total"] == 1
@@ -916,7 +1031,7 @@ expansions:
     rebuild_search_corpus(config, db_path)
     client = TestClient(create_app(config, db_path))
 
-    body = client.get("/api/search", params={"q": "hero", "mode": "domain"}).json()
+    body = search_query(client, {"q": "hero", "mode": "domain"}).json()
 
     assert body["total"] == 1
     assert _card_asset(body["cards"][0])["relative_path"] == "Human Mage.png"
@@ -948,11 +1063,11 @@ def test_api_result_totals_ignore_limit_and_offset(tmp_path: Path) -> None:
     client = TestClient(create_app(config, db_path))
 
     assets_api_body = client.get("/api/assets", params={"limit": 1, "offset": 1}).json()
-    assets_body = client.get("/api/search", params={"limit": 1, "offset": 1}).json()
-    search_body = client.get("/api/search", params={"q": "goblin", "limit": 1, "offset": 1}).json()
-    directories_body = client.get(
-        "/api/search-with-directory-counts",
-        params={"limit": 1, "offset": 1},
+    assets_body = search_query(client, {"limit": 1, "offset": 1}).json()
+    search_body = search_query(client, {"q": "goblin", "limit": 1, "offset": 1}).json()
+    directories_body = search_query(
+        client,
+        {"limit": 1, "offset": 1, "include_directories": True},
     ).json()
 
     assert assets_api_body["total"] == 3
@@ -1000,10 +1115,10 @@ def test_api_search_paginates_grouped_cards_without_repeating_collection_keys(
     rebuild_search_corpus(config, db_path)
     client = TestClient(create_app(config, db_path))
 
-    first = client.get("/api/search", params={"q": "goblin", "limit": 1}).json()
-    second = client.get(
-        "/api/search",
-        params={"q": "goblin", "limit": 1, "offset": first["next_offset"]},
+    first = search_query(client, {"q": "goblin", "limit": 1}).json()
+    second = search_query(
+        client,
+        {"q": "goblin", "limit": 1, "offset": first["next_offset"]},
     ).json()
 
     assert first["cards"][0]["kind"] == "collection"
@@ -1104,9 +1219,9 @@ def test_api_profile_blacklisted_folder_remains_visible_for_unblocking(
         },
     ).status_code == 200
 
-    body = client.get(
-        "/api/search-with-directory-counts",
-        params={"search_session": "tab-1"},
+    body = search_query(
+        client,
+        {"search_session": "tab-1", "include_directories": True},
     ).json()
     directories = {
         (directory["source_id"], directory["path"]): directory
@@ -1157,9 +1272,9 @@ def test_api_profile_blacklisted_search_match_keeps_directory_match_count(
         },
     ).status_code == 200
 
-    body = client.get(
-        "/api/search-with-directory-counts",
-        params={"q": "skip", "search_session": "tab-1"},
+    body = search_query(
+        client,
+        {"q": "skip", "search_session": "tab-1", "include_directories": True},
     ).json()
     directories = {
         (directory["source_id"], directory["path"]): directory
@@ -1271,9 +1386,9 @@ def test_api_profile_selection_reuses_startup_card_resolver(
         "/api/assets",
         params={"search_session": "tab-1"},
     ).json()
-    search_body = client.get(
-        "/api/search",
-        params={"q": "mage2", "mode": "strict", "search_session": "tab-1"},
+    search_body = search_query(
+        client,
+        {"q": "mage2", "mode": "strict", "search_session": "tab-1"},
     ).json()
 
     assert browse_body["total"] == 1
@@ -1377,9 +1492,9 @@ def test_api_profile_nested_whitelist_supersedes_parent_for_inclusion(
         (setting["source_id"], setting["directory"]): setting
         for setting in profile_body["settings"]
     }
-    browse_body = client.get(
-        "/api/search-with-directory-counts",
-        params={"search_session": "tab-1"},
+    browse_body = search_query(
+        client,
+        {"search_session": "tab-1", "include_directories": True},
     ).json()
     directories = {
         (directory["source_id"], directory["path"]): directory
@@ -1451,9 +1566,9 @@ def test_api_profile_parent_whitelist_is_superseded_by_existing_child_whitelist(
         (setting["source_id"], setting["directory"]): setting
         for setting in profile_body["settings"]
     }
-    browse_body = client.get(
-        "/api/search-with-directory-counts",
-        params={"search_session": "tab-1"},
+    browse_body = search_query(
+        client,
+        {"search_session": "tab-1", "include_directories": True},
     ).json()
     directories = {
         (directory["source_id"], directory["path"]): directory
@@ -1513,21 +1628,22 @@ def test_api_view_scope_ignores_sibling_whitelist_and_keeps_descendant_rules(
         },
     ).status_code == 200
 
-    unscoped_body = client.get(
-        "/api/search-with-directory-counts",
-        params={"search_session": "tab-1"},
+    unscoped_body = search_query(
+        client,
+        {"search_session": "tab-1", "include_directories": True},
     ).json()
-    scoped_body = client.get(
-        "/api/search-with-directory-counts",
-        params={
+    scoped_body = search_query(
+        client,
+        {
             "search_session": "tab-1",
             "view_source_id": "dnd",
             "view_directory": "Maps",
+            "include_directories": True,
         },
     ).json()
-    scoped_search_body = client.get(
-        "/api/search",
-        params={
+    scoped_search_body = search_query(
+        client,
+        {
             "q": "skip",
             "mode": "strict",
             "search_session": "tab-1",
@@ -1585,11 +1701,12 @@ def test_api_view_scope_browse_uses_numeric_asset_indexes(
     monkeypatch.setattr(SearchIndex, "browse_asset_indexes", fail_browse_asset_indexes)
     client = TestClient(create_app(config, db_path))
 
-    body = client.get(
-        "/api/search-with-directory-counts",
-        params={
+    body = search_query(
+        client,
+        {
             "view_source_id": "dnd",
             "view_directory": "Maps",
+            "include_directories": True,
         },
     ).json()
 
@@ -1623,13 +1740,14 @@ def test_api_can_return_compact_directory_state_updates(tmp_path: Path) -> None:
     rebuild_search_corpus(config, db_path)
     client = TestClient(create_app(config, db_path))
 
-    full_body = client.get("/api/search-with-directory-counts").json()
-    compact_body = client.get(
-        "/api/search-with-directory-counts",
-        params={
+    full_body = directory_query(client).json()
+    compact_body = search_query(
+        client,
+        {
             "view_source_id": "dnd",
             "view_directory": "Maps",
-            "directory_state_only": "true",
+            "include_directories": True,
+            "directory_state_only": True,
         },
     ).json()
     full_by_path = {directory["path"]: directory for directory in full_body["directories"]}
@@ -1688,12 +1806,12 @@ def test_api_can_return_directory_state_without_cards(tmp_path: Path) -> None:
     rebuild_search_corpus(config, db_path)
     client = TestClient(create_app(config, db_path))
 
-    body = client.get(
-        "/api/search-with-directory-counts",
-        params={
+    body = search_query(
+        client,
+        {
             "q": "keep",
-            "directory_only": "true",
-            "directory_state_only": "true",
+            "result_shape": "directories",
+            "directory_state_only": True,
         },
     ).json()
 
@@ -1729,7 +1847,7 @@ def test_api_search_uses_startup_search_index_until_app_restart(tmp_path: Path) 
     with connect(db_path) as db:
         db.execute("DELETE FROM assets WHERE relative_path = ?", ("Goblin.png",))
 
-    body = client.get("/api/search", params={"q": "goblin"}).json()
+    body = search_query(client, {"q": "goblin"}).json()
 
     assert body["total"] == 1
     assert _card_asset(body["cards"][0])["relative_path"] == "Goblin.png"
@@ -1764,7 +1882,7 @@ def test_api_directories_use_startup_search_index_until_app_restart(tmp_path: Pa
             ("Creatures/Goblin.png",),
         )
 
-    body = client.get("/api/search-with-directory-counts", params={"q": "goblin"}).json()
+    body = directory_query(client, {"q": "goblin"}).json()
 
     directories = {(item["source_id"], item["path"]): item for item in body["directories"]}
     assert directories[("dnd", "")]["asset_count"] == 1
@@ -1796,13 +1914,13 @@ def test_api_search_rejects_superseded_search_revision(tmp_path: Path) -> None:
     rebuild_search_corpus(config, db_path)
     client = TestClient(create_app(config, db_path))
 
-    current = client.get(
-        "/api/search",
-        params={"q": "goblin", "search_session": "tab-1", "search_revision": 2},
+    current = search_query(
+        client,
+        {"q": "goblin", "search_session": "tab-1", "search_revision": 2},
     )
-    superseded = client.get(
-        "/api/search",
-        params={"q": "goblin", "search_session": "tab-1", "search_revision": 1},
+    superseded = search_query(
+        client,
+        {"q": "goblin", "search_session": "tab-1", "search_revision": 1},
     )
 
     assert current.status_code == 200
@@ -1832,13 +1950,23 @@ def test_api_directories_reject_superseded_search_revision(tmp_path: Path) -> No
     rebuild_search_corpus(config, db_path)
     client = TestClient(create_app(config, db_path))
 
-    current = client.get(
-        "/api/search-with-directory-counts",
-        params={"q": "goblin", "search_session": "tab-1", "search_revision": 2},
+    current = search_query(
+        client,
+        {
+            "q": "goblin",
+            "search_session": "tab-1",
+            "search_revision": 2,
+            "include_directories": True,
+        },
     )
-    superseded = client.get(
-        "/api/search-with-directory-counts",
-        params={"q": "goblin", "search_session": "tab-1", "search_revision": 1},
+    superseded = search_query(
+        client,
+        {
+            "q": "goblin",
+            "search_session": "tab-1",
+            "search_revision": 1,
+            "include_directories": True,
+        },
     )
 
     assert current.status_code == 200
@@ -1879,13 +2007,14 @@ def test_api_search_with_directory_counts_rejects_superseded_directory_counts(
         supersede_directory_counts,
     )
 
-    response = client.get(
-        "/api/search-with-directory-counts",
-        params=[
-            ("q", "goblin"),
-            ("search_session", "tab-1"),
-            ("search_revision", "1"),
-        ],
+    response = search_query(
+        client,
+        {
+            "q": "goblin",
+            "search_session": "tab-1",
+            "search_revision": 1,
+            "include_directories": True,
+        },
     )
 
     assert response.status_code == 204
@@ -1913,7 +2042,7 @@ def test_api_uses_preinitialized_database(tmp_path: Path) -> None:
     rebuild_search_corpus(config, db_path)
     client = TestClient(create_app(config, db_path))
 
-    response = client.get("/api/search")
+    response = search_query(client)
 
     assert response.status_code == 200
     assert response.json()["total"] == 0

@@ -108,17 +108,20 @@ def test_broad_search_with_directory_counts_materializes_only_requested_page(
 
 
 @pytest.mark.parametrize(
-    ("path", "expected_response_materializations"),
+    ("request_body", "expected_response_materializations"),
     (
-        ("/api/search", BROAD_PAGE_LIMIT),
-        ("/api/search-with-directory-counts", BROAD_PAGE_LIMIT),
+        ({"q": "common", "limit": BROAD_PAGE_LIMIT}, BROAD_PAGE_LIMIT),
+        (
+            {"q": "common", "limit": BROAD_PAGE_LIMIT, "include_directories": True},
+            BROAD_PAGE_LIMIT,
+        ),
     ),
 )
 def test_api_broad_search_materializes_pages_not_all_matches(
     tmp_path: Path,
     broad_search_index: SearchIndex,
     monkeypatch: pytest.MonkeyPatch,
-    path: str,
+    request_body: dict[str, object],
     expected_response_materializations: int,
 ) -> None:
     client = _synthetic_search_client(
@@ -152,10 +155,7 @@ def test_api_broad_search_materializes_pages_not_all_matches(
     monkeypatch.setattr(api_module, "_asset_result_response", counted_asset_result_response)
 
     elapsed, response = _timed_call(
-        lambda: client.get(
-            path,
-            params={"q": "common", "limit": BROAD_PAGE_LIMIT},
-        )
+        lambda: client.post("/api/search/query", json=request_body)
     )
     body = response.json()
 
@@ -168,13 +168,16 @@ def test_api_broad_search_materializes_pages_not_all_matches(
 
 
 @pytest.mark.parametrize(
-    "path",
-    ("/api/search", "/api/search-with-directory-counts"),
+    "request_body",
+    (
+        {"q": "common", "limit": BROAD_PAGE_LIMIT},
+        {"q": "common", "limit": BROAD_PAGE_LIMIT, "include_directories": True},
+    ),
 )
 def test_api_variant_heavy_search_materializes_cards_not_matching_variants(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    path: str,
+    request_body: dict[str, object],
 ) -> None:
     search_index = _search_index_for_assets(
         _synthetic_collection_assets(
@@ -210,10 +213,7 @@ def test_api_variant_heavy_search_materializes_cards_not_matching_variants(
     monkeypatch.setattr(api_module, "_asset_result_response", counted_asset_result_response)
 
     elapsed, response = _timed_call(
-        lambda: client.get(
-            path,
-            params={"q": "common", "limit": BROAD_PAGE_LIMIT},
-        )
+        lambda: client.post("/api/search/query", json=request_body)
     )
     body = response.json()
 
