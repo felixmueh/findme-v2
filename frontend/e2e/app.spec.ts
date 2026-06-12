@@ -407,6 +407,47 @@ test('wheels over cards to scroll normally and ctrl-wheel grid width', async ({ 
   await expect(page.getByLabel('12 cards per row')).toBeVisible()
 })
 
+test('keeps the batch tag controls visible while scrolling results', async ({ page }) => {
+  const assets = Array.from({ length: 240 }, (_, index) => sampleAssetAt(index))
+  const cards = assets.map((asset) => ({ kind: 'asset', asset }))
+  const root = { ...sampleRootDirectory(), asset_count: assets.length, matched_asset_count: assets.length, included_asset_count: assets.length }
+  const maps = { ...sampleDirectory(), asset_count: assets.length, matched_asset_count: assets.length, included_asset_count: assets.length }
+
+  await page.unroute('**/api/search?*')
+  await page.unroute('**/api/search-with-directory-counts?*')
+  await page.route('**/api/search?*', async (route) => {
+    await route.fulfill({ json: { total: assets.length, cards, has_more: false, next_offset: assets.length } })
+  })
+  await page.route('**/api/search-with-directory-counts?*', async (route) => {
+    await route.fulfill({ json: { directories: [root, maps] } })
+  })
+
+  await page.goto('/')
+  await page.getByRole('button', { name: /asset-0\.png/i }).click({ modifiers: ['Control'] })
+
+  const grid = page.locator('.tile-grid')
+  const batchTagging = page.getByRole('group', { name: 'Batch tagging' })
+  await expect(batchTagging).toContainText('1 selected')
+  await expect.poll(() => grid.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true)
+
+  const initialGridBox = await grid.boundingBox()
+  const initialTagBox = await batchTagging.boundingBox()
+  if (!initialGridBox || !initialTagBox) throw new Error('batch tag controls are missing')
+
+  await grid.evaluate((element) => {
+    element.scrollTop = element.scrollHeight
+  })
+
+  await expect.poll(() => grid.evaluate((element) => element.scrollTop)).toBeGreaterThan(0)
+  await expect(page.getByRole('button', { name: /asset-0\.png/i })).not.toBeInViewport()
+  await expect(batchTagging).toBeInViewport()
+
+  const scrolledTagBox = await batchTagging.boundingBox()
+  if (!scrolledTagBox) throw new Error('batch tag controls are missing after scroll')
+  expect(Math.abs(scrolledTagBox.y - initialTagBox.y)).toBeLessThanOrEqual(2)
+  expect(scrolledTagBox.y).toBeGreaterThanOrEqual(initialGridBox.y)
+})
+
 test('loads the full image after the thumbnail when a card is larger than its thumbnail', async ({ page }) => {
   let releaseFullImage!: () => void
   let fullImageRequested = false

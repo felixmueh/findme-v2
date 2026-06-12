@@ -1245,6 +1245,9 @@ button.folder-row.retained {
 }
 
 .batch-tag-bar {
+  position: sticky;
+  top: 0;
+  z-index: 4;
   grid-column: 1 / -1;
   min-width: 0;
   display: grid;
