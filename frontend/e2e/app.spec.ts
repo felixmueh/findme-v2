@@ -535,6 +535,76 @@ test('keeps the result scroll position after tagging selected assets', async ({ 
   await expect.poll(() => grid.evaluate((element) => element.scrollTop)).toBeGreaterThan(scrollBeforeTagging - 20)
 })
 
+test('filters results from the tags sidebar tab', async ({ page }) => {
+  await page.route('**/api/tags', async (route) => {
+    await route.fulfill({
+      json: {
+        tags: [
+          { slug: 'favorite', label: 'favorite' },
+          { slug: 'hidden', label: 'hidden' },
+          { slug: 'npc', label: 'NPC' },
+        ],
+      },
+    })
+  })
+
+  await page.route('**/api/search/query', async (route) => {
+    const body = route.request().postDataJSON() as {
+      result_shape?: string
+      directory_state_only?: boolean
+      where?: unknown
+    }
+    if (body.result_shape === 'directories') {
+      await route.fulfill({
+        json: body.directory_state_only
+          ? { directory_states: [sampleRootDirectory(), sampleDirectory()].map(directoryState) }
+          : { directories: [sampleRootDirectory(), sampleDirectory()] },
+      })
+      return
+    }
+    await route.fulfill({
+      json: {
+        total: 1,
+        cards: [{ kind: 'asset', asset: { ...sampleAsset, tags: [{ slug: 'favorite', label: 'favorite' }] } }],
+        has_more: false,
+        next_offset: 1,
+      },
+    })
+  })
+
+  await page.goto('/')
+  await expect(page.getByRole('button', { name: /castle\.png/i })).toBeVisible()
+
+  await page.getByRole('tab', { name: 'Tags' }).click()
+  await expect(page.getByRole('tabpanel', { name: 'Tags' })).toBeVisible()
+
+  const includeRequest = page.waitForRequest((request) => {
+    const url = new URL(request.url())
+    if (url.pathname !== '/api/search/query' || request.method() !== 'POST') return false
+    const body = request.postDataJSON() as { where?: unknown; result_shape?: string }
+    return body.result_shape !== 'directories' && JSON.stringify(body.where) === JSON.stringify({ tag: 'favorite' })
+  })
+  await page.getByRole('button', { name: 'Include favorite' }).click()
+  await includeRequest
+  await expect(page.getByRole('button', { name: 'Include favorite' })).toHaveClass(/active/)
+
+  const excludeRequest = page.waitForRequest((request) => {
+    const url = new URL(request.url())
+    if (url.pathname !== '/api/search/query' || request.method() !== 'POST') return false
+    const body = request.postDataJSON() as { where?: unknown; result_shape?: string }
+    return (
+      body.result_shape !== 'directories' &&
+      JSON.stringify(body.where) ===
+        JSON.stringify({
+          and: [{ tag: 'favorite' }, { not: { tag: 'hidden' } }],
+        })
+    )
+  })
+  await page.getByRole('button', { name: 'Exclude hidden' }).click()
+  await excludeRequest
+  await expect(page.getByRole('button', { name: 'Exclude hidden' })).toHaveClass(/active/)
+})
+
 test('loads the full image after the thumbnail when a card is larger than its thumbnail', async ({ page }) => {
   let releaseFullImage!: () => void
   let fullImageRequested = false

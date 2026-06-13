@@ -100,6 +100,7 @@ class BatchTagsScope(BaseModel):
     view_source_id: str | None = None
     view_directory: str | None = None
     search_session: str | None = None
+    where: dict[str, Any] | None = None
 
 
 class BatchTagsRequest(BaseModel):
@@ -380,6 +381,15 @@ def create_app(
             )
             query = _trimmed_query(scope.q)
             mode = scope.mode
+        try:
+            asset_mask = _asset_filter_mask(
+                metadata_database_path,
+                search_index,
+                media_type=None,
+                where=scope.where,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         with connect(database_path) as db:
             try:
                 _profile_session, preferences = session_and_preferences(
@@ -390,6 +400,7 @@ def create_app(
                 )
             except SearchProfileValidationError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
+        preferences = _preferences_with_asset_mask(search_index, preferences, asset_mask)
         domain_vocabulary = _load_domain_vocabulary(config)
         asset_indexes = search_index.search_asset_index_array(
             query,

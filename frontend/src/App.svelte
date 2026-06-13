@@ -70,6 +70,13 @@
   ]
 
   type FilterRuleState = 'whitelist' | 'blacklist'
+  type FilterPanelTab = 'folders' | 'tags'
+  type TagFilterState = 'include' | 'exclude'
+  type TagWhereClause =
+    | { tag: string }
+    | { not: TagWhereClause }
+    | { and: TagWhereClause[] }
+    | { or: TagWhereClause[] }
 
   type SearchProfile = {
     id: string
@@ -142,6 +149,9 @@
   let assetTagInput = $state('')
   let batchTagInput = $state('')
   let knownTags = $state<Tag[]>([])
+  let filterPanelTab = $state<FilterPanelTab>('folders')
+  let tagFilterSearch = $state('')
+  let tagFilterStates = $state<Record<string, TagFilterState>>({})
   let assetTagInputFocused = $state(false)
   let batchTagInputFocused = $state(false)
   let tagging = $state(false)
@@ -225,6 +235,9 @@
       : ''
   )
   const resultLabel = $derived(`${resultTotal} ${resultTotal === 1 ? 'card' : 'cards'}`)
+  const activeTagFilterKey = $derived(tagFilterKey(tagFilterStates))
+  const activeTagFilterCount = $derived(Object.keys(tagFilterStates).length)
+  const tagFilterRows = $derived.by(() => filteredTagRows(knownTags, tagFilterStates, tagFilterSearch))
   const gridWidthStyle = $derived(`--asset-grid-columns: ${gridCardsPerRow}`)
   const gridCardsPerRowLabel = $derived(
     `${gridCardsPerRow} ${gridCardsPerRow === 1 ? 'card' : 'cards'} per row`
@@ -272,6 +285,7 @@
     query
     searchMode
     viewDirectoryKey
+    activeTagFilterKey
     const revision = ++searchRevision
     window.clearTimeout(debounceTimer)
     debounceTimer = window.setTimeout(() => {
@@ -391,6 +405,7 @@
     view_directory?: string
     search_session: string
     search_revision?: number
+    where?: TagWhereClause
     directory_state_only?: boolean
     result_shape?: 'cards' | 'assets' | 'directories'
     limit?: number
@@ -401,6 +416,8 @@
     const request: SearchQueryRequest = { search_session: searchSessionId }
     if (limit !== undefined) request.limit = limit
     if (offset !== undefined) request.offset = offset
+    const where = tagWhereClause()
+    if (where) request.where = where
     if (viewDirectory) {
       request.view_source_id = viewDirectory.source_id
       request.view_directory = viewDirectory.path
@@ -778,6 +795,7 @@
         search_session: searchSessionId,
         view_source_id: viewDirectory?.source_id ?? null,
         view_directory: viewDirectory?.path ?? null,
+        where: tagWhereClause() ?? null,
       },
       add_tags: [label],
     })
@@ -1131,14 +1149,16 @@
   }
 
   function sortedTags(tags: Tag[]) {
-    return [...tags].sort((left, right) => {
-      const leftNumber = numberTagValue(left)
-      const rightNumber = numberTagValue(right)
-      if (leftNumber !== null && rightNumber !== null) return leftNumber - rightNumber
-      if (leftNumber !== null) return -1
-      if (rightNumber !== null) return 1
-      return left.label.localeCompare(right.label, undefined, { sensitivity: 'base' })
-    })
+    return [...tags].sort(compareTags)
+  }
+
+  function compareTags(left: Tag, right: Tag) {
+    const leftNumber = numberTagValue(left)
+    const rightNumber = numberTagValue(right)
+    if (leftNumber !== null && rightNumber !== null) return leftNumber - rightNumber
+    if (leftNumber !== null) return -1
+    if (rightNumber !== null) return 1
+    return left.label.localeCompare(right.label, undefined, { sensitivity: 'base' })
   }
 
   function numberTagValue(tag: Tag) {
@@ -1163,6 +1183,62 @@
       .filter((tag) => !excluded.has(tag.slug))
       .filter((tag) => !query || tag.label.toLocaleLowerCase().includes(query) || tag.slug.includes(query))
       .slice(0, 8)
+  }
+
+  function tagFilterKey(states: Record<string, TagFilterState>) {
+    return Object.entries(states)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([slug, state]) => `${slug}:${state}`)
+      .join('|')
+  }
+
+  function filteredTagRows(tags: Tag[], states: Record<string, TagFilterState>, search: string) {
+    const query = search.trim().toLocaleLowerCase()
+    return sortedTags(tags)
+      .filter((tag) => {
+        if (states[tag.slug]) return true
+        if (!query) return true
+        return tag.label.toLocaleLowerCase().includes(query) || tag.slug.includes(query)
+      })
+      .sort((left, right) => {
+        const leftActive = Boolean(states[left.slug])
+        const rightActive = Boolean(states[right.slug])
+        if (leftActive !== rightActive) return leftActive ? -1 : 1
+        return compareTags(left, right)
+      })
+  }
+
+  function setTagFilter(tag: Tag, state: TagFilterState) {
+    const next = { ...tagFilterStates }
+    if (next[tag.slug] === state) {
+      delete next[tag.slug]
+    } else {
+      next[tag.slug] = state
+    }
+    tagFilterStates = next
+  }
+
+  function clearTagFilters() {
+    tagFilterStates = {}
+  }
+
+  function tagFilterState(tag: Tag) {
+    return tagFilterStates[tag.slug] ?? null
+  }
+
+  function tagWhereClause(): TagWhereClause | undefined {
+    const clauses: TagWhereClause[] = []
+    const entries = Object.entries(tagFilterStates).sort(([left], [right]) => left.localeCompare(right))
+    for (const [slug, state] of entries) {
+      if (state === 'include') {
+        clauses.push({ tag: slug })
+      } else {
+        clauses.push({ not: { tag: slug } })
+      }
+    }
+    if (clauses.length === 0) return undefined
+    if (clauses.length === 1) return clauses[0]
+    return { and: clauses }
   }
 
   async function useAssetTagSuggestion(tag: Tag) {
@@ -2283,7 +2359,32 @@
     </section>
 
     <aside class="folder-panel" aria-label="Folder tree" bind:this={folderPanelElement}>
-      <div class="panel-title">Folders</div>
+      <div class="filter-tabs" role="tablist" aria-label="Filter panel">
+        <button
+          class:active={filterPanelTab === 'folders'}
+          type="button"
+          role="tab"
+          aria-selected={filterPanelTab === 'folders'}
+          onclick={() => {
+            filterPanelTab = 'folders'
+          }}
+        >
+          Folders
+        </button>
+        <button
+          class:active={filterPanelTab === 'tags'}
+          type="button"
+          role="tab"
+          aria-selected={filterPanelTab === 'tags'}
+          onclick={() => {
+            filterPanelTab = 'tags'
+          }}
+        >
+          Tags{activeTagFilterCount > 0 ? ` ${activeTagFilterCount}` : ''}
+        </button>
+      </div>
+      {#if filterPanelTab === 'folders'}
+      <div role="tabpanel" aria-label="Folders">
       <button
         class="folder-row"
         type="button"
@@ -2440,6 +2541,56 @@
           </div>
         {/if}
       {/each}
+      </div>
+      {:else}
+      <div class="tag-filter-panel" role="tabpanel" aria-label="Tags">
+        <label class="tag-filter-search">
+          <Search size={14} />
+          <input
+            bind:value={tagFilterSearch}
+            type="text"
+            autocomplete="off"
+            placeholder="Filter tags"
+            aria-label="Filter tags"
+          />
+        </label>
+        {#if activeTagFilterCount > 0}
+          <button class="tag-filter-clear" type="button" onclick={clearTagFilters}>Clear tag filters</button>
+        {/if}
+        <div class="tag-filter-list" role="list">
+          {#each tagFilterRows as tag (tag.slug)}
+            {@const state = tagFilterState(tag)}
+            <div class:included={state === 'include'} class:excluded={state === 'exclude'} class="tag-filter-row" role="listitem">
+              <span>{tag.label}</span>
+              <span class="tag-filter-actions" role="group" aria-label={`Tag filter controls for ${tag.label}`}>
+                <button
+                  class:active={state === 'include'}
+                  type="button"
+                  aria-label={`Include ${tag.label}`}
+                  aria-pressed={state === 'include'}
+                  title={`Include ${tag.label}`}
+                  onclick={() => setTagFilter(tag, 'include')}
+                >
+                  <Check size={13} />
+                </button>
+                <button
+                  class:active={state === 'exclude'}
+                  type="button"
+                  aria-label={`Exclude ${tag.label}`}
+                  aria-pressed={state === 'exclude'}
+                  title={`Exclude ${tag.label}`}
+                  onclick={() => setTagFilter(tag, 'exclude')}
+                >
+                  <Ban size={13} />
+                </button>
+              </span>
+            </div>
+          {:else}
+            <div class="tag-filter-empty">No tags</div>
+          {/each}
+        </div>
+      </div>
+      {/if}
     </aside>
   </section>
 </main>

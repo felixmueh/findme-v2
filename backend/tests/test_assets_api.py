@@ -598,6 +598,78 @@ def test_batch_tags_full_backend_search_result_scope(tmp_path: Path) -> None:
     ] == []
 
 
+def test_batch_tags_search_scope_honors_tag_filter(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    write_image(source_root / "Goblins" / "Goblin A.png", size=(32, 24))
+    write_image(source_root / "Goblins" / "Goblin B.png", size=(33, 24))
+    write_image(source_root / "Goblins" / "Goblin C.png", size=(34, 24))
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+        rows = db.execute(
+            "SELECT asset_id, relative_path FROM assets ORDER BY relative_path"
+        ).fetchall()
+    rebuild_search_corpus(config, db_path)
+    ids_by_path = {row["relative_path"]: row["asset_id"] for row in rows}
+    client = TestClient(create_app(config, db_path))
+    client.put(
+        f"/api/assets/{ids_by_path['Goblins/Goblin A.png']}/tags",
+        json={"tags": ["Visible"]},
+    )
+    client.put(
+        f"/api/assets/{ids_by_path['Goblins/Goblin B.png']}/tags",
+        json={"tags": ["Hidden"]},
+    )
+    client.put(
+        f"/api/assets/{ids_by_path['Goblins/Goblin C.png']}/tags",
+        json={"tags": ["Visible"]},
+    )
+
+    response = client.post(
+        "/api/tags/batch",
+        json={
+            "scope": {
+                "kind": "search",
+                "q": "goblin",
+                "mode": "strict",
+                "where": {"tag": "visible"},
+            },
+            "add_tags": ["Reviewed"],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"matched": 2, "tagged": 2, "failed": []}
+    assert client.get(f"/api/assets/{ids_by_path['Goblins/Goblin A.png']}").json()[
+        "asset"
+    ]["tags"] == [
+        {"slug": "reviewed", "label": "Reviewed"},
+        {"slug": "visible", "label": "Visible"},
+    ]
+    assert client.get(f"/api/assets/{ids_by_path['Goblins/Goblin B.png']}").json()[
+        "asset"
+    ]["tags"] == [{"slug": "hidden", "label": "Hidden"}]
+    assert client.get(f"/api/assets/{ids_by_path['Goblins/Goblin C.png']}").json()[
+        "asset"
+    ]["tags"] == [
+        {"slug": "reviewed", "label": "Reviewed"},
+        {"slug": "visible", "label": "Visible"},
+    ]
+
+
 def test_batch_tags_folder_subtree_scope(tmp_path: Path) -> None:
     source_root = tmp_path / "assets"
     write_image(source_root / "Goblins" / "Goblin A.png")

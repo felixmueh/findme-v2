@@ -464,6 +464,12 @@ visible assets, all assets in the current result set, or all assets in a folder
 view. This does not imply general bulk file actions such as bulk downloads,
 bulk copy actions, deletes, moves, or edits.
 
+Exact tag filtering is exposed in the right filter pane as a `Tags` tab next to
+the existing `Folders` tab. Tag rows use the same green include and red exclude
+language as folder filtering, and the frontend compiles active tag rows into the
+server `where` expression. Active tag filters apply to search, browsing,
+directory state, and all-results batch tagging.
+
 Applying a tag to many assets should hash only the assets that receive metadata.
 The operation can be explicit and progress-reporting if needed; it should not
 turn normal browsing or indexing into a full-library hashing pass.
