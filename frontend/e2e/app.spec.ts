@@ -176,6 +176,49 @@ function sampleAssetAt(index: number) {
   }
 }
 
+async function routeSearchQuery(page: Page, assets: ReturnType<typeof sampleAssetAt>[]) {
+  const cards = assets.map((asset) => ({ kind: 'asset' as const, asset }))
+  const root = {
+    ...sampleRootDirectory(),
+    asset_count: assets.length,
+    matched_asset_count: assets.length,
+    included_asset_count: assets.length,
+  }
+  const maps = {
+    ...sampleDirectory(),
+    asset_count: assets.length,
+    matched_asset_count: assets.length,
+    included_asset_count: assets.length,
+  }
+
+  await page.route('**/api/search/query', async (route) => {
+    const body = route.request().postDataJSON() as {
+      result_shape?: string
+      directory_state_only?: boolean
+      limit?: number
+      offset?: number
+    }
+    if (body.result_shape === 'directories') {
+      await route.fulfill({
+        json: body.directory_state_only ? { directory_states: [root, maps].map(directoryState) } : { directories: [root, maps] },
+      })
+      return
+    }
+    const offset = body.offset ?? 0
+    const limit = body.limit ?? assets.length
+    const pageCards = cards.slice(offset, offset + limit)
+    const nextOffset = offset + pageCards.length
+    await route.fulfill({
+      json: {
+        total: assets.length,
+        cards: pageCards,
+        has_more: nextOffset < assets.length,
+        next_offset: nextOffset,
+      },
+    })
+  })
+}
+
 async function disableAutomaticInfiniteScroll(page: Page) {
   await page.addInitScript(() => {
     class ManualIntersectionObserver {
@@ -407,32 +450,31 @@ test('wheels over cards to scroll normally and ctrl-wheel grid width', async ({ 
   await expect(page.getByLabel('12 cards per row')).toBeVisible()
 })
 
-test('keeps the batch tag controls visible while scrolling results', async ({ page }) => {
+test('shows batch tag controls in the toolbar only while assets are selected', async ({ page }) => {
   const assets = Array.from({ length: 240 }, (_, index) => sampleAssetAt(index))
-  const cards = assets.map((asset) => ({ kind: 'asset', asset }))
-  const root = { ...sampleRootDirectory(), asset_count: assets.length, matched_asset_count: assets.length, included_asset_count: assets.length }
-  const maps = { ...sampleDirectory(), asset_count: assets.length, matched_asset_count: assets.length, included_asset_count: assets.length }
 
-  await page.unroute('**/api/search?*')
-  await page.unroute('**/api/search-with-directory-counts?*')
-  await page.route('**/api/search?*', async (route) => {
-    await route.fulfill({ json: { total: assets.length, cards, has_more: false, next_offset: assets.length } })
-  })
-  await page.route('**/api/search-with-directory-counts?*', async (route) => {
-    await route.fulfill({ json: { directories: [root, maps] } })
-  })
+  await routeSearchQuery(page, assets)
 
   await page.goto('/')
+  await expect(page.getByRole('group', { name: 'Batch tagging' })).toHaveCount(0)
+  await expect(page.getByRole('searchbox', { name: 'Search assets' })).toBeVisible()
+  await expect(page.getByRole('tab', { name: 'Exact' })).toBeVisible()
+
   await page.getByRole('button', { name: /asset-0\.png/i }).click({ modifiers: ['Control'] })
 
   const grid = page.locator('.tile-grid')
   const batchTagging = page.getByRole('group', { name: 'Batch tagging' })
   await expect(batchTagging).toContainText('1 selected')
+  await expect(page.getByRole('searchbox', { name: 'Search assets' })).toHaveCount(0)
+  await expect(page.getByRole('tab', { name: 'Exact' })).toHaveCount(0)
+  await expect(batchTagging.getByRole('button', { name: 'Folder' })).toHaveCount(0)
+  await expect(batchTagging.getByRole('button', { name: 'All results' })).toBeVisible()
   await expect.poll(() => grid.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true)
 
   const initialGridBox = await grid.boundingBox()
   const initialTagBox = await batchTagging.boundingBox()
   if (!initialGridBox || !initialTagBox) throw new Error('batch tag controls are missing')
+  expect(initialTagBox.y + initialTagBox.height).toBeLessThanOrEqual(initialGridBox.y + 2)
 
   await grid.evaluate((element) => {
     element.scrollTop = element.scrollHeight
@@ -445,7 +487,52 @@ test('keeps the batch tag controls visible while scrolling results', async ({ pa
   const scrolledTagBox = await batchTagging.boundingBox()
   if (!scrolledTagBox) throw new Error('batch tag controls are missing after scroll')
   expect(Math.abs(scrolledTagBox.y - initialTagBox.y)).toBeLessThanOrEqual(2)
-  expect(scrolledTagBox.y).toBeGreaterThanOrEqual(initialGridBox.y)
+  expect(scrolledTagBox.y + scrolledTagBox.height).toBeLessThanOrEqual(initialGridBox.y + 2)
+})
+
+test('selects all visible assets with ctrl-a', async ({ page }) => {
+  const assets = Array.from({ length: 3 }, (_, index) => sampleAssetAt(index))
+
+  await routeSearchQuery(page, assets)
+
+  await page.goto('/')
+  await expect(page.getByRole('button', { name: /asset-0\.png/i })).toBeVisible()
+
+  await page.keyboard.press('Control+A')
+
+  await expect(page.getByRole('group', { name: 'Batch tagging' })).toContainText('3 selected')
+  await expect(page.locator('.asset-tile.multi-selected')).toHaveCount(3)
+})
+
+test('keeps the result scroll position after tagging selected assets', async ({ page }) => {
+  const assets = Array.from({ length: 240 }, (_, index) => sampleAssetAt(index))
+
+  await routeSearchQuery(page, assets)
+  await page.route('**/api/tags', async (route) => {
+    await route.fulfill({ json: { tags: [{ slug: 'favorite', label: 'favorite' }] } })
+  })
+  await page.route('**/api/tags/batch', async (route) => {
+    await route.fulfill({ json: { matched: 1, tagged: 1, failed: [] } })
+  })
+
+  await page.goto('/')
+  await expect(page.getByRole('button', { name: /asset-0\.png/i })).toBeVisible()
+  await page.getByRole('button', { name: 'Load more' }).click()
+  await expect(page.getByRole('button', { name: /asset-130\.png/i })).toBeVisible()
+
+  const grid = page.locator('.tile-grid')
+  await grid.evaluate((element) => {
+    element.scrollTop = 1600
+  })
+  await expect.poll(() => grid.evaluate((element) => element.scrollTop)).toBeGreaterThan(500)
+  const scrollBeforeTagging = await grid.evaluate((element) => element.scrollTop)
+
+  await page.getByRole('button', { name: /asset-130\.png/i }).click({ modifiers: ['Control'] })
+  await page.getByRole('textbox', { name: 'Batch tag' }).fill('favorite')
+  await page.getByRole('button', { name: 'Apply' }).click()
+
+  await expect(page.getByRole('group', { name: 'Batch tagging' })).toContainText('Updated 1')
+  await expect.poll(() => grid.evaluate((element) => element.scrollTop)).toBeGreaterThan(scrollBeforeTagging - 20)
 })
 
 test('loads the full image after the thumbnail when a card is larger than its thumbnail', async ({ page }) => {

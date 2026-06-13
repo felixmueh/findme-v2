@@ -366,8 +366,8 @@
     }
   }
 
-  async function loadAssets(revision = searchRevision) {
-    const loaded = await loadAssetPage({ offset: 0, append: false, revision, limit: pageSize })
+  async function loadAssets(revision = searchRevision, limit = pageSize) {
+    const loaded = await loadAssetPage({ offset: 0, append: false, revision, limit })
     if (!loaded || revision !== searchRevision) return
     await tick()
     await nextAnimationFrame()
@@ -645,6 +645,13 @@
     lastMultiSelectedAssetId = ''
   }
 
+  function selectAllVisibleAssets() {
+    const ids = visibleSelectionAssetIds()
+    if (ids.length === 0) return
+    selectedAssetIds = new Set(ids)
+    lastMultiSelectedAssetId = ids[ids.length - 1] ?? ''
+  }
+
   async function submitSelectedAssetTag(event: KeyboardEvent) {
     if (event.key !== 'Enter') return
     event.preventDefault()
@@ -776,23 +783,12 @@
     })
   }
 
-  async function applyBatchTagToFolderView() {
-    const label = batchTagInput.trim()
-    if (!label || !viewDirectory) return
-    await runBatchTagRequest({
-      scope: {
-        kind: 'folder',
-        source_id: viewDirectory.source_id,
-        directory: viewDirectory.path,
-        search_session: searchSessionId,
-      },
-      add_tags: [label],
-    })
-  }
-
   async function runBatchTagRequest(payload: object) {
     tagging = true
     tagStatus = ''
+    const previousGridScrollTop = tileGridElement?.scrollTop
+    const previousGridScrollLeft = tileGridElement?.scrollLeft
+    const refreshLimit = Math.max(pageSize, nextAssetOffset || pageSize)
     try {
       const response = await fetch('/api/tags/batch', {
         method: 'POST',
@@ -806,7 +802,11 @@
         : `Updated ${body.tagged}`
       batchTagInput = ''
       const revision = ++searchRevision
-      await loadAssets(revision)
+      await loadAssets(revision, refreshLimit)
+      if (tileGridElement && previousGridScrollTop !== undefined && previousGridScrollLeft !== undefined) {
+        tileGridElement.scrollTop = previousGridScrollTop
+        tileGridElement.scrollLeft = previousGridScrollLeft
+      }
       if (selected) void selectAsset(selected.asset)
       void loadKnownTags()
     } catch {
@@ -966,6 +966,11 @@
     if (event.key === 'Enter' && target === searchInput) {
       event.preventDefault()
       void refreshSearchFromInput()
+      return
+    }
+    if (!isTyping && (event.ctrlKey || event.metaKey) && event.key.toLocaleLowerCase() === 'a') {
+      event.preventDefault()
+      selectAllVisibleAssets()
       return
     }
     if (event.key === 'Escape') {
@@ -1798,19 +1803,79 @@
   <header class="toolbar">
     <div class="brand">Findme</div>
 
-    <label class="search-field">
-      <Search size={17} />
-      <input
-        bind:this={searchInput}
-        bind:value={query}
-        type="search"
-        autocomplete="off"
-        aria-label="Search assets"
-        placeholder="Search assets"
-      />
-    </label>
+    {#if multiSelectedCount > 0}
+      <div class="batch-tag-bar toolbar-batch-tag-bar" role="group" aria-label="Batch tagging">
+        <span class="selection-count">{tagStatus || `${multiSelectedCount} selected`}</span>
+        <label>
+          <Tags size={15} />
+          <input
+            bind:value={batchTagInput}
+            type="text"
+            autocomplete="off"
+            placeholder="Add tag"
+            aria-label="Batch tag"
+            disabled={tagging}
+            onfocus={() => {
+              batchTagInputFocused = true
+            }}
+            onblur={() => {
+              window.setTimeout(() => {
+                batchTagInputFocused = false
+              }, 120)
+            }}
+            onkeydown={(event) => {
+              if (event.key === 'Enter') void applyBatchTagToSelected()
+            }}
+          />
+          {#if batchTagInputFocused && batchTagSuggestions.length > 0}
+            <span class="tag-suggestions" role="listbox" aria-label="Existing tags">
+              {#each batchTagSuggestions as tag (tag.slug)}
+                <button type="button" role="option" aria-selected="false" onclick={() => void useBatchTagSuggestion(tag)}>
+                  {tag.label}
+                </button>
+              {/each}
+            </span>
+          {/if}
+        </label>
+        <button
+          type="button"
+          onclick={applyBatchTagToSelected}
+          disabled={tagging || !batchTagInput.trim()}
+        >
+          Apply
+        </button>
+        <button type="button" onclick={applyBatchTagToAllResults} disabled={tagging || !batchTagInput.trim()}>
+          All results
+        </button>
+        <button type="button" onclick={clearMultiSelection} disabled={tagging}>
+          Clear
+        </button>
+        {#if selectedBatchTags.length > 0}
+          <span class="selected-tag-list" aria-label="Selected asset tags">
+            {#each selectedBatchTags as tag (tag.slug)}
+              <button type="button" class="tag-chip" onclick={() => removeBatchTagFromSelected(tag)} disabled={tagging}>
+                <span>{tag.label}</span>
+                <X size={12} />
+              </button>
+            {/each}
+          </span>
+        {/if}
+      </div>
+    {:else}
+      <label class="search-field">
+        <Search size={17} />
+        <input
+          bind:this={searchInput}
+          bind:value={query}
+          type="search"
+          autocomplete="off"
+          aria-label="Search assets"
+          placeholder="Search assets"
+        />
+      </label>
 
-    <SearchLaneTabs value={searchMode} onSelect={setSearchMode} />
+      <SearchLaneTabs value={searchMode} onSelect={setSearchMode} />
+    {/if}
 
     <div class="profile-controls" role="group" aria-label="Search profile">
       <select aria-label="Search profile" value={profileSession?.active_profile_id ?? ''} onchange={selectProfile}>
@@ -1873,79 +1938,6 @@
   <section class="workspace">
     <section class="main-region" aria-label="Assets">
       <div class="tile-grid" bind:this={tileGridElement} style={gridWidthStyle} onwheel={scrollTileGridWithWheel}>
-        <div class="batch-tag-bar" role="group" aria-label="Batch tagging">
-          <span>
-            {#if multiSelectedCount > 0}
-              {multiSelectedCount} selected
-            {:else if tagStatus}
-              {tagStatus}
-            {:else}
-              Tags
-            {/if}
-          </span>
-          <label>
-            <Tags size={15} />
-            <input
-              bind:value={batchTagInput}
-              type="text"
-              autocomplete="off"
-              placeholder="Add tag"
-              aria-label="Batch tag"
-              disabled={tagging}
-              onfocus={() => {
-                batchTagInputFocused = true
-              }}
-              onblur={() => {
-                window.setTimeout(() => {
-                  batchTagInputFocused = false
-                }, 120)
-              }}
-              onkeydown={(event) => {
-                if (event.key === 'Enter') void applyBatchTagToSelected()
-              }}
-            />
-            {#if batchTagInputFocused && batchTagSuggestions.length > 0}
-              <span class="tag-suggestions" role="listbox" aria-label="Existing tags">
-                {#each batchTagSuggestions as tag (tag.slug)}
-                  <button type="button" role="option" aria-selected="false" onclick={() => void useBatchTagSuggestion(tag)}>
-                    {tag.label}
-                  </button>
-                {/each}
-              </span>
-            {/if}
-          </label>
-          <button
-            type="button"
-            onclick={applyBatchTagToSelected}
-            disabled={tagging || multiSelectedCount === 0 || !batchTagInput.trim()}
-          >
-            Apply
-          </button>
-          <button type="button" onclick={applyBatchTagToAllResults} disabled={tagging || !batchTagInput.trim()}>
-            All results
-          </button>
-          <button
-            type="button"
-            onclick={applyBatchTagToFolderView}
-            disabled={tagging || !viewDirectory || !batchTagInput.trim()}
-          >
-            Folder
-          </button>
-          <button type="button" onclick={clearMultiSelection} disabled={tagging || multiSelectedCount === 0}>
-            Clear
-          </button>
-        </div>
-        {#if multiSelectedCount > 0 && selectedBatchTags.length > 0}
-          <div class="selection-tag-bar" role="group" aria-label="Selected asset tags">
-            <span>Remove</span>
-            {#each selectedBatchTags as tag (tag.slug)}
-              <button type="button" class="tag-chip" onclick={() => removeBatchTagFromSelected(tag)} disabled={tagging}>
-                <span>{tag.label}</span>
-                <X size={12} />
-              </button>
-            {/each}
-          </div>
-        {/if}
         {#each visibleEntries as entry (visibleEntryKey(entry))}
           {#if entry.kind === 'collection'}
             {@const collection = entry.collection}

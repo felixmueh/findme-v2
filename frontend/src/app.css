@@ -1244,42 +1244,28 @@ button.folder-row.retained {
   color: var(--faint);
 }
 
+.toolbar-batch-tag-bar {
+  grid-column: 2 / 4;
+}
+
 .batch-tag-bar {
-  position: sticky;
-  top: 0;
-  z-index: 4;
-  grid-column: 1 / -1;
   min-width: 0;
+  height: 36px;
   display: grid;
-  grid-template-columns: auto minmax(150px, 260px) repeat(4, auto);
+  grid-template-columns: auto minmax(130px, 230px) repeat(3, auto) minmax(0, 1fr);
   gap: 6px;
   align-items: center;
-  padding: 7px 8px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--surface);
+  overflow: visible;
 }
 
-.selection-tag-bar {
-  grid-column: 1 / -1;
-  min-width: 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-  align-items: center;
-  padding: 0 8px 4px;
-}
-
-.batch-tag-bar > span {
+.batch-tag-bar .selection-count {
   min-width: 82px;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--muted);
   font-size: 12px;
   white-space: nowrap;
-}
-
-.selection-tag-bar > span {
-  color: var(--muted);
-  font-size: 12px;
 }
 
 .batch-tag-bar button {
@@ -1296,6 +1282,18 @@ button.folder-row.retained {
   color: var(--faint);
   border-color: var(--border);
   background: transparent;
+}
+
+.selected-tag-list {
+  min-width: 0;
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  overflow: hidden;
+}
+
+.selected-tag-list .tag-chip {
+  max-width: 140px;
 }
 
 @keyframes spin {
@@ -1331,6 +1329,15 @@ button.folder-row.retained {
   .toolbar {
     grid-template-columns: 1fr;
     grid-template-rows: repeat(6, auto);
+  }
+
+  .toolbar-batch-tag-bar {
+    grid-column: 1;
+  }
+
+  .batch-tag-bar {
+    height: auto;
+    grid-template-columns: 1fr;
   }
 
   .status {
