@@ -468,7 +468,9 @@ Exact tag filtering is exposed in the right filter pane as a `Tags` tab next to
 the existing `Folders` tab. Tag rows use the same green include and red exclude
 language as folder filtering, and the frontend compiles active tag rows into the
 server `where` expression. Active tag filters apply to search, browsing,
-directory state, and all-results batch tagging.
+directory state, and all-results batch tagging. Include tags default to
+`All` matching. A compact `All | Any` control can switch included tags between
+AND and OR semantics, while excluded tags always remain mandatory NOT clauses.
 
 Applying a tag to many assets should hash only the assets that receive metadata.
 The operation can be explicit and progress-reporting if needed; it should not

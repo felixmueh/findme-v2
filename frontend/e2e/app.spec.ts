@@ -603,6 +603,37 @@ test('filters results from the tags sidebar tab', async ({ page }) => {
   await page.getByRole('button', { name: 'Exclude hidden' }).click()
   await excludeRequest
   await expect(page.getByRole('button', { name: 'Exclude hidden' })).toHaveClass(/active/)
+
+  const secondIncludeRequest = page.waitForRequest((request) => {
+    const url = new URL(request.url())
+    if (url.pathname !== '/api/search/query' || request.method() !== 'POST') return false
+    const body = request.postDataJSON() as { where?: unknown; result_shape?: string }
+    return (
+      body.result_shape !== 'directories' &&
+      JSON.stringify(body.where) ===
+        JSON.stringify({
+          and: [{ tag: 'favorite' }, { tag: 'npc' }, { not: { tag: 'hidden' } }],
+        })
+    )
+  })
+  await page.getByRole('button', { name: 'Include NPC' }).click()
+  await secondIncludeRequest
+
+  const anyModeRequest = page.waitForRequest((request) => {
+    const url = new URL(request.url())
+    if (url.pathname !== '/api/search/query' || request.method() !== 'POST') return false
+    const body = request.postDataJSON() as { where?: unknown; result_shape?: string }
+    return (
+      body.result_shape !== 'directories' &&
+      JSON.stringify(body.where) ===
+        JSON.stringify({
+          and: [{ or: [{ tag: 'favorite' }, { tag: 'npc' }] }, { not: { tag: 'hidden' } }],
+        })
+    )
+  })
+  await page.getByRole('button', { name: 'Any included tag' }).click()
+  await anyModeRequest
+  await expect(page.getByRole('button', { name: 'Any included tag' })).toHaveClass(/active/)
 })
 
 test('loads the full image after the thumbnail when a card is larger than its thumbnail', async ({ page }) => {

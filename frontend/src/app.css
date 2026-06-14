@@ -1289,6 +1289,34 @@ button.folder-row.retained {
   font-size: 12px;
 }
 
+.tag-include-mode {
+  height: 30px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.tag-include-mode button {
+  min-width: 0;
+  border-right: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.tag-include-mode button:last-child {
+  border-right: 0;
+}
+
+.tag-include-mode button:hover,
+.tag-include-mode button.active {
+  background: var(--surface-alt);
+  color: var(--text);
+}
+
 .tag-filter-list {
   min-width: 0;
   display: grid;

@@ -72,6 +72,7 @@
   type FilterRuleState = 'whitelist' | 'blacklist'
   type FilterPanelTab = 'folders' | 'tags'
   type TagFilterState = 'include' | 'exclude'
+  type TagIncludeMode = 'all' | 'any'
   type TagWhereClause =
     | { tag: string }
     | { not: TagWhereClause }
@@ -152,6 +153,7 @@
   let filterPanelTab = $state<FilterPanelTab>('folders')
   let tagFilterSearch = $state('')
   let tagFilterStates = $state<Record<string, TagFilterState>>({})
+  let tagIncludeMode = $state<TagIncludeMode>('all')
   let assetTagInputFocused = $state(false)
   let batchTagInputFocused = $state(false)
   let tagging = $state(false)
@@ -235,7 +237,7 @@
       : ''
   )
   const resultLabel = $derived(`${resultTotal} ${resultTotal === 1 ? 'card' : 'cards'}`)
-  const activeTagFilterKey = $derived(tagFilterKey(tagFilterStates))
+  const activeTagFilterKey = $derived(`${tagIncludeMode}:${tagFilterKey(tagFilterStates)}`)
   const activeTagFilterCount = $derived(Object.keys(tagFilterStates).length)
   const tagFilterRows = $derived.by(() => filteredTagRows(knownTags, tagFilterStates, tagFilterSearch))
   const gridWidthStyle = $derived(`--asset-grid-columns: ${gridCardsPerRow}`)
@@ -1222,23 +1224,36 @@
     tagFilterStates = {}
   }
 
+  function setTagIncludeMode(mode: TagIncludeMode) {
+    tagIncludeMode = mode
+  }
+
   function tagFilterState(tag: Tag) {
     return tagFilterStates[tag.slug] ?? null
   }
 
   function tagWhereClause(): TagWhereClause | undefined {
-    const clauses: TagWhereClause[] = []
+    const includeClauses: TagWhereClause[] = []
+    const excludeClauses: TagWhereClause[] = []
     const entries = Object.entries(tagFilterStates).sort(([left], [right]) => left.localeCompare(right))
     for (const [slug, state] of entries) {
       if (state === 'include') {
-        clauses.push({ tag: slug })
+        includeClauses.push({ tag: slug })
       } else {
-        clauses.push({ not: { tag: slug } })
+        excludeClauses.push({ not: { tag: slug } })
       }
     }
+    const clauses = [...includeGroupClause(includeClauses), ...excludeClauses]
     if (clauses.length === 0) return undefined
     if (clauses.length === 1) return clauses[0]
     return { and: clauses }
+  }
+
+  function includeGroupClause(clauses: TagWhereClause[]) {
+    if (clauses.length === 0) return []
+    if (clauses.length === 1) return clauses
+    if (tagIncludeMode === 'any') return [{ or: clauses }]
+    return clauses
   }
 
   async function useAssetTagSuggestion(tag: Tag) {
@@ -2557,6 +2572,26 @@
         {#if activeTagFilterCount > 0}
           <button class="tag-filter-clear" type="button" onclick={clearTagFilters}>Clear tag filters</button>
         {/if}
+        <span class="tag-include-mode" role="group" aria-label="Tag include mode">
+          <button
+            class:active={tagIncludeMode === 'all'}
+            type="button"
+            aria-label="All included tags"
+            aria-pressed={tagIncludeMode === 'all'}
+            onclick={() => setTagIncludeMode('all')}
+          >
+            All
+          </button>
+          <button
+            class:active={tagIncludeMode === 'any'}
+            type="button"
+            aria-label="Any included tag"
+            aria-pressed={tagIncludeMode === 'any'}
+            onclick={() => setTagIncludeMode('any')}
+          >
+            Any
+          </button>
+        </span>
         <div class="tag-filter-list" role="list">
           {#each tagFilterRows as tag (tag.slug)}
             {@const state = tagFilterState(tag)}
