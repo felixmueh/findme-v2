@@ -112,6 +112,53 @@ def test_count_and_index_source_ids_filter_only_target_source(tmp_path: Path) ->
     assert rows[0]["source_id"] == "maps"
 
 
+def test_index_sources_directory_prefix_replaces_only_that_subtree(tmp_path: Path) -> None:
+    source_root = tmp_path / "assets"
+    write_image(source_root / "Maps" / "Keep.png")
+    write_image(source_root / "Maps" / "Old.png")
+    write_image(source_root / "Tokens" / "Goblin.png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+
+    with connect(tmp_path / "findme.sqlite3") as db:
+        initialize_database(db)
+        index_sources(db, config)
+        (source_root / "Maps" / "Old.png").unlink()
+        write_image(source_root / "Maps" / "New.png")
+        (source_root / "Tokens" / "Goblin.png").unlink()
+
+        summary = index_sources(
+            db,
+            config,
+            source_ids=frozenset({"dnd"}),
+            directory_prefixes={"dnd": "Maps"},
+        )
+        rows = db.execute(
+            """
+            SELECT relative_path
+            FROM assets
+            ORDER BY relative_path
+            """
+        ).fetchall()
+
+    assert summary.scanned_files == 2
+    assert [tuple(row) for row in rows] == [
+        ("Maps/Keep.png",),
+        ("Maps/New.png",),
+        ("Tokens/Goblin.png",),
+    ]
+
+
 def test_index_sources_replaces_missing_assets_for_source(tmp_path: Path) -> None:
     source_root = tmp_path / "assets"
     source_root.mkdir()

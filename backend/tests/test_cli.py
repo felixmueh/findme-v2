@@ -3,7 +3,9 @@ from pathlib import Path
 from PIL import Image
 
 from findme.cli import run
-from findme.db import connect
+from findme.config import load_config
+from findme.db import connect, initialize_database, search_corpus_is_stale
+from findme.indexer import index_sources
 from findme.search_corpus import load_search_corpus_snapshot, search_corpus_snapshot_path
 
 from helpers import write_image
@@ -70,6 +72,58 @@ media_extensions = [".webp"]
     assert metadata.collection_key == "dnd\x00\x00dragon"
     assert metadata.variant_sort_key == "\x1fdragon.webp"
     assert metadata.has_variant is False
+
+
+def test_cli_serve_repairs_stale_search_corpus_before_starting(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source_root = tmp_path / "assets"
+    source_root.mkdir()
+    write_image(source_root / "dragon.webp")
+    config_path = tmp_path / "findme.toml"
+    data_root = tmp_path / "data"
+    config_path.write_text(
+        f"""
+[app]
+data_root = "{data_root}"
+
+[[sources]]
+id = "dnd"
+display_name = "DND"
+root = "{source_root}"
+priority = 10
+media_extensions = [".webp"]
+""",
+        encoding="utf-8",
+    )
+    assert run(["index", "--config", str(config_path)]) == 0
+
+    write_image(source_root / "goblin.webp")
+    config = load_config(config_path)
+    db_path = data_root / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+        assert search_corpus_is_stale(db) is True
+
+    served = False
+
+    def record_serve(*_args, **_kwargs) -> None:
+        nonlocal served
+        served = True
+        with connect(db_path) as db:
+            assert search_corpus_is_stale(db) is False
+
+    monkeypatch.setattr("findme.cli.uvicorn.run", record_serve)
+
+    assert run(["serve", "--config", str(config_path)]) == 0
+    assert served is True
+    snapshot = load_search_corpus_snapshot(search_corpus_snapshot_path(data_root))
+    assert sorted(asset.relative_path for asset in snapshot.assets) == [
+        "dragon.webp",
+        "goblin.webp",
+    ]
 
 
 def test_cli_index_can_rebuild_thumbnail_cache(tmp_path: Path) -> None:

@@ -219,6 +219,124 @@ a:focus-visible {
   animation: spin 0.8s linear infinite;
 }
 
+.index-job-button {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+}
+
+.index-job-button:hover,
+.index-job-button.active {
+  border-color: var(--border-strong);
+  background: var(--surface-alt);
+  color: var(--text);
+}
+
+.index-job-button svg {
+  animation: spin 0.8s linear infinite;
+}
+
+.index-job-overlay {
+  position: fixed;
+  inset: 52px 0 0;
+  z-index: 70;
+  display: grid;
+  place-items: start end;
+  padding: 10px;
+  background: rgba(28, 25, 23, 0.18);
+}
+
+.index-job-dialog {
+  width: min(400px, calc(100vw - 20px));
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 2px 8px rgba(28, 25, 23, 0.14);
+}
+
+.index-job-dialog-header,
+.index-job-time {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.index-job-dialog-header button {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+}
+
+.index-job-dialog-header button:hover {
+  background: var(--surface-alt);
+  color: var(--text);
+}
+
+.index-job-summary {
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.index-job-summary > span:first-child,
+.index-job-detail,
+.index-job-time,
+.index-job-counts dt {
+  color: var(--muted);
+}
+
+.index-job-detail {
+  overflow-wrap: anywhere;
+}
+
+.index-job-counts {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.index-job-counts div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.index-job-counts dt,
+.index-job-counts dd {
+  margin: 0;
+}
+
+.index-job-counts dt {
+  overflow: hidden;
+  font-size: 11px;
+  text-overflow: ellipsis;
+}
+
+.index-job-counts dd {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.index-job-time {
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+}
+
 .workspace {
   min-height: 0;
   display: grid;
@@ -1190,6 +1308,41 @@ button.folder-row.retained {
   border-radius: 6px;
   background: var(--surface);
   box-shadow: 0 2px 8px rgb(0 0 0 / 16%);
+}
+
+.folder-context-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 148px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  box-shadow: 0 5px 18px rgb(0 0 0 / 18%);
+}
+
+.folder-context-menu button {
+  width: 100%;
+  height: 28px;
+  display: inline-flex;
+  gap: 7px;
+  align-items: center;
+  justify-content: flex-start;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  padding: 0 8px;
+  font-size: 12px;
+  text-align: left;
+}
+
+.folder-context-menu button:hover,
+.folder-context-menu button:focus-visible {
+  background: var(--surface-alt);
+}
+
+.folder-context-menu button:disabled {
+  color: var(--faint);
 }
 
 .scope-actions {

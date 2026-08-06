@@ -36,6 +36,7 @@ IGNORED_DIRS = frozenset({".findme"})
 @dataclass(frozen=True)
 class IndexSummary:
     scanned_files: int = 0
+    new_assets: int = 0
     written_assets: int = 0
     generated_thumbnails: int = 0
     thumbnail_failures: tuple["ThumbnailFailure", ...] = ()
@@ -56,6 +57,7 @@ class ProgressReporter(Protocol):
 @dataclass(frozen=True)
 class IndexProgress:
     scanned_files: int
+    new_assets: int
     written_assets: int
     generated_thumbnails: int
     failed_thumbnails: int
@@ -130,6 +132,7 @@ def index_sources(
     config: AppConfig,
     *,
     source_ids: frozenset[str] | None = None,
+    directory_prefixes: dict[str, str] | None = None,
     thumbnail_workers: int | None = None,
     retry_failed_thumbnails: bool = False,
     rebuild_thumbnails: bool = False,
@@ -137,6 +140,7 @@ def index_sources(
     progress: ProgressReporter | None = None,
 ) -> IndexSummary:
     scanned = 0
+    new = 0
     written = 0
     thumbnails = 0
     thumbnail_failures: list[ThumbnailFailure] = []
@@ -154,16 +158,31 @@ def index_sources(
     needs_existing_metadata = retry_failed_thumbnails or rebuild_thumbnails
 
     for source in selected_sources:
+        directory_prefix = (
+            _normalize_directory_prefix(directory_prefixes[source.id])
+            if directory_prefixes is not None and source.id in directory_prefixes
+            else None
+        )
         index_changed = _upsert_source(db, source) or index_changed
         source_assets = (
-            _load_source_assets(db, source, progress=progress)
+            _load_source_assets(
+                db,
+                source,
+                directory_prefix=directory_prefix,
+                progress=progress,
+            )
             if needs_existing_metadata
             else {}
         )
         source_asset_paths = (
             set(source_assets)
             if needs_existing_metadata
-            else _load_source_asset_paths(db, source, progress=progress)
+            else _load_source_asset_paths(
+                db,
+                source,
+                directory_prefix=directory_prefix,
+                progress=progress,
+            )
         )
         missing_media_metadata_paths = (
             _source_paths_missing_media_metadata(source_assets)
@@ -171,18 +190,27 @@ def index_sources(
             else _load_source_asset_paths_missing_media_metadata(
                 db,
                 source,
+                directory_prefix=directory_prefix,
                 progress=progress,
             )
         )
         if missing_media_metadata_paths and not source_assets:
-            source_assets = _load_source_assets(db, source, progress=progress)
+            source_assets = _load_source_assets(
+                db,
+                source,
+                directory_prefix=directory_prefix,
+                progress=progress,
+            )
             source_asset_paths = set(source_assets)
         source_scan_started = time.monotonic()
 
         seen_paths: set[str] = set()
         new_assets: list[PreparedAsset] = []
         updated_assets: list[PreparedAsset] = []
-        for discovered in _iter_source_file_entries(source):
+        for discovered in _iter_source_file_entries(
+            source,
+            directory_prefix=directory_prefix,
+        ):
             seen_paths.add(discovered.relative_path)
             if discovered.relative_path not in source_asset_paths:
                 pending = _pending_asset(source, discovered.file_path)
@@ -199,6 +227,7 @@ def index_sources(
                     progress(
                         IndexProgress(
                             scanned_files=scanned,
+                            new_assets=new,
                             written_assets=written,
                             generated_thumbnails=thumbnails,
                             failed_thumbnails=len(thumbnail_failures),
@@ -225,8 +254,9 @@ def index_sources(
             if progress is not None:
                 progress(
                     IndexProgress(
-                        scanned_files=scanned,
-                        written_assets=written,
+                            scanned_files=scanned,
+                            new_assets=new,
+                            written_assets=written,
                         generated_thumbnails=thumbnails,
                         failed_thumbnails=len(thumbnail_failures),
                         current_source_id=source.id,
@@ -239,11 +269,13 @@ def index_sources(
                     )
                 )
 
-        written += _insert_assets(
+        inserted = _insert_assets(
             db,
             new_assets,
             progress=progress,
         )
+        new += inserted
+        written += inserted
         written += _update_assets(
             db,
             updated_assets,
@@ -264,7 +296,7 @@ def index_sources(
                 )
             )
 
-    if source_ids is None:
+    if source_ids is None and directory_prefixes is None:
         index_changed = _delete_unconfigured_sources(db, config.sources) or index_changed
     if index_changed:
         refresh_index_fingerprint(db)
@@ -292,6 +324,7 @@ def index_sources(
             progress(
                 IndexProgress(
                     scanned_files=scanned,
+                    new_assets=new,
                     written_assets=written,
                     generated_thumbnails=thumbnails,
                     failed_thumbnails=len(thumbnail_failures),
@@ -310,6 +343,7 @@ def index_sources(
 
     return IndexSummary(
         scanned_files=scanned,
+        new_assets=new,
         written_assets=written,
         generated_thumbnails=thumbnails,
         thumbnail_failures=tuple(thumbnail_failures),
@@ -373,13 +407,23 @@ def _iter_source_files(source: SourceConfig) -> Iterator[Path]:
         yield discovered.file_path
 
 
-def _iter_source_file_entries(source: SourceConfig) -> Iterator[DiscoveredAsset]:
+def _iter_source_file_entries(
+    source: SourceConfig,
+    *,
+    directory_prefix: str | None = None,
+) -> Iterator[DiscoveredAsset]:
     extensions = source.media_extensions
     root = os.fspath(source.root)
     root_prefix = root.rstrip(os.sep) + os.sep
     root_prefix_len = len(root_prefix)
+    scan_root = source.root
+    normalized_prefix = _normalize_directory_prefix(directory_prefix)
+    if normalized_prefix:
+        scan_root = source.root.joinpath(*normalized_prefix.split("/"))
+    if not scan_root.is_dir():
+        return
     for entry in powerwalk.walk(
-        source.root,
+        scan_root,
         ignore_hidden=False,
         respect_git_ignore=False,
         respect_global_git_ignore=False,
@@ -1024,15 +1068,45 @@ def _prepare_asset(
         )
 
 
+def _normalize_directory_prefix(directory_prefix: str | None) -> str:
+    if directory_prefix is None:
+        return ""
+    return directory_prefix.strip("/")
+
+
+def _source_asset_scope(
+    source_id: str,
+    directory_prefix: str | None,
+) -> tuple[str, tuple[str, ...]]:
+    normalized_prefix = _normalize_directory_prefix(directory_prefix)
+    if not normalized_prefix:
+        return "source_id = ?", (source_id,)
+    return (
+        "source_id = ? AND relative_path LIKE ? ESCAPE '\\'",
+        (source_id, f"{_escape_like(normalized_prefix)}/%"),
+    )
+
+
+def _escape_like(value: str) -> str:
+    return (
+        value
+        .replace("\\", "\\\\")
+        .replace("%", "\\%")
+        .replace("_", "\\_")
+    )
+
+
 def _load_source_assets(
     db: sqlite3.Connection,
     source: SourceConfig,
     *,
+    directory_prefix: str | None = None,
     progress: ProgressReporter | None = None,
 ) -> dict[str, CurrentAsset]:
     started = time.monotonic()
+    where_sql, params = _source_asset_scope(source.id, directory_prefix)
     rows = db.execute(
-        """
+        f"""
         SELECT
           relative_path,
           absolute_path,
@@ -1046,9 +1120,9 @@ def _load_source_assets(
           thumbnail_width,
           thumbnail_height
         FROM assets
-        WHERE source_id = ?
+        WHERE {where_sql}
         """,
-        (source.id,),
+        params,
     ).fetchall()
     source_assets: dict[str, CurrentAsset] = {}
     for row in rows:
@@ -1085,16 +1159,18 @@ def _load_source_asset_paths(
     db: sqlite3.Connection,
     source: SourceConfig,
     *,
+    directory_prefix: str | None = None,
     progress: ProgressReporter | None = None,
 ) -> set[str]:
     started = time.monotonic()
+    where_sql, params = _source_asset_scope(source.id, directory_prefix)
     rows = db.execute(
-        """
+        f"""
         SELECT relative_path
         FROM assets
-        WHERE source_id = ?
+        WHERE {where_sql}
         """,
-        (source.id,),
+        params,
     ).fetchall()
     paths = {row["relative_path"] for row in rows}
     if progress is not None:
@@ -1115,14 +1191,16 @@ def _load_source_asset_paths_missing_media_metadata(
     db: sqlite3.Connection,
     source: SourceConfig,
     *,
+    directory_prefix: str | None = None,
     progress: ProgressReporter | None = None,
 ) -> set[str]:
     started = time.monotonic()
+    where_sql, params = _source_asset_scope(source.id, directory_prefix)
     rows = db.execute(
-        """
+        f"""
         SELECT relative_path
         FROM assets
-        WHERE source_id = ?
+        WHERE {where_sql}
           AND (
             (
               media_type IN ('image', 'video')
@@ -1135,7 +1213,7 @@ def _load_source_asset_paths_missing_media_metadata(
             )
           )
         """,
-        (source.id,),
+        params,
     ).fetchall()
     paths = {row["relative_path"] for row in rows}
     if progress is not None and paths:

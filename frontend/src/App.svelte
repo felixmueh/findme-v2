@@ -134,6 +134,36 @@
     failed: Array<{ asset_id: string; message: string }>
   }
 
+  type IndexJob = {
+    id: string
+    status: 'queued' | 'running' | 'succeeded' | 'failed'
+    scope: {
+      kind: 'folder'
+      source_id: string
+      directory: string
+    }
+    phase: string
+    scanned_files: number
+    new_assets: number
+    written_assets: number
+    generated_thumbnails: number
+    failed_thumbnails: number
+    detail: string | null
+    current_source_id: string | null
+    current_relative_path: string | null
+    current_action: string | null
+    elapsed_seconds: number
+    error: string | null
+    started_at: number
+    finished_at: number | null
+  }
+
+  type FolderContextMenu = {
+    directory: DirectoryNode
+    x: number
+    y: number
+  }
+
   let query = $state('')
   let searchMode = $state<SearchMode>('strict')
   let profiles = $state<SearchProfile[]>([])
@@ -158,6 +188,9 @@
   let batchTagInputFocused = $state(false)
   let tagging = $state(false)
   let tagStatus = $state('')
+  let indexJob = $state<IndexJob | null>(null)
+  let indexJobPanelOpen = $state(false)
+  let folderContextMenu = $state<FolderContextMenu | null>(null)
   let hoveredAsset = $state<Asset | null>(null)
   let hoveredCollection = $state<CollectionCard | null>(null)
   let qualityTargetKey = $state('')
@@ -185,6 +218,8 @@
   let collectionCycleTimer: number | undefined
   let assetRequestController: AbortController | undefined
   let directoryRequestController: AbortController | undefined
+  let indexJobPollTimer: number | undefined
+  let indexJobClearTimer: number | undefined
   let hoverAudioElement = $state<HTMLAudioElement>()
   let hoverPreviewMuted = $state(true)
   let hoverPreviewVolume = $state(0.5)
@@ -237,6 +272,8 @@
       : ''
   )
   const resultLabel = $derived(`${resultTotal} ${resultTotal === 1 ? 'card' : 'cards'}`)
+  const indexing = $derived(indexJob?.status === 'queued' || indexJob?.status === 'running')
+  const statusLabel = $derived(error || resultLabel)
   const activeTagFilterKey = $derived(`${tagIncludeMode}:${tagFilterKey(tagFilterStates)}`)
   const activeTagFilterCount = $derived(Object.keys(tagFilterStates).length)
   const tagFilterRows = $derived.by(() => filteredTagRows(knownTags, tagFilterStates, tagFilterSearch))
@@ -282,6 +319,7 @@
   const directoryPathsWithChildren = $derived.by(() => directoryParentKeys(activeDirectories))
   void loadSearchProfiles()
   void loadKnownTags()
+  void restoreCurrentIndexJob()
 
   $effect(() => {
     query
@@ -926,6 +964,138 @@
     error = ''
   }
 
+  function indexJobPhaseLabel(phase: string) {
+    if (phase === 'queued') return 'Waiting to start'
+    if (phase === 'indexing') return 'Indexing files'
+    if (phase === 'rebuilding-search') return 'Preparing search index'
+    if (phase === 'reloading-search') return 'Reloading search'
+    if (phase === 'complete') return 'Complete'
+    if (phase === 'failed') return 'Failed'
+    return phase
+  }
+
+  function indexJobScopeLabel(job: IndexJob) {
+    return job.scope.directory
+      ? `${job.scope.source_id} / ${job.scope.directory}`
+      : job.scope.source_id
+  }
+
+  function indexJobElapsedLabel(job: IndexJob) {
+    const elapsed = Math.max(0, Math.round(job.elapsed_seconds))
+    if (elapsed < 60) return `${elapsed}s`
+    const minutes = Math.floor(elapsed / 60)
+    const seconds = elapsed % 60
+    return `${minutes}m ${seconds}s`
+  }
+
+  function indexJobStartedLabel(job: IndexJob) {
+    return new Date(job.started_at * 1000).toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    })
+  }
+
+  async function restoreCurrentIndexJob() {
+    try {
+      const response = await fetch('/api/index-jobs/current')
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const body = (await response.json()) as { job: IndexJob | null }
+      if (body.job?.status !== 'queued' && body.job?.status !== 'running') return
+      indexJob = body.job
+      scheduleIndexJobPoll(body.job.id)
+    } catch {
+      showError('Index status failed', { transient: true })
+    }
+  }
+
+  function openFolderContextMenu(event: MouseEvent, directory: DirectoryNode) {
+    event.preventDefault()
+    event.stopPropagation()
+    qualityTargetKey = ''
+    const menuWidth = 168
+    const menuHeight = 42
+    folderContextMenu = {
+      directory,
+      x: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8)),
+    }
+  }
+
+  function closeFolderContextMenu() {
+    folderContextMenu = null
+  }
+
+  async function reindexDirectory(directory: DirectoryNode) {
+    closeFolderContextMenu()
+    if (indexing) {
+      showError('Index already running', { transient: true })
+      return
+    }
+    window.clearTimeout(indexJobClearTimer)
+    indexJobClearTimer = undefined
+    clearError()
+    try {
+      const response = await fetch('/api/index-jobs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scope: {
+            kind: 'folder',
+            source_id: directory.source_id,
+            directory: directory.path,
+          },
+        }),
+      })
+      if (response.status === 409) {
+        showError('Index already running', { transient: true })
+        return
+      }
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const body = await response.json()
+      indexJob = body.job as IndexJob
+      scheduleIndexJobPoll(indexJob.id)
+    } catch {
+      showError('Index failed', { transient: true })
+    }
+  }
+
+  function scheduleIndexJobPoll(jobId: string) {
+    window.clearTimeout(indexJobPollTimer)
+    indexJobPollTimer = window.setTimeout(() => {
+      void pollIndexJob(jobId)
+    }, 600)
+  }
+
+  async function pollIndexJob(jobId: string) {
+    try {
+      const response = await fetch(`/api/index-jobs/${encodeURIComponent(jobId)}`)
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const body = await response.json()
+      const job = body.job as IndexJob
+      indexJob = job
+      if (job.status === 'queued' || job.status === 'running') {
+        scheduleIndexJobPoll(job.id)
+        return
+      }
+      if (job.status === 'succeeded') {
+        indexJobPanelOpen = false
+        const revision = ++searchRevision
+        await loadAssets(revision)
+        indexJobClearTimer = window.setTimeout(() => {
+          if (indexJob?.id === job.id) indexJob = null
+          indexJobClearTimer = undefined
+        }, 3200)
+        return
+      }
+      indexJobPanelOpen = false
+      showError(job.error || 'Index failed', { transient: true })
+    } catch {
+      showError('Index status failed', { transient: true })
+      if (indexJob?.id === jobId && indexing) scheduleIndexJobPoll(jobId)
+    }
+  }
+
   function chooseRelative(offset: number) {
     if (visibleEntries.length === 0) return
     const fallback = selectedIndex < 0 ? 0 : selectedIndex
@@ -995,6 +1165,11 @@
     }
     if (event.key === 'Escape') {
       event.preventDefault()
+      if (folderContextMenu) {
+        closeFolderContextMenu()
+        qualityTargetKey = ''
+        return
+      }
       if (selectedAssetIds.size > 0) {
         clearMultiSelection()
       } else {
@@ -1883,7 +2058,7 @@
 
 </script>
 
-<svelte:window onkeydown={handleKeydown} />
+<svelte:window onkeydown={handleKeydown} onclick={closeFolderContextMenu} />
 
 {#if hoverAudioUrl}
   <!-- svelte-ignore a11y_media_has_caption -->
@@ -2019,12 +2194,68 @@
     </div>
 
     <div class="status" class:busy={loading} class:error={error}>
+      {#if indexing}
+        <button
+          class="index-job-button"
+          class:active={indexJobPanelOpen}
+          type="button"
+          aria-label="Index job running"
+          aria-expanded={indexJobPanelOpen}
+          title="Index job running"
+          onclick={() => {
+            indexJobPanelOpen = !indexJobPanelOpen
+          }}
+        >
+          <LoaderCircle size={15} />
+        </button>
+      {/if}
       {#if loading}
         <LoaderCircle size={15} />
       {/if}
-      <span>{error || resultLabel}</span>
+      <span>{statusLabel}</span>
     </div>
   </header>
+
+  {#if indexing && indexJobPanelOpen && indexJob}
+    <div class="index-job-overlay" role="presentation">
+      <div
+        class="index-job-dialog"
+        role="dialog"
+        aria-label="Index jobs"
+        aria-modal="true"
+      >
+        <div class="index-job-dialog-header">
+          <strong>Index jobs</strong>
+          <button
+            type="button"
+            aria-label="Close index jobs"
+            title="Close"
+            onclick={() => { indexJobPanelOpen = false }}
+          >
+            <X size={16} />
+          </button>
+        </div>
+        <div class="index-job-summary">
+          <span>{indexJobScopeLabel(indexJob)}</span>
+          <strong>{indexJobPhaseLabel(indexJob.phase)}</strong>
+          {#if indexJob.detail}
+            <span class="index-job-detail">{indexJob.detail}</span>
+          {/if}
+        </div>
+        <dl class="index-job-counts">
+          <div><dt>Scanned</dt><dd>{indexJob.scanned_files}</dd></div>
+          <div><dt>New</dt><dd>{indexJob.new_assets}</dd></div>
+          <div><dt>Written</dt><dd>{indexJob.written_assets}</dd></div>
+          <div><dt>Thumbnails</dt><dd>{indexJob.generated_thumbnails}</dd></div>
+          <div><dt>Failures</dt><dd>{indexJob.failed_thumbnails}</dd></div>
+        </dl>
+        <div class="index-job-time">
+          <span>Started {indexJobStartedLabel(indexJob)}</span>
+          <span>Elapsed {indexJobElapsedLabel(indexJob)}</span>
+        </div>
+      </div>
+    </div>
+  {/if}
 
   <section class="workspace">
     <section class="main-region" aria-label="Assets">
@@ -2430,6 +2661,7 @@
           style={`--depth: ${directory.depth}`}
           onmouseenter={() => setQualityHover(directory)}
           onmouseleave={() => clearQualityHover(directory)}
+          oncontextmenu={(event) => openFolderContextMenu(event, directory)}
         >
           {#if children}
             <button
@@ -2627,5 +2859,27 @@
       </div>
       {/if}
     </aside>
+
+    {#if folderContextMenu}
+      <div
+        class="folder-context-menu"
+        role="menu"
+        aria-label={`Folder actions for ${folderContextMenu.directory.name}`}
+        style={`left: ${folderContextMenu.x}px; top: ${folderContextMenu.y}px`}
+        tabindex="-1"
+      >
+        <button
+          type="button"
+          role="menuitem"
+          disabled={indexing}
+          onclick={() => {
+            if (folderContextMenu) void reindexDirectory(folderContextMenu.directory)
+          }}
+        >
+          <RotateCcw size={14} />
+          <span>Re-index</span>
+        </button>
+      </div>
+    {/if}
   </section>
 </main>

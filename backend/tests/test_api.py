@@ -1,4 +1,6 @@
 from pathlib import Path
+import threading
+import time
 
 from fastapi.testclient import TestClient
 
@@ -17,6 +19,16 @@ def _card_asset(card: dict[str, object]) -> dict[str, object]:
     if card["kind"] == "asset":
         return card["asset"]  # type: ignore[return-value]
     return card["representative"]  # type: ignore[return-value]
+
+
+def _wait_for_index_job(client: TestClient, job_id: str) -> dict[str, object]:
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        job = client.get(f"/api/index-jobs/{job_id}").json()["job"]
+        if job["status"] in {"succeeded", "failed"}:
+            return job
+        time.sleep(0.05)
+    raise AssertionError("index job did not finish")
 
 
 def test_api_lists_sources_and_current_assets(tmp_path: Path) -> None:
@@ -63,6 +75,134 @@ def test_api_lists_sources_and_current_assets(tmp_path: Path) -> None:
     assert asset["thumbnail_url"].startswith(
         f"/api/assets/{asset['asset_id']}/thumb?v="
     )
+
+
+def test_api_index_job_reindexes_folder_and_reloads_search_runtime(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "assets"
+    write_image(source_root / "Maps" / "Keep.png")
+    write_image(source_root / "Tokens" / "Goblin.png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+    rebuild_search_corpus(config, db_path)
+    client = TestClient(create_app(config, db_path))
+
+    (source_root / "Maps" / "Keep.png").unlink()
+    write_image(source_root / "Maps" / "Tower.png")
+    (source_root / "Tokens" / "Goblin.png").unlink()
+    response = client.post(
+        "/api/index-jobs",
+        json={
+            "scope": {
+                "kind": "folder",
+                "source_id": "dnd",
+                "directory": "Maps",
+            }
+        },
+    )
+
+    assert response.status_code == 202
+    job = _wait_for_index_job(client, response.json()["job"]["id"])
+    assert job["status"] == "succeeded"
+    assert job["scanned_files"] == 1
+    assert job["new_assets"] == 1
+
+    tower_body = search_query(client, {"q": "tower"}).json()
+    goblin_body = search_query(client, {"q": "goblin"}).json()
+    keep_body = search_query(client, {"q": "keep"}).json()
+
+    assert tower_body["total"] == 1
+    assert _card_asset(tower_body["cards"][0])["relative_path"] == "Maps/Tower.png"
+    assert goblin_body["total"] == 1
+    assert _card_asset(goblin_body["cards"][0])["relative_path"] == "Tokens/Goblin.png"
+    assert keep_body["total"] == 0
+
+
+def test_api_index_job_reports_file_and_search_rebuild_progress(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source_root = tmp_path / "assets"
+    write_image(source_root / "Maps" / "Keep.png")
+    config = AppConfig(
+        data_root=tmp_path / "data",
+        sources=(
+            SourceConfig(
+                id="dnd",
+                display_name="DND",
+                root=source_root,
+                priority=10,
+                media_extensions=frozenset({".png"}),
+            ),
+        ),
+    )
+    db_path = tmp_path / "findme.sqlite3"
+    with connect(db_path) as db:
+        initialize_database(db)
+        index_sources(db, config)
+    rebuild_search_corpus(config, db_path)
+
+    rebuild_started = threading.Event()
+    continue_rebuild = threading.Event()
+
+    def controlled_rebuild(config, db_path, *, log=None):
+        assert log is not None
+        log("search snapshot write started")
+        rebuild_started.set()
+        assert continue_rebuild.wait(timeout=5)
+        return rebuild_search_corpus(config, db_path, log=log)
+
+    monkeypatch.setattr("findme.api.rebuild_search_corpus", controlled_rebuild)
+    client = TestClient(create_app(config, db_path))
+    write_image(source_root / "Maps" / "Tower.png")
+
+    response = client.post(
+        "/api/index-jobs",
+        json={
+            "scope": {
+                "kind": "folder",
+                "source_id": "dnd",
+                "directory": "Maps",
+            }
+        },
+    )
+    job_id = response.json()["job"]["id"]
+
+    try:
+        assert rebuild_started.wait(timeout=5), client.get(
+            f"/api/index-jobs/{job_id}"
+        ).json()
+        job = client.get(f"/api/index-jobs/{job_id}").json()["job"]
+        assert job["phase"] == "rebuilding-search"
+        assert job["detail"] == "Writing search snapshot"
+        assert job["current_source_id"] == "dnd"
+        assert job["current_relative_path"] == "Maps/Tower.png"
+        assert job["current_action"] == "thumbnail"
+        assert job["elapsed_seconds"] >= 0
+        assert job["started_at"] is not None
+        assert job["finished_at"] is None
+    finally:
+        continue_rebuild.set()
+
+    job = _wait_for_index_job(client, job_id)
+    assert job["status"] == "succeeded"
+    assert job["detail"] == "Search runtime reloaded"
+    assert job["finished_at"] is not None
 
 
 def test_api_search_card_includes_thumbnail_mipmap_variants(tmp_path: Path) -> None:

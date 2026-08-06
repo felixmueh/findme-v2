@@ -168,6 +168,13 @@ def run(argv: list[str]) -> int:
             return 0
 
         if args.command == "serve":
+            with connect(db_path) as db:
+                initialize_database(db)
+                corpus_stale = search_corpus_is_stale(db)
+            if corpus_stale:
+                logger = _IndexLogger(stream=sys.stdout)
+                logger.log("stale search corpus detected at startup; rebuilding")
+                rebuild_search_corpus(config, db_path, log=logger.log)
             app = create_app(config, db_path, static_dir=args.static_dir)
             uvicorn.run(app, host=args.host, port=args.port)
             return 0

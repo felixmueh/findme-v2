@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 import sqlite3
 import threading
 import time
+import uuid
 from typing import Any, Literal
 from urllib.parse import quote
 
@@ -25,7 +26,8 @@ from findme.assets import (
     thumbnail_variant_response,
 )
 from findme.config import AppConfig
-from findme.db import connect
+from findme.db import connect, initialize_database, search_corpus_is_stale
+from findme.indexer import IndexProgress, index_sources
 from findme.metadata import (
     MetadataValidationError,
     add_asset_tags,
@@ -53,6 +55,7 @@ from findme.search_profiles import (
 from findme.search_corpus import (
     SEARCH_CORPUS_VERSION,
     load_search_corpus_snapshot,
+    rebuild_search_corpus,
     search_corpus_lexical_path,
     search_corpus_snapshot_path,
 )
@@ -129,30 +132,276 @@ class SearchQueryRequest(BaseModel):
     offset: int = Field(default=0, ge=0)
 
 
+class IndexJobScopeRequest(BaseModel):
+    kind: Literal["folder"]
+    source_id: str
+    directory: str = ""
+
+
+class IndexJobRequest(BaseModel):
+    scope: IndexJobScopeRequest
+
+
+@dataclass(frozen=True)
+class _RuntimeParts:
+    search_index: SearchIndex
+    profile_sessions: SearchProfileSessionManager
+    card_resolver: ResultCardResolver
+    card_counts_by_directory: dict[tuple[str, str], int]
+
+
+class _IndexJobManager:
+    def __init__(
+        self,
+        *,
+        config: AppConfig,
+        database_path: Path,
+        reload_runtime: Callable[[], None],
+    ) -> None:
+        self._config = config
+        self._database_path = database_path
+        self._reload_runtime = reload_runtime
+        self._lock = threading.Lock()
+        self._current: dict[str, object] | None = None
+
+    def start(self, scope: dict[str, str]) -> dict[str, object]:
+        with self._lock:
+            if self._current is not None and self._current["status"] in {
+                "queued",
+                "running",
+            }:
+                raise HTTPException(status_code=409, detail="index job is already running")
+            job = {
+                "id": uuid.uuid4().hex,
+                "status": "queued",
+                "scope": scope,
+                "phase": "queued",
+                "scanned_files": 0,
+                "new_assets": 0,
+                "written_assets": 0,
+                "generated_thumbnails": 0,
+                "failed_thumbnails": 0,
+                "detail": "Waiting to start",
+                "current_source_id": None,
+                "current_relative_path": None,
+                "current_action": None,
+                "elapsed_seconds": 0.0,
+                "error": None,
+                "started_at": time.time(),
+                "finished_at": None,
+            }
+            self._current = job
+        thread = threading.Thread(
+            target=self._run,
+            args=(str(job["id"]), scope),
+            name="findme-index-job",
+            daemon=True,
+        )
+        thread.start()
+        return self._job_response(job)
+
+    def current(self) -> dict[str, object] | None:
+        with self._lock:
+            return self._job_response(self._current) if self._current is not None else None
+
+    def job(self, job_id: str) -> dict[str, object] | None:
+        with self._lock:
+            if self._current is None or self._current["id"] != job_id:
+                return None
+            return self._job_response(self._current)
+
+    def _run(self, job_id: str, scope: dict[str, str]) -> None:
+        self._update(
+            job_id,
+            status="running",
+            phase="indexing",
+            detail="Scanning files",
+        )
+        try:
+            source_id = scope["source_id"]
+            directory = scope["directory"]
+
+            def progress(progress: IndexProgress | object) -> None:
+                if isinstance(progress, IndexProgress):
+                    self._update(
+                        job_id,
+                        scanned_files=progress.scanned_files,
+                        new_assets=progress.new_assets,
+                        written_assets=progress.written_assets,
+                        generated_thumbnails=progress.generated_thumbnails,
+                        failed_thumbnails=progress.failed_thumbnails,
+                        detail=_index_progress_detail(progress),
+                        current_source_id=progress.current_source_id,
+                        current_relative_path=progress.current_relative_path or None,
+                        current_action=progress.current_action or None,
+                        elapsed_seconds=progress.elapsed_seconds,
+                    )
+
+            with connect(self._database_path) as db:
+                initialize_database(db)
+                summary = index_sources(
+                    db,
+                    self._config,
+                    source_ids=frozenset({source_id}),
+                    directory_prefixes={source_id: directory},
+                    progress=progress,
+                )
+                corpus_stale = search_corpus_is_stale(db)
+            self._update(
+                job_id,
+                scanned_files=summary.scanned_files,
+                new_assets=summary.new_assets,
+                written_assets=summary.written_assets,
+                generated_thumbnails=summary.generated_thumbnails,
+                failed_thumbnails=len(summary.thumbnail_failures),
+            )
+            if corpus_stale:
+                self._update(
+                    job_id,
+                    phase="rebuilding-search",
+                    detail="Preparing search index",
+                )
+                rebuild_search_corpus(
+                    self._config,
+                    self._database_path,
+                    log=lambda message: self._update(
+                        job_id,
+                        detail=_search_corpus_progress_detail(message),
+                    ),
+                )
+            self._update(
+                job_id,
+                phase="reloading-search",
+                detail="Reloading search runtime",
+            )
+            self._reload_runtime()
+            self._update(
+                job_id,
+                status="succeeded",
+                phase="complete",
+                detail="Search runtime reloaded",
+                finished_at=time.time(),
+            )
+        except Exception as exc:
+            self._update(
+                job_id,
+                status="failed",
+                phase="failed",
+                error=str(exc),
+                finished_at=time.time(),
+            )
+
+    def _update(self, job_id: str, **fields: object) -> None:
+        with self._lock:
+            if self._current is None or self._current["id"] != job_id:
+                return
+            self._current.update(fields)
+
+    def _job_response(self, job: dict[str, object]) -> dict[str, object]:
+        response = dict(job)
+        started_at = float(response["started_at"])
+        finished_at = response["finished_at"]
+        response["elapsed_seconds"] = max(
+            0.0,
+            (float(finished_at) if finished_at is not None else time.time()) - started_at,
+        )
+        return response
+
+
+def _index_progress_detail(progress: IndexProgress) -> str:
+    relative_path = progress.current_relative_path
+    if not relative_path:
+        return "Scanning files"
+    if progress.current_action == "unchanged":
+        return f"Checked {relative_path}"
+    if progress.current_action == "indexed":
+        return f"Indexed {relative_path}"
+    if progress.current_action == "thumbnail":
+        return f"Generated thumbnail for {relative_path}"
+    return relative_path
+
+
+def _search_corpus_progress_detail(message: str) -> str:
+    if message == "search preprocessing loading assets":
+        return "Loading assets for search"
+    if message.startswith("search preprocessing loaded assets"):
+        return "Loaded assets for search"
+    if message == "search snapshot build started":
+        return "Building search snapshot"
+    if message == "search snapshot write started":
+        return "Writing search snapshot"
+    if message.startswith("search snapshot write finished"):
+        return "Search snapshot written"
+    if message.startswith("search lexical index build started"):
+        return "Building lexical search index"
+    if message == "search lexical index build finished":
+        return "Lexical search index built"
+    if message == "search preprocessing publishing artifacts":
+        return "Publishing search artifacts"
+    if message.startswith("search preprocessing finished"):
+        return "Search artifacts published"
+    return message
+
+
 def create_app(
     config: AppConfig, db_path: Path | None = None, static_dir: Path | None = None
 ) -> FastAPI:
     database_path = db_path or config.data_root / "findme.sqlite3"
     metadata_database_path = config.data_root / "metadata.sqlite3"
-    snapshot_path = search_corpus_snapshot_path(config.data_root, config.search_corpus_path)
-    lexical_path = search_corpus_lexical_path(config.data_root, config.search_corpus_path)
-    snapshot = load_search_corpus_snapshot(snapshot_path)
-    with connect(database_path) as db:
-        search_index = SearchIndex.load_from_snapshot(
-            db,
-            snapshot,
-            expected_version=SEARCH_CORPUS_VERSION,
-            lexical_index_path=lexical_path,
-    )
-    card_metadata_by_asset_id = snapshot.card_metadata_by_asset_id()
-    profile_sessions = SearchProfileSessionManager(search_index)
-    card_resolver = ResultCardResolver.from_assets(
-        [_asset_result_response(asset, score=0.0) for asset in search_index.assets],
-        card_metadata_by_asset_id=card_metadata_by_asset_id,
-    )
-    card_counts_by_directory = _card_counts_by_directory_subtree(
-        search_index,
-        card_resolver,
+
+    def load_runtime_parts() -> _RuntimeParts:
+        snapshot_path = search_corpus_snapshot_path(
+            config.data_root,
+            config.search_corpus_path,
+        )
+        lexical_path = search_corpus_lexical_path(
+            config.data_root,
+            config.search_corpus_path,
+        )
+        snapshot = load_search_corpus_snapshot(snapshot_path)
+        with connect(database_path) as db:
+            loaded_search_index = SearchIndex.load_from_snapshot(
+                db,
+                snapshot,
+                expected_version=SEARCH_CORPUS_VERSION,
+                lexical_index_path=lexical_path,
+            )
+        loaded_profile_sessions = SearchProfileSessionManager(loaded_search_index)
+        loaded_card_resolver = ResultCardResolver.from_assets(
+            [
+                _asset_result_response(asset, score=0.0)
+                for asset in loaded_search_index.assets
+            ],
+            card_metadata_by_asset_id=snapshot.card_metadata_by_asset_id(),
+        )
+        return _RuntimeParts(
+            search_index=loaded_search_index,
+            profile_sessions=loaded_profile_sessions,
+            card_resolver=loaded_card_resolver,
+            card_counts_by_directory=_card_counts_by_directory_subtree(
+                loaded_search_index,
+                loaded_card_resolver,
+            ),
+        )
+
+    runtime_parts = load_runtime_parts()
+    search_index = runtime_parts.search_index
+    profile_sessions = runtime_parts.profile_sessions
+    card_resolver = runtime_parts.card_resolver
+    card_counts_by_directory = runtime_parts.card_counts_by_directory
+
+    def reload_runtime() -> None:
+        nonlocal search_index, profile_sessions, card_resolver, card_counts_by_directory
+        runtime_parts = load_runtime_parts()
+        search_index = runtime_parts.search_index
+        profile_sessions = runtime_parts.profile_sessions
+        card_resolver = runtime_parts.card_resolver
+        card_counts_by_directory = runtime_parts.card_counts_by_directory
+
+    index_jobs = _IndexJobManager(
+        config=config,
+        database_path=database_path,
+        reload_runtime=reload_runtime,
     )
     search_revisions = _SearchRevisionRegistry()
 
@@ -434,6 +683,30 @@ def create_app(
             for source in sorted(config.sources, key=lambda item: item.priority, reverse=True)
         ]
         return {"sources": sources}
+
+    @app.post("/api/index-jobs", status_code=202)
+    def start_index_job(request: IndexJobRequest) -> dict[str, object]:
+        source = _source_config_or_404(config, request.scope.source_id)
+        directory = _validated_source_directory(source, request.scope.directory)
+        job = index_jobs.start(
+            {
+                "kind": request.scope.kind,
+                "source_id": source.id,
+                "directory": directory,
+            }
+        )
+        return {"job": job}
+
+    @app.get("/api/index-jobs/current")
+    def current_index_job() -> dict[str, object | None]:
+        return {"job": index_jobs.current()}
+
+    @app.get("/api/index-jobs/{job_id}")
+    def get_index_job(job_id: str) -> dict[str, object]:
+        job = index_jobs.job(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="index job was not found")
+        return {"job": job}
 
     @app.get("/api/tags")
     def list_existing_tags() -> dict[str, list[dict[str, str]]]:
@@ -1075,6 +1348,26 @@ def _load_asset_or_404(db: sqlite3.Connection, config: AppConfig, asset_id: str)
         raise HTTPException(status_code=404, detail="asset not found") from exc
     except UnsafeAssetPathError as exc:
         raise HTTPException(status_code=500, detail="asset path is outside source root") from exc
+
+
+def _source_config_or_404(config: AppConfig, source_id: str):
+    source = next((source for source in config.sources if source.id == source_id), None)
+    if source is None:
+        raise HTTPException(status_code=404, detail="source was not found")
+    return source
+
+
+def _validated_source_directory(source, directory: str) -> str:
+    normalized = directory.strip("/")
+    if "\\" in normalized:
+        raise HTTPException(status_code=400, detail="directory must use forward slashes")
+    parts = [part for part in normalized.split("/") if part]
+    if any(part in {".", ".."} for part in parts):
+        raise HTTPException(status_code=400, detail="directory must be source-relative")
+    target = source.root.joinpath(*parts).resolve()
+    if target != source.root and not target.is_relative_to(source.root):
+        raise HTTPException(status_code=400, detail="directory must be source-relative")
+    return "/".join(parts)
 
 
 def _tags_for_asset_response(metadata_database_path: Path, asset) -> list[dict[str, str]]:

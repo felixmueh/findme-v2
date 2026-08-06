@@ -244,7 +244,14 @@ and `assets.thumbnail_height` fields intentionally remain as denormalized
 baseline `256` fields during the transition. Revisit whether those baseline
 fields should be removed or derived from `asset_thumbnail_variants`.
 
-Search-serving data is a derived corpus, not canonical metadata. The main database remains the source of truth for indexed assets, sources, folder quality, and thumbnail references. `search_corpus.py` owns the rebuild-sensitive corpus format and preprocessing signals. It builds a separate versioned pickle snapshot under the app data root, with the active filename derived from the preprocessing version, plus the matching Tantivy lexical index. Serving and search evaluation consume that prepared corpus and fail clearly if it is missing or stale; they do not rebuild it implicitly.
+Search-serving data is a derived corpus, not canonical metadata. The main database remains the source of truth for indexed assets, sources, folder quality, and thumbnail references. `search_corpus.py` owns the rebuild-sensitive corpus format and preprocessing signals. It builds a separate versioned pickle snapshot under the app data root, with the active filename derived from the preprocessing version, plus the matching Tantivy lexical index. Low-level search runtime loading and search evaluation consume that prepared corpus and fail clearly if it is missing or stale; they do not rebuild it implicitly.
+
+The top-level `findme serve` startup is the recovery boundary for an interrupted
+server-managed index job. If the canonical database fingerprint changed but the
+derived corpus was not marked current, server startup rebuilds the stale corpus
+before loading the web application. Low-level corpus loading still rejects stale
+state, and missing or version-invalid corpus artifacts still require the explicit
+`rebuild-search-corpus` command. Runtime search requests never rebuild the corpus.
 
 Default indexing is optimized for the common "files were added or removed"
 case. During the first phase it scans source-relative paths, preserves existing

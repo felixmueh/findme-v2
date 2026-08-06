@@ -319,6 +319,114 @@ test.beforeEach(async ({ page }) => {
   await page.route('**/api/search?*', async (route) => {
     await route.fulfill({ json: { total: 1, cards: [{ kind: 'asset', asset: sampleAsset }] } })
   })
+
+  await page.route('**/api/index-jobs/current', async (route) => {
+    await route.fulfill({ json: { job: null } })
+  })
+})
+
+test('restores an active index job as a compact spinner with expandable details', async ({ page }) => {
+  await routeSearchQuery(page, [sampleAsset])
+  const startedAt = Date.now() / 1000 - 12
+  const runningJob = {
+    id: 'job-1',
+    status: 'running',
+    scope: { kind: 'folder', source_id: 'sample', directory: 'maps' },
+    phase: 'indexing',
+    detail: 'Reading maps/keep.png',
+    scanned_files: 18,
+    new_assets: 3,
+    written_assets: 3,
+    generated_thumbnails: 2,
+    failed_thumbnails: 0,
+    current_relative_path: 'maps/keep.png',
+    current_action: 'reading',
+    elapsed_seconds: 12,
+    error: null,
+    started_at: startedAt,
+    finished_at: null,
+  }
+
+  await page.route('**/api/index-jobs/current', async (route) => {
+    await route.fulfill({ json: { job: runningJob } })
+  })
+  await page.route('**/api/index-jobs/job-1', async (route) => {
+    await route.fulfill({
+      json: {
+        job: {
+          ...runningJob,
+          phase: 'rebuilding-search',
+          detail: 'Building lexical search index',
+          scanned_files: 24,
+          new_assets: 4,
+          written_assets: 4,
+          elapsed_seconds: 15,
+        },
+      },
+    })
+  })
+
+  await page.goto('/')
+
+  const jobButton = page.getByRole('button', { name: 'Index job running' })
+  await expect(jobButton).toBeVisible()
+  await expect(page.locator('.status')).toContainText('1 card')
+  await expect(page.locator('.status')).not.toContainText('Scanned')
+
+  await jobButton.click()
+  const panel = page.getByRole('dialog', { name: 'Index jobs' })
+  await expect(panel).toBeVisible()
+  await expect(panel).toContainText('sample / maps')
+  await expect(panel).toContainText('18')
+  await expect(panel).toContainText('Reading maps/keep.png')
+
+  await expect(panel).toContainText('Preparing search index')
+  await expect(panel).toContainText('Building lexical search index')
+  await expect(jobButton).toBeVisible()
+})
+
+test('keeps polling an active index job after a transient status failure', async ({ page }) => {
+  await routeSearchQuery(page, [sampleAsset])
+  const runningJob = {
+    id: 'job-1',
+    status: 'running',
+    scope: { kind: 'folder', source_id: 'sample', directory: 'maps' },
+    phase: 'indexing',
+    detail: 'Reading maps/keep.png',
+    scanned_files: 18,
+    new_assets: 3,
+    written_assets: 3,
+    generated_thumbnails: 2,
+    failed_thumbnails: 0,
+    current_source_id: 'sample',
+    current_relative_path: 'maps/keep.png',
+    current_action: 'reading',
+    elapsed_seconds: 12,
+    error: null,
+    started_at: Date.now() / 1000 - 12,
+    finished_at: null,
+  }
+  let pollRequests = 0
+
+  await page.route('**/api/index-jobs/current', async (route) => {
+    await route.fulfill({ json: { job: runningJob } })
+  })
+  await page.route('**/api/index-jobs/job-1', async (route) => {
+    pollRequests += 1
+    if (pollRequests === 1) {
+      await route.fulfill({ status: 503, json: { detail: 'temporarily unavailable' } })
+      return
+    }
+    await route.fulfill({ json: { job: { ...runningJob, detail: 'Reading maps/tower.png' } } })
+  })
+
+  await page.goto('/')
+
+  await expect.poll(() => pollRequests).toBeGreaterThanOrEqual(2)
+  const jobButton = page.getByRole('button', { name: 'Index job running' })
+  await expect(jobButton).toBeVisible()
+  await jobButton.click()
+  await expect(page.getByRole('dialog', { name: 'Index jobs' })).toContainText('Reading maps/tower.png')
 })
 
 test('searches through the real browser UI', async ({ page }) => {
