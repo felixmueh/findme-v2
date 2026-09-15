@@ -197,7 +197,8 @@ container path of the media mount, the port and the config file from `.env`
 app data and source paths as container bind mounts so the existing index
 remains valid:
 
-- `FINDME_DATA=/var/lib/findme-v2`
+- `FINDME_DATA=/media/ssd/databases/findme-v2` (mounted at the fixed container
+  path `/var/lib/findme-v2`)
 - `FINDME_MEDIA` and `FINDME_MEDIA_MOUNT` both `/media/NAS/main/Documents/DND`
 - `FINDME_CONFIG=./config/findme.server.local.toml`
 

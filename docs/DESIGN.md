@@ -182,11 +182,17 @@ maintenance step after a successful index when requested explicitly.
 
 ## Storage Model
 
-The server owns a local persistent index database under the app data directory. The production app data root is expected to be:
+The server owns a local persistent index database under the app data directory.
+The production container app data root is:
 
 ```text
 /var/lib/findme-v2
 ```
+
+The Docker deployment bind-mounts the SSD-backed host directory
+`/media/ssd/databases/findme-v2` at this container path. Keeping the container
+path stable preserves the absolute thumbnail cache paths stored in the index
+database.
 
 Development may override this path.
 
@@ -396,6 +402,47 @@ collection cannot be split across pages. A collection result includes all known
 variants in that source/directory collection, even when only one variant matched
 the query. The representative is the highest-scored matching variant for search
 and the first naturally sorted variant for browsing.
+
+### Future Work: Dynamically Defined Card Grouping
+
+Card grouping can become server-configurable and reloadable without adding work
+to the search request path. It should not follow the domain vocabulary's
+per-request reload model: grouping needs global collection membership, variant
+ordering, browse cards, and directory card counts before it can paginate results
+correctly.
+
+The intended direction is a separately compiled runtime grouping view over the
+already loaded search assets:
+
+- keep structural invariants in code: collections stay within one source and
+  directory, require a non-empty base stem, and require at least two assets with
+  at least one recognized variant
+- move domain-specific recognizers, such as color tokens and enabled variant
+  token classes, into a small server-owned configuration file rather than an
+  unrestricted grouping language
+- derive collection keys and variant ordering from the loaded asset fields, not
+  from grouping metadata persisted in the search corpus; after the initial
+  corpus-format migration, changing grouping rules should require neither
+  re-indexing nor rebuilding Tantivy
+- compile a complete replacement result-card resolver and directory-card-count
+  view in the background, continue serving the previous immutable view during
+  the rebuild, and publish the new view atomically
+- serialize grouping reloads with index reloads and retain the last valid view
+  when new configuration is invalid
+- version each published grouping view so clients can discard expanded-card
+  state and restart range pagination when collection keys or card counts change
+- report the number of collections, largest collection, and collapsed-asset
+  percentage before publication so an overly broad rule cannot silently create
+  very large card payloads
+
+A measurement against 289,291 indexed assets found that grouping metadata took
+about 4.36 seconds to recompute, collection counting about 0.12 seconds,
+result-card resolver construction about 1.34 seconds, and directory card counts
+about 1.1 seconds. A grouping-only reload is therefore roughly seven seconds
+with the current Python implementation. This is suitable for startup or an
+explicit background reload, but not for request-time evaluation. Steady-state
+search and browse performance can remain unchanged because requests continue to
+consume the precomputed resolver and numeric asset-index mappings.
 
 ## Source Tree And Browsing
 

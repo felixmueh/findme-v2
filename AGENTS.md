@@ -69,9 +69,9 @@ When reporting a user-facing app URL, use the LAN address form `http://<server-a
 
 Use `config/findme.dev.toml` on laptop and laptop-sbx. This indexes only `sample-assets` and may share `.findme-data` between the laptop host and laptop sandbox.
 
-Use `config/findme.server.local.toml` on server and server-sbx. It is git-ignored and exists only on the server; `config/findme.example.toml` shows the format. Both server environments may assume `/media/NAS/main/Documents/DND` is mounted and may share `/var/lib/findme-v2`.
+Use `config/findme.server.local.toml` on server and server-sbx. It is git-ignored and exists only on the server; `config/findme.example.toml` shows the format. Both server environments may assume `/media/NAS/main/Documents/DND` is mounted. The production Docker deployment stores its host data under `/media/ssd/databases/findme-v2` and mounts it at `/var/lib/findme-v2` inside the container.
 
-Treat `/var/lib/findme-v2` as potentially the main production index even from server-sbx. Do not assume the sandbox has a disposable copy of the index; avoid destructive cleanup or long rebuilds unless the user explicitly confirms that this environment should mutate the shared index.
+Treat `/media/ssd/databases/findme-v2` as the main production index on the host, and `/var/lib/findme-v2` as its container path. Do not assume the sandbox has a disposable copy of the index; avoid destructive cleanup or long rebuilds unless the user explicitly confirms that this environment should mutate the shared index.
 
 Install development tools or dependencies in the sandbox when they are needed to build, test, or evaluate the project. Keep production deployment assumptions documented in `docs/DESIGN.md` or `docs/STACK.md` rather than inferring them from the sandbox.
 
