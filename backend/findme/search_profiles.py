@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 import sqlite3
@@ -22,6 +23,10 @@ PROFILE_NONE_NAME = "None"
 PROFILE_DEFAULT_NAME = "Default"
 
 ProfileKind = str
+
+# Compiled preferences hold per-asset arrays, so sessions with identical
+# settings share one compiled object instead of each holding a copy.
+_COMPILED_PREFERENCES_CACHE_SIZE = 16
 
 
 class _Unset:
@@ -258,6 +263,9 @@ class SearchProfileSessionManager:
         self._store = SearchProfileStore()
         self._lock = threading.RLock()
         self._sessions: dict[str, SearchProfileSession] = {}
+        self._compiled_preferences: OrderedDict[
+            frozenset[FolderSetting], SearchPreferences
+        ] = OrderedDict()
 
     def session(self, db: sqlite3.Connection, search_session: str | None) -> SearchProfileSession:
         session_id = search_session or "default-browser-session"
@@ -586,10 +594,20 @@ class SearchProfileSessionManager:
         settings: dict[tuple[str, str], FolderSetting],
     ) -> SearchPreferences:
         normalized = _normalize_settings(settings)
-        return self._search_index.compile_preferences(
-            directory_filter=_settings_to_filter(normalized),
-            quality_overrides=_quality_overrides(normalized),
-        )
+        key = frozenset(normalized.values())
+        with self._lock:
+            cached = self._compiled_preferences.get(key)
+            if cached is not None:
+                self._compiled_preferences.move_to_end(key)
+                return cached
+            preferences = self._search_index.compile_preferences(
+                directory_filter=_settings_to_filter(normalized),
+                quality_overrides=_quality_overrides(normalized),
+            )
+            self._compiled_preferences[key] = preferences
+            if len(self._compiled_preferences) > _COMPILED_PREFERENCES_CACHE_SIZE:
+                self._compiled_preferences.popitem(last=False)
+            return preferences
 
     def _compile_preferences_for_view(
         self,

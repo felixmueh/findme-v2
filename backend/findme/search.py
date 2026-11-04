@@ -91,7 +91,7 @@ class SearchPreferences:
     preference_adjustment_array: np.ndarray
     directory_filter: DirectoryFilter = field(default_factory=DirectoryFilter)
     included_asset_mask: np.ndarray | None = None
-    included_asset_index_order: tuple[int, ...] | None = None
+    included_asset_index_order: np.ndarray | None = None
     included_directory_counts: dict[tuple[str, str], int] | None = None
     included_directory_count_array: np.ndarray | None = None
     quality_overrides: dict[tuple[str, str], int] = field(default_factory=dict)
@@ -186,7 +186,7 @@ class _InFlightStrictSearch:
 class SearchIndex:
     assets: tuple[SearchCorpusAsset, ...]
     directory_counts: dict[tuple[str, str], int]
-    directory_subtree_asset_indexes: dict[tuple[str, str], tuple[int, ...]]
+    directory_subtree_asset_indexes: dict[tuple[str, str], np.ndarray]
     asset_directory_keys: tuple[tuple[tuple[str, str], ...], ...]
     asset_directory_ids: np.ndarray
     asset_path_sort_ranks: np.ndarray
@@ -435,11 +435,7 @@ class SearchIndex:
 
         if source_id is None and directory is None and directory_prefix is None:
             if preferences.included_asset_index_order is not None:
-                indexes = np.fromiter(
-                    preferences.included_asset_index_order,
-                    dtype=np.int32,
-                    count=len(preferences.included_asset_index_order),
-                )
+                indexes = preferences.included_asset_index_order
             else:
                 indexes = np.arange(len(self.assets), dtype=np.int32)
             if preferences.included_asset_mask is not None:
@@ -447,12 +443,9 @@ class SearchIndex:
             return indexes
 
         if source_id is not None and directory is None:
-            indexes = np.fromiter(
-                self.directory_subtree_asset_indexes.get(
-                    (source_id, directory_prefix or ""),
-                    (),
-                ),
-                dtype=np.int32,
+            indexes = self.directory_subtree_asset_indexes.get(
+                (source_id, directory_prefix or ""),
+                _EMPTY_ASSET_INDEXES,
             )
         elif source_id is not None and directory is not None:
             directory_id = self.directory_runtime.id_by_key.get((source_id, directory))
@@ -586,18 +579,18 @@ class SearchIndex:
                 item[0][1],
             ),
         ):
-            adjustment = _folder_quality_adjustment(quality)
-            for asset_index in self.directory_subtree_asset_indexes.get(
-                (source_id, directory),
-                (),
-            ):
-                adjustments[asset_index] = adjustment
+            adjustments[
+                self.directory_subtree_asset_indexes.get(
+                    (source_id, directory),
+                    _EMPTY_ASSET_INDEXES,
+                )
+            ] = _folder_quality_adjustment(quality)
         return adjustments
 
     def _included_asset_index_order(
         self,
         directory_filter: DirectoryFilter,
-    ) -> tuple[int, ...] | None:
+    ) -> np.ndarray | None:
         if not directory_filter.rules:
             return None
         if (
@@ -607,13 +600,13 @@ class SearchIndex:
             rule = directory_filter.rules[0]
             return self.directory_subtree_asset_indexes.get(
                 (rule.source_id, rule.path),
-                (),
+                _EMPTY_ASSET_INDEXES,
             )
 
-        included: set[int] = (
-            set()
-            if directory_filter.has_whitelist
-            else set(range(len(self.assets)))
+        included = np.full(
+            len(self.assets),
+            not directory_filter.has_whitelist,
+            dtype=bool,
         )
         for rule in sorted(
             directory_filter.rules,
@@ -623,15 +616,13 @@ class SearchIndex:
                 item.path,
             ),
         ):
-            indexes = self.directory_subtree_asset_indexes.get(
-                (rule.source_id, rule.path),
-                (),
-            )
-            if rule.state == "whitelist":
-                included.update(indexes)
-            else:
-                included.difference_update(indexes)
-        return tuple(sorted(included))
+            included[
+                self.directory_subtree_asset_indexes.get(
+                    (rule.source_id, rule.path),
+                    _EMPTY_ASSET_INDEXES,
+                )
+            ] = rule.state == "whitelist"
+        return _read_only_indexes(np.flatnonzero(included))
 
     def _included_directory_counts(
         self,
@@ -1609,6 +1600,10 @@ def _filter_directory_counts(
     }
 
 
+_EMPTY_ASSET_INDEXES = np.empty(0, dtype=np.int32)
+_EMPTY_ASSET_INDEXES.setflags(write=False)
+
+
 def _asset_indexes_by_directory_subtree(
     assets: tuple[SearchCorpusAsset, ...],
 ) -> dict[tuple[str, str], tuple[int, ...]]:
@@ -1616,13 +1611,18 @@ def _asset_indexes_by_directory_subtree(
     for asset in assets:
         for ancestor in _directory_ancestors(asset.directory):
             indexes.setdefault((asset.source_id, ancestor), []).append(asset.asset_index)
-    return {key: tuple(value) for key, value in indexes.items()}
+    return {key: _read_only_indexes(value) for key, value in indexes.items()}
 
 
-def _asset_selection_mask(asset_count: int, asset_indexes: tuple[int, ...]) -> np.ndarray:
+def _read_only_indexes(values) -> np.ndarray:
+    array = np.array(values, dtype=np.int32)
+    array.setflags(write=False)
+    return array
+
+
+def _asset_selection_mask(asset_count: int, asset_indexes: np.ndarray) -> np.ndarray:
     mask = np.zeros(asset_count, dtype=bool)
-    if asset_indexes:
-        mask[np.fromiter(asset_indexes, dtype=np.int32, count=len(asset_indexes))] = True
+    mask[asset_indexes] = True
     return mask
 
 
