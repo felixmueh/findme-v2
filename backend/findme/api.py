@@ -48,6 +48,7 @@ from findme.search import (
     load_domain_vocabulary,
 )
 from findme.search_profiles import (
+    SEARCH_SESSION_IDLE_TIMEOUT_SECONDS,
     SearchProfileConflict,
     SearchProfileSessionManager,
     SearchProfileValidationError,
@@ -1130,8 +1131,15 @@ def create_app(
 
 
 class _SearchRevisionRegistry:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        idle_timeout_seconds: float = SEARCH_SESSION_IDLE_TIMEOUT_SECONDS,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         self._lock = threading.Lock()
+        self._idle_timeout_seconds = idle_timeout_seconds
+        self._clock = clock
         self._latest_by_session: dict[str, tuple[int, float]] = {}
 
     def control(
@@ -1142,11 +1150,16 @@ class _SearchRevisionRegistry:
         if session is None or revision is None:
             return None
         with self._lock:
+            now = self._clock()
+            cutoff = now - self._idle_timeout_seconds
+            for idle_session, (_, last_used) in list(self._latest_by_session.items()):
+                if last_used < cutoff:
+                    del self._latest_by_session[idle_session]
             current = self._latest_by_session.get(session)
             if current is None or revision > current[0]:
-                self._latest_by_session[session] = (revision, time.monotonic())
+                self._latest_by_session[session] = (revision, now)
             else:
-                self._latest_by_session[session] = (current[0], time.monotonic())
+                self._latest_by_session[session] = (current[0], now)
 
         return SearchControl(lambda: not self._is_current(session, revision))
 

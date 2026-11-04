@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 import sqlite3
 import threading
+import time
+from typing import Callable
 import uuid
 
 from findme.search import (
@@ -27,6 +29,10 @@ ProfileKind = str
 # Compiled preferences hold per-asset arrays, so sessions with identical
 # settings share one compiled object instead of each holding a copy.
 _COMPILED_PREFERENCES_CACHE_SIZE = 16
+
+# Every page load opens a new search session; drop sessions not used for a day.
+# An evicted tab silently falls back to the Default profile on its next request.
+SEARCH_SESSION_IDLE_TIMEOUT_SECONDS = 24 * 60 * 60
 
 
 class _Unset:
@@ -258,11 +264,20 @@ class SearchProfileStore:
 
 
 class SearchProfileSessionManager:
-    def __init__(self, search_index: SearchIndex) -> None:
+    def __init__(
+        self,
+        search_index: SearchIndex,
+        *,
+        idle_timeout_seconds: float = SEARCH_SESSION_IDLE_TIMEOUT_SECONDS,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         self._search_index = search_index
         self._store = SearchProfileStore()
         self._lock = threading.RLock()
+        self._idle_timeout_seconds = idle_timeout_seconds
+        self._clock = clock
         self._sessions: dict[str, SearchProfileSession] = {}
+        self._last_used: dict[str, float] = {}
         self._compiled_preferences: OrderedDict[
             frozenset[FolderSetting], SearchPreferences
         ] = OrderedDict()
@@ -270,12 +285,22 @@ class SearchProfileSessionManager:
     def session(self, db: sqlite3.Connection, search_session: str | None) -> SearchProfileSession:
         session_id = search_session or "default-browser-session"
         with self._lock:
+            now = self._clock()
+            self._drop_idle_sessions(now)
+            self._last_used[session_id] = now
             existing = self._sessions.get(session_id)
             if existing is not None:
                 return existing
             session = self._new_session_from_profile(db, session_id, PROFILE_DEFAULT_ID)
             self._sessions[session_id] = session
             return session
+
+    def _drop_idle_sessions(self, now: float) -> None:
+        cutoff = now - self._idle_timeout_seconds
+        for session_id, last_used in list(self._last_used.items()):
+            if last_used < cutoff:
+                del self._last_used[session_id]
+                self._sessions.pop(session_id, None)
 
     def profiles_response(
         self,

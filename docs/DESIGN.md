@@ -461,7 +461,9 @@ It should:
 Directory quality and selection are user-edited search profile data and live in
 the app database for persisted profiles, not in source folders or server config.
 Quality is a ranking signal. Selection is a hard filter. Unsaved profile edits
-live in backend memory per browser search session.
+live in backend memory per browser search session. Each page load opens a new
+search session, so the backend drops sessions unused for 24 hours; an evicted
+tab falls back to the Default profile and loses its unsaved edits.
 
 The active sidebar profile model is tracked in `SEARCH_PROFILES_DESIGN.md`.
 Source roots and directories can be marked as green whitelist or red blacklist

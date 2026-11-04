@@ -42,6 +42,52 @@ def test_sessions_with_identical_settings_share_compiled_preferences(
         assert manager.preferences(db, "tab-1") is first
 
 
+def test_sessions_idle_past_timeout_are_dropped(tmp_path: Path) -> None:
+    clock = _FakeClock()
+    with _indexed_db(tmp_path) as db:
+        manager = SearchProfileSessionManager(
+            SearchIndex.load(db),
+            idle_timeout_seconds=100,
+            clock=clock,
+        )
+        manager.update_setting(
+            db,
+            search_session="idle-tab",
+            source_id="dnd",
+            directory="Maps",
+            quality_override=9,
+        )
+
+        clock.now += 101
+        manager.session(db, "other-tab")
+
+        assert not manager.session(db, "idle-tab").dirty
+
+
+def test_using_a_session_extends_its_idle_timeout(tmp_path: Path) -> None:
+    clock = _FakeClock()
+    with _indexed_db(tmp_path) as db:
+        manager = SearchProfileSessionManager(
+            SearchIndex.load(db),
+            idle_timeout_seconds=100,
+            clock=clock,
+        )
+        manager.update_setting(
+            db,
+            search_session="active-tab",
+            source_id="dnd",
+            directory="Maps",
+            quality_override=9,
+        )
+
+        clock.now += 60
+        manager.preferences(db, "active-tab")
+        clock.now += 60
+        manager.session(db, "other-tab")
+
+        assert manager.session(db, "active-tab").dirty
+
+
 def test_compiled_selection_stores_asset_order_as_int32_array(tmp_path: Path) -> None:
     with _indexed_db(tmp_path) as db:
         search_index = SearchIndex.load(db)
@@ -80,3 +126,11 @@ def _indexed_db(tmp_path: Path):
         initialize_database(db)
         index_sources(db, config)
     return connect(tmp_path / "findme.sqlite3")
+
+
+class _FakeClock:
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now

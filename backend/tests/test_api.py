@@ -4,7 +4,7 @@ import time
 
 from fastapi.testclient import TestClient
 
-from findme.api import create_app
+from findme.api import _SearchRevisionRegistry, create_app
 from findme.config import AppConfig, SourceConfig
 from findme.db import connect, initialize_database
 from findme.indexer import index_sources
@@ -2201,3 +2201,14 @@ def test_api_serves_static_frontend_when_configured(tmp_path: Path) -> None:
     client = TestClient(create_app(config, db_path, static_dir=static_dir))
 
     assert client.get("/").text == "<main>Findme</main>"
+
+
+def test_search_revision_registry_forgets_sessions_idle_past_timeout() -> None:
+    now = [1000.0]
+    registry = _SearchRevisionRegistry(idle_timeout_seconds=100, clock=lambda: now[0])
+    registry.control("idle-tab", 5)
+
+    now[0] += 101
+    registry.control("other-tab", 1)
+
+    assert not registry.control("idle-tab", 1).is_cancelled()
