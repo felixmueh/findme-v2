@@ -1,5 +1,7 @@
 # AGENTS.md
 
+Reference `.agents/personal.md` for Felix's global engineering preferences.
+
 ## Orientation
 
 Before any repository work, read:
