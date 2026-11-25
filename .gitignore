@@ -13,6 +13,9 @@ sample-assets
 .sbx
 .codex
 .agents
+# Local agent setup (skills and their links), not part of the project.
+.agentic
+.claude
 
 # Local deployment settings and data (see .env.example).
 .env
