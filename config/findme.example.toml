@@ -1,3 +1,6 @@
+# Example config. Copy it to config/findme.local.toml (git-ignored) and adjust.
+# The paths below are the container paths from compose.yaml.
+
 [app]
 data_root = "/var/lib/findme-v2"
 thumbnail_workers = 2
@@ -6,16 +9,21 @@ additional_thumbnail_mipmaps = [512, 1024]
 [search]
 domain_vocabulary = "search-vocabulary.yaml"
 
+# One block per source folder. `root` must be FINDME_MEDIA_MOUNT (or a folder
+# below it) when running with Docker Compose.
 [[sources]]
-id = "dnd"
-display_name = "DND"
-root = "/media/NAS/main/Documents/DND"
+id = "library"
+display_name = "Library"
+root = "/assets"
 priority = 100
-file_browser_url_prefix = "https://filebrowser.example/files/DND"
+# Only if you run a File Browser instance that serves this folder:
+# file_browser_url_prefix = "https://filebrowser.example/files"
+# Add ".mp3", ".ogg", ".wav", ".flac" or ".m4a" to index sound files.
 media_extensions = [".png", ".jpg", ".jpeg", ".webp", ".gif", ".webm", ".mp4"]
 primary_output = "foundry"
 
+# Copies a path rewritten for a virtual tabletop, here FoundryVTT's Data folder.
 [[sources.output_profiles]]
 id = "foundry"
 label = "Foundry"
-prefix = "library/DND"
+prefix = "library"

@@ -3,7 +3,7 @@ description: >
   Initial search evaluation set generated from the real DND source library.
   These judgments encode user-observable expectations, not implementation
   details. Paths are source-relative to the production source ids in
-  config/findme.server.toml.
+  config/findme.server.local.toml (not in the repository).
 
 sets:
   goblin_warriors:

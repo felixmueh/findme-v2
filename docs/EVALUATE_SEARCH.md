@@ -214,7 +214,7 @@ The report should help tune search behavior. It should not only print a single p
 The CLI evaluator can run the implemented `strict`, `fuzzy`, and `domain` benchmark scopes:
 
 ```bash
-uv run findme search-eval --config config/findme.server.toml --eval search-eval/dnd.yaml --scope strict --scope fuzzy --scope domain
+uv run findme search-eval --config config/findme.server.local.toml --eval search-eval/dnd.yaml --scope strict --scope fuzzy --scope domain
 ```
 
 The configured data root must be writable and already indexed. Repeat `--scope` to evaluate multiple scopes in one run.

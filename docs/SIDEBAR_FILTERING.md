@@ -286,7 +286,7 @@ Frontend behavior tests should cover:
 When this work touches search behavior, run the local DND search benchmark/evaluation command before considering it complete:
 
 ```bash
-uv run findme search-eval --config config/findme.server.toml --eval search-eval/dnd.yaml --scope strict --scope fuzzy --scope domain
+uv run findme search-eval --config config/findme.server.local.toml --eval search-eval/dnd.yaml --scope strict --scope fuzzy --scope domain
 ```
 
 ## Open Non-Blocking Details

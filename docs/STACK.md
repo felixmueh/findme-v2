@@ -191,11 +191,15 @@ Expected deployment pieces:
 - CLI indexing commands run manually or through systemd-run/timers later
 - optional separate search-engine service if selected
 
-For the server Docker deployment, preserve the production app data and source
-paths as container bind mounts so the existing index remains valid:
+`compose.yaml` is generic: it reads the host data and media directories, the
+container path of the media mount, the port and the config file from `.env`
+(git-ignored, see `.env.example`). The server's `.env` preserves the production
+app data and source paths as container bind mounts so the existing index
+remains valid:
 
-- `/var/lib/findme-v2:/var/lib/findme-v2`
-- `/media/NAS/main/Documents/DND:/media/NAS/main/Documents/DND:ro`
+- `FINDME_DATA=/var/lib/findme-v2`
+- `FINDME_MEDIA` and `FINDME_MEDIA_MOUNT` both `/media/NAS/main/Documents/DND`
+- `FINDME_CONFIG=./config/findme.server.local.toml`
 
 Indexing remains an explicit CLI/admin command, not a container startup side
 effect.

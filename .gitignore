@@ -13,3 +13,10 @@ sample-assets
 .sbx
 .codex
 .agents
+
+# Local deployment settings and data (see .env.example).
+.env
+compose.override.yaml
+config/*.local.toml
+/data/
+/media/

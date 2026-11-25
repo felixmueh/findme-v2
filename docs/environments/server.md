@@ -22,10 +22,10 @@ This profile is for the server host, outside Docker.
 ```bash
 uv run pytest
 npm --prefix frontend run build
-uv run findme init-db --config config/findme.server.toml
-uv run findme index --config config/findme.server.toml
-uv run findme serve --config config/findme.server.toml --host 0.0.0.0 --port 8000 --static-dir frontend/dist
-uv run findme search-eval --config config/findme.server.toml --eval search-eval/dnd.yaml --scope strict --scope fuzzy --scope domain
+uv run findme init-db --config config/findme.server.local.toml
+uv run findme index --config config/findme.server.local.toml
+uv run findme serve --config config/findme.server.local.toml --host 0.0.0.0 --port 8000 --static-dir frontend/dist
+uv run findme search-eval --config config/findme.server.local.toml --eval search-eval/dnd.yaml --scope strict --scope fuzzy --scope domain
 ```
 
 Open the app at the server address on port 8000. The server host always uses port 8000, regardless of the worktree `.port` file.
@@ -47,7 +47,7 @@ Open the app at the server address on port 8000. The server host always uses por
 The server host may index the real DND library:
 
 ```bash
-uv run findme index --config config/findme.server.toml
+uv run findme index --config config/findme.server.local.toml
 ```
 
 The server host and server sandbox share `/var/lib/findme-v2`. Avoid running two indexing jobs at the same time against the shared data root.

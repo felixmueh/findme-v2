@@ -69,7 +69,7 @@ When reporting a user-facing app URL, use the LAN address form `http://<server-a
 
 Use `config/findme.dev.toml` on laptop and laptop-sbx. This indexes only `sample-assets` and may share `.findme-data` between the laptop host and laptop sandbox.
 
-Use `config/findme.server.toml` on server and server-sbx. Both server environments may assume `/media/NAS/main/Documents/DND` is mounted and may share `/var/lib/findme-v2`.
+Use `config/findme.server.local.toml` on server and server-sbx. It is git-ignored and exists only on the server; `config/findme.example.toml` shows the format. Both server environments may assume `/media/NAS/main/Documents/DND` is mounted and may share `/var/lib/findme-v2`.
 
 Install development tools or dependencies in the sandbox when they are needed to build, test, or evaluate the project. Keep production deployment assumptions documented in `docs/DESIGN.md` or `docs/STACK.md` rather than inferring them from the sandbox.
 

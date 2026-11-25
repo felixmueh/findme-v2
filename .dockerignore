@@ -20,3 +20,9 @@ sample-assets
 Dockerfile
 compose*.yml
 compose*.yaml
+
+# Local deployment settings and data stay out of the image.
+.env
+config/*.local.toml
+data
+media

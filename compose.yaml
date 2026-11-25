@@ -1,15 +1,26 @@
+# Generic deployment: every host-specific value comes from the environment or
+# from `.env` (git-ignored, see `.env.example`). The defaults keep everything
+# inside the checkout, so `docker compose up` works without a `.env`.
 services:
   findme:
     build:
       context: .
       dockerfile: Dockerfile
-    image: findme-v2:server
+    image: findme-v2
     restart: unless-stopped
     ports:
-      - "48317:8000"
+      - "${FINDME_PORT:-48317}:8000"
     volumes:
-      - /var/lib/findme-v2:/var/lib/findme-v2
-      - /media/NAS/main/Documents/DND:/media/NAS/main/Documents/DND:ro
+      # The data directory's path inside the container is fixed, so the
+      # config's `data_root` is always /var/lib/findme-v2.
+      - ${FINDME_DATA:-./data}:/var/lib/findme-v2
+      # The index stores absolute paths, so FINDME_MEDIA_MOUNT must match the
+      # source `root` in the config and must not change once files are indexed.
+      - ${FINDME_MEDIA:-./media}:${FINDME_MEDIA_MOUNT:-/assets}:ro
+      # The config is mounted rather than baked into the image, so editing it
+      # needs a restart, not a rebuild. It sits next to the image's
+      # search-vocabulary.yaml, which the config refers to by relative path.
+      - ${FINDME_CONFIG:-./config/findme.local.toml}:/app/config/findme.toml:ro
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/health"]
       interval: 30s

@@ -29,6 +29,9 @@ RUN apt-get update \
 
 COPY pyproject.toml uv.lock ./
 COPY backend ./backend
+# Only the committed config files are copied (local configs are excluded in
+# .dockerignore). compose.yaml mounts the deployment config as
+# config/findme.toml at run time.
 COPY config ./config
 COPY search-eval ./search-eval
 COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
@@ -38,4 +41,4 @@ RUN uv sync --locked --no-dev
 EXPOSE 8000
 VOLUME ["/var/lib/findme-v2"]
 
-CMD ["findme", "serve", "--config", "config/findme.server.toml", "--host", "0.0.0.0", "--port", "8000", "--static-dir", "frontend/dist"]
+CMD ["findme", "serve", "--config", "config/findme.toml", "--host", "0.0.0.0", "--port", "8000", "--static-dir", "frontend/dist"]
