@@ -1,6 +1,6 @@
 # findme
 
-findme is a self-hosted web app for finding files in a large local library of images, video and audio by filename and folder. I use it on a home server for a tabletop RPG library of about 250,000 maps, tokens and sound files.
+findme is a very responsive, self-hosted file search for a large local library of images, video and audio. Results update as you type: most searches take under 30 ms, and thumbnails appear immediately. I use it on a home server for a tabletop RPG library of about 250,000 maps, tokens and sound files.
 
 ## Features
 
@@ -20,7 +20,7 @@ On my library, typical strict and fuzzy searches take 6 to 30 ms on the server, 
 
 - **Backend:** Python 3.13 and FastAPI, served by uvicorn. The `findme` CLI covers `init-db`, `index`, `rebuild-search-corpus`, `cleanup-thumbnails`, `serve` and `search-eval`.
 - **Indexing and storage:** SQLite holds files, folders, thumbnail references and tags. The indexer reads image metadata with Pillow and video and audio metadata with ffprobe, and writes thumbnails as files under the data directory.
-- **Search:** after each index run the app builds a search corpus from SQLite. A tantivy index serves lexical matching, rapidfuzz scores fuzzy matches, and the domain mode expands queries through `config/search-vocabulary.yaml`. Ranking runs on in-memory numpy arrays, and one request returns both the result page and the folder counts.
+- **Search:** after each index run the app builds a search corpus from SQLite. The heavy lifting runs in compiled libraries rather than in Python loops: tantivy (a Rust search library) does lexical matching, rapidfuzz (C++) scores fuzzy matches, and ranking and folder counts are vectorized over in-memory numpy arrays. The domain mode expands queries through `config/search-vocabulary.yaml`, and one request returns both the result page and the folder counts.
 - **Frontend:** Svelte 5 and TypeScript, built with Vite. The backend serves the built files from `frontend/dist`.
 
 ## Running with Docker Compose
