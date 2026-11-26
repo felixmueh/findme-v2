@@ -2,19 +2,33 @@
 
 findme is a very responsive, self-hosted file search for a large local library of images, video and audio. Results update as you type: most searches take under 30 ms, and thumbnails appear immediately. I use it on a home server for a tabletop RPG library of about 250,000 maps, tokens and sound files.
 
+![Typing "skeleton", then "potion": the token thumbnails update with each letter](docs/demo/search.gif)
+
 ## Features
 
 - Incremental indexing of one or more source folders. Files with unchanged size and modification time are skipped. Source folders are only read, the index and thumbnails live in a separate data directory.
-- Three search modes: strict (token and prefix matches), fuzzy (tolerates typos) and domain (expands terms through a hand-edited vocabulary, so `adventurer` also finds `warrior` or `mage`).
+- Three search modes: exact (token and prefix matches), fuzzy (tolerates typos) and domain (expands terms through a hand-edited vocabulary, so `adventurer` also finds `warrior` or `mage`).
+
+  ![The typo "skeletn" finds nothing in exact mode and 515 files in fuzzy mode. In domain mode, "adventurer" finds warriors, mages and clerics](docs/demo/search-modes.gif)
+
 - Folder tree with match counts per folder. Selecting folders filters the results, and each folder can get a quality weight that moves its files up or down in the ranking.
+
+  ![Match counts per folder for "skeleton", a filter on the Creatures folder, then a quality weight of 10 on the Spirits folder moves the ghost skeletons to the top](docs/demo/folders.gif)
+
 - Search profiles that save folder selections and ranking weights.
 - Virtualized thumbnail grid with pregenerated sizes (256 px, optionally 512 and 1024 px), video posters and audio previews on hover.
+
+  ![Hovering over footstep sounds plays a preview, and the selected sound opens in a player](docs/demo/audio.gif)
+
 - Per-file actions: open or download the original, copy the image or its thumbnail, copy the absolute path, copy a path rewritten for a virtual tabletop (configured per source, for example FoundryVTT), open the folder in a File Browser instance. Enter copies the default path of the selected file.
 - Tags with autocomplete, stored against a hash of the file content rather than its path.
+
+  ![Adding the tag "light source" to a candle holder with autocomplete, then filtering by the tag](docs/demo/tags.gif)
+
 - Keyboard navigation: `/` focuses the search field, arrow keys or `hjkl` move the selection.
 - `findme search-eval` checks ranking expectations written in YAML, used to tune search against a real library.
 
-On my library, typical strict and fuzzy searches take 6 to 30 ms on the server, domain searches about 200 ms.
+On my library, typical exact and fuzzy searches take 6 to 30 ms on the server, domain searches about 200 ms.
 
 ## Architecture
 
@@ -103,3 +117,10 @@ I designed findme and wrote its first version (indexer, lexical search, thumbnai
 ## Licence
 
 MIT, see [LICENSE](LICENSE).
+
+The demo GIFs in `docs/demo/` show third-party assets, which are not covered by the MIT licence:
+
+- Tokens and props by [Forgotten Adventures](https://www.forgotten-adventures.net)
+- Sound effects from the [Sonniss GDC Game Audio Bundles](https://sonniss.com/gameaudiogdc)
+- Town & City assets by [2-Minute Tabletop](https://2minutetabletop.com), [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/)
+- Woodcut map symbols by Robbinsmoth and Elvanos, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
